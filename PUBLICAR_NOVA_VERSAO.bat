@@ -10,7 +10,7 @@ echo    Repositório Oficial: bitencourtbig-jpg/mesa-compras-ia-releases
 echo ======================================================================
 echo.
 
-set /p "NOVA_VERSAO=Digite a nova versao para publicar (ex: 1.2.0): "
+set /p "NOVA_VERSAO=Digite a nova versao para publicar (ex: 1.1.1): "
 
 if "%NOVA_VERSAO%"=="" (
     echo [!] Nenhuma versao informada. Operacao cancelada.
@@ -18,7 +18,7 @@ if "%NOVA_VERSAO%"=="" (
     exit /b 0
 )
 
-rem Remover prefixo 'v' se o usuario digitou v1.2.0
+rem Remover prefixo 'v' se o usuario digitou v1.1.1
 if "%NOVA_VERSAO:~0,1%"=="v" set "NOVA_VERSAO=%NOVA_VERSAO:~1%"
 set "TAG_NAME=v%NOVA_VERSAO%"
 
@@ -30,7 +30,14 @@ echo.
 
 cd /d "%~dp0"
 
-echo [*] [1/5] Gerando pacote oficial limpo com runtime portátil embutido...
+echo [*] [1/6] Atualizando versão no package.json...
+powershell -NoProfile -Command ^
+  "$pkg = Get-Content package.json -Raw | ConvertFrom-Json;" ^
+  "$pkg.version = '%NOVA_VERSAO%';" ^
+  "$pkg | ConvertTo-Json -Depth 5 | Set-Content package.json -Encoding UTF8;"
+
+echo.
+echo [*] [2/6] Gerando pacote oficial limpo com runtime portátil embutido...
 node scripts\empacotar_cliente.mjs
 if errorlevel 1 (
     echo [ERRO] Falha ao empacotar cliente. Verifique os logs acima.
@@ -39,7 +46,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [*] [2/5] Compilando executáveis oficiais leves (.exe) nativos...
+echo [*] [3/6] Compilando executáveis oficiais leves (.exe) nativos...
 set "CSC_COMPILER=C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 set "SRC_INSTALADOR=..\Entrega_Mesa_Compras_IA\dev_tools\Installer.cs"
 set "OUT_INSTALADOR=..\Entrega_Mesa_Compras_IA\Instalador_Mesa_Compras_IA.exe"
@@ -54,35 +61,32 @@ if exist "%CSC_COMPILER%" (
 )
 
 echo.
-echo [*] [3/5] Atualizando versão no package.json...
-powershell -NoProfile -Command ^
-  "$pkg = Get-Content package.json -Raw | ConvertFrom-Json;" ^
-  "$pkg.version = '%NOVA_VERSAO%';" ^
-  "$pkg | ConvertTo-Json -Depth 5 | Set-Content package.json -Encoding UTF8;"
-
-echo.
-echo [*] [4/5] Adicionando alterações e criando commit Git...
+echo [*] [4/6] Adicionando alterações e criando commit Git...
 git add -A
-git commit -m "Release %TAG_NAME%: melhorias validadas de produção"
+git commit -m "Release %TAG_NAME%: atualizacao e melhorias de producao"
 
 echo.
-echo [*] [5/5] Enviando código e tag %TAG_NAME% diretamente para o GitHub...
-git tag -a "%TAG_NAME%" -m "Release Oficial %TAG_NAME% • FSConsultoria"
+echo [*] [5/6] Enviando código e tag %TAG_NAME% para o GitHub...
+git tag -a "%TAG_NAME%" -m "Release Oficial %TAG_NAME% • FSConsultoria" 2>nul
 git push origin main --tags
+
+echo.
+echo [*] [6/6] Enviando arquivo ZIP e instaladores diretamente para a Release no GitHub...
+node scripts\publicar_release_github.mjs "%NOVA_VERSAO%"
 
 if errorlevel 1 (
     echo.
-    echo [ERRO] Falha ao enviar para o GitHub. Verifique a conexão com a internet.
+    echo [ERRO] Falha no upload para o GitHub Releases.
     pause
     exit /b 1
 )
 
 echo.
 echo ======================================================================
-echo   ✓ VERSÃO %TAG_NAME% PUBLICADA COM SUCESSO NO GITHUB!
+echo   ✓ VERSÃO %TAG_NAME% PUBLICADA COM TOTAL SUCESSO NO GITHUB!
 echo.
 echo   1. O código e a tag foram enviados ao repositório oficial.
-echo   2. O GitHub Actions gerou a nova Release automaticamente.
+echo   2. O arquivo Mesa_Compras_IA_Core.zip foi anexado na Release na nuvem.
 echo   3. O instalador dos clientes (Instalador_Mesa_Compras_IA.exe) e o
 echo      atualizador (Atualizar_Mesa_Compras_IA.exe) já estão entregando
 echo      a nova versão na nuvem!

@@ -58,6 +58,12 @@ const PROJECT_ROOT = path.resolve(__dirname, '..');
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
 const PORT = Number(process.env.PORT || 3456);
 
+let APP_VERSION = '1.1.1';
+try {
+  const pkgData = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
+  APP_VERSION = pkgData.version || '1.1.1';
+} catch {}
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -376,6 +382,7 @@ const server = http.createServer(async (req, res) => {
       const filiaisPolicies = getFilialPolicies(clientCode);
       const licenseStatus = getClientLicenseStatus(clientCode);
       return sendJson(res, 200, {
+        appVersion: APP_VERSION,
         profile,
         latestRun,
         cmedImport: cmed.lastImport,
@@ -396,6 +403,7 @@ const server = http.createServer(async (req, res) => {
       const machineId = getMachineFingerprint();
       return sendJson(res, 200, {
         ok: true,
+        appVersion: APP_VERSION,
         ...status,
         currentMachineId: machineId,
       });

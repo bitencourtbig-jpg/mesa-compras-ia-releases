@@ -1080,6 +1080,15 @@ async function loadOverview() {
     if (btnEmpty) btnEmpty.addEventListener('click', runPurchasingEngine);
   }
 
+  // Versão Oficial do Sistema
+  if (data.appVersion) {
+    const vText = `v${data.appVersion}`;
+    const elBadge = document.getElementById('app-version-badge');
+    if (elBadge) elBadge.textContent = `🚀 Versão: ${vText}`;
+    const elHomePill = document.getElementById('home-version-pill');
+    if (elHomePill) elHomePill.textContent = vText;
+  }
+
   // Atualização e Verificação de Licença de Uso (SaaS Gate)
   if (data.licenseStatus) {
     state.licenseStatus = data.licenseStatus;
