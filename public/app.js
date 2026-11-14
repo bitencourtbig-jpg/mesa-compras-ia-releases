@@ -763,6 +763,11 @@ function renderMultilojaBar() {
 
   const isSingleStore = profile.operation_mode === 'local' || policies.length <= 1;
 
+  const multilojaTitleEl = document.querySelector('.multiloja-title');
+  if (multilojaTitleEl) {
+    multilojaTitleEl.innerHTML = isSingleStore ? '🏪 Loja Operacional:' : '🏬 Visão da Rede:';
+  }
+
   const btnTransf = document.getElementById('btn-goto-transfers');
   const btnPol = document.getElementById('btn-open-filiais-policies');
 
@@ -1618,7 +1623,7 @@ async function loadSkus() {
     if (isOpen) {
       let networkMatrixHtml = '';
       const net = r.rede_distribuicao || [];
-      if (net.length > 0) {
+      if (net.length > 1) {
         let totEstoque = 0;
         let totTransito = 0;
         let totVendas13s = 0;
@@ -1668,10 +1673,10 @@ async function loadSkus() {
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
               <div style="font-weight:700; font-size:13px; color:#0f172a; display:flex; align-items:center; gap:8px;">
                 <span style="font-size:16px;">🏬</span>
-                <span>Panorama Multi-Loja do Produto na Rede</span>
+                <span>Panorama Multi-Loja (${net.length} Lojas)</span>
                 <span class="badge badge-neutral" style="font-size:11px; font-weight:600;">Cód BIG: ${r.produto_id} &bull; EAN: ${esc(r.barras || '—')}</span>
               </div>
-              <div class="muted" style="font-size:11px;">Visão simultânea das 3 lojas operacionais da rede</div>
+              <div class="muted" style="font-size:11px;">Visão simultânea das ${net.length} lojas operacionais da rede</div>
             </div>
             <div style="overflow-x:auto;">
               <table class="data-table" style="font-size:11.5px; margin:0; width:100%; border:1px solid #e2e8f0; border-radius:6px;">
@@ -1692,7 +1697,7 @@ async function loadSkus() {
                 <tbody>
                   ${netRowsHtml}
                   <tr style="background:#f1f5f9; font-weight:700; border-top:2px solid #cbd5e1;">
-                    <td colspan="2"><span style="font-size:12px;">🏬 TOTAL DA REDE (CONSOLIDADO)</span></td>
+                    <td colspan="2"><span style="font-size:12px;">🏬 TOTAL DA REDE (${net.length} LOJAS CONSOLIDADAS)</span></td>
                     <td class="num">${num(totEstoque)} un</td>
                     <td class="num">${num(totTransito)} un</td>
                     <td class="num">${num(totVendas13s)} un</td>
@@ -5280,11 +5285,21 @@ async function applySystemUpdate() {
     box.style.background = '#fffbeb';
     box.style.border = '1px solid #fef3c7';
     box.style.color = '#92400e';
-    box.innerHTML = `🔄 <strong>Atualização iniciada em segundo plano!</strong><br>O motor está baixando o pacote oficial do GitHub. Seus dados e licença serão preservados.<br><strong>Aguarde ~15 segundos... esta página recarregará automaticamente.</strong>`;
+    box.innerHTML = `🔄 <strong>Atualização em andamento!</strong><br>Baixando e aplicando a versão mais recente diretamente da nuvem...<br><strong>Aguarde ~10 segundos... o sistema reiniciará automaticamente.</strong>`;
   }
 
   try {
-    await fetch('/api/system/apply-update', { method: 'POST' });
+    const res = await fetch('/api/system/apply-update', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || (data && data.ok === false)) {
+      throw new Error((data && data.error) || 'Falha ao aplicar atualização');
+    }
+    if (box) {
+      box.style.background = '#f0fdf4';
+      box.style.border = '1px solid #86efac';
+      box.style.color = '#166534';
+      box.innerHTML = `✅ <strong>Arquivos atualizados com sucesso!</strong><br>Reiniciando serviço da Mesa de Compras IA...<br>Recarregando página...`;
+    }
     setTimeout(() => {
       const pollTimer = setInterval(() => {
         fetch('/api/license/status').then(r => {
@@ -5293,11 +5308,16 @@ async function applySystemUpdate() {
             window.location.reload();
           }
         }).catch(() => {});
-      }, 2000);
-    }, 5000);
+      }, 1500);
+    }, 2500);
   } catch (err) {
+    if (btnApply) {
+      btnApply.disabled = false;
+      btnApply.textContent = '⚡ Tentar Novamente';
+    }
     if (box) {
       box.style.background = '#fef2f2';
+      box.style.border = '1px solid #fecaca';
       box.style.color = '#991b1b';
       box.innerHTML = `Erro ao acionar atualizador: ${err.message}`;
     }

@@ -94,7 +94,7 @@ async function main() {
         body: JSON.stringify({
           tag_name: TAG,
           name: RELEASE_NAME,
-          body: `Versão oficial de produção ${TAG} da Mesa de Compras IA (FSConsultoria).\n\n- Interface limpa e direta na Home Page\n- Expurgo de avisos e modo dev\n- Banco de dados SQLite virgem com catálogo CMED`,
+          body: `Versão oficial de produção ${TAG} da Mesa de Compras IA (FSConsultoria).\n\n- Auto-atualização 100% nativa e autônoma via botão no SaaS (sem travamentos de arquivo ou processos presos)\n- Adaptação dinâmica para Farmácias de Loja Única (ocultação automática do painel multi-loja redundante)\n- Panorama Multi-Loja dinâmico para redes de 2 ou mais filiais com contagem flexível\n- Alinhamento estrito do contador da aba PBM e lista de SKUs\n- Auto-migração resiliente da tabela CMED (concentração, forma, pack e chave farmacológica)`,
           draft: false,
           prerelease: false,
         }),

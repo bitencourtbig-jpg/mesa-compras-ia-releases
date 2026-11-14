@@ -59,10 +59,10 @@ const PROJECT_ROOT = path.resolve(__dirname, '..');
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
 const PORT = Number(process.env.PORT || 3456);
 
-let APP_VERSION = '1.1.5';
+let APP_VERSION = '1.1.6';
 try {
   const pkgData = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
-  APP_VERSION = pkgData.version || '1.1.5';
+  APP_VERSION = pkgData.version || '1.1.6';
 } catch {}
 
 // Blindagem de seguranca: remove senhas expostas do .env na inicializacao
@@ -441,28 +441,72 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === '/api/system/apply-update' && req.method === 'POST') {
       try {
-        const updaterExe = path.resolve(PROJECT_ROOT, 'Atualizar_Mesa_Compras_IA.exe');
-        const { spawn } = await import('node:child_process');
-        if (fs.existsSync(updaterExe)) {
-          const child = spawn(updaterExe, [], {
-            detached: true,
-            stdio: 'ignore',
-            cwd: PROJECT_ROOT,
-          });
-          child.unref();
-          return sendJson(res, 200, { ok: true, message: 'Atualizador iniciado com sucesso! O serviço reiniciará com a nova versão.' });
-        } else {
-          const dlCmd = `powershell -NoProfile -Command "Invoke-WebRequest -Uri 'https://github.com/bitencourtbig-jpg/mesa-compras-ia-releases/releases/latest/download/Atualizar_Mesa_Compras_IA.exe' -OutFile '${PROJECT_ROOT}\\Atualizar_Mesa_Compras_IA.exe'; Start-Process '${PROJECT_ROOT}\\Atualizar_Mesa_Compras_IA.exe'"`;
-          const child = spawn('cmd.exe', ['/c', dlCmd], {
-            detached: true,
-            stdio: 'ignore',
-            cwd: PROJECT_ROOT,
-          });
-          child.unref();
-          return sendJson(res, 200, { ok: true, message: 'Atualizador obtido da nuvem. O serviço será atualizado em instantes.' });
+        const os = await import('node:os');
+        const tempZip = path.join(os.tmpdir(), 'Mesa_Compras_IA_Update.zip');
+        const releaseUrl = 'https://github.com/bitencourtbig-jpg/mesa-compras-ia-releases/releases/latest/download/Mesa_Compras_IA_Core.zip';
+
+        // 1. Download do zip oficial diretamente em memória/disco
+        const resp = await fetch(releaseUrl, { headers: { 'User-Agent': 'MesaComprasIA-InAppUpdater' } });
+        if (!resp.ok) {
+          throw new Error(`Falha no download da versão (${resp.status}): ${resp.statusText}`);
         }
+        const arrayBuf = await resp.arrayBuffer();
+        fs.writeFileSync(tempZip, Buffer.from(arrayBuf));
+
+        // 2. Extração segura preservando analytics.db, .env e node.exe
+        const { execSync, spawn } = await import('node:child_process');
+        const parentDir = path.resolve(PROJECT_ROOT, '..').replace(/\\/g, '/');
+
+        let extractOk = false;
+        try {
+          execSync(`tar -xf "${tempZip}" --exclude="*analytics.db*" --exclude="*.env*" --exclude="*node.exe*" -C "${parentDir}"`, { stdio: 'pipe' });
+          extractOk = true;
+        } catch (tarErr) {
+          // Fallback via PowerShell caso tar apresente alguma restrição
+          try {
+            const psScript = `
+              Add-Type -AssemblyName System.IO.Compression.FileSystem;
+              $archive = [System.IO.Compression.ZipFile]::OpenRead('${tempZip.replace(/\\/g, '\\\\')}');
+              $targetBase = '${parentDir.replace(/\\/g, '\\\\')}';
+              foreach ($entry in $archive.Entries) {
+                if ($entry.FullName -match 'analytics\\.db|\\.env|node\\.exe') { continue; }
+                $outPath = [System.IO.Path]::Combine($targetBase, $entry.FullName);
+                if ([string]::IsNullOrEmpty($entry.Name)) {
+                  [System.IO.Directory]::CreateDirectory($outPath) | Out-Null;
+                } else {
+                  $dir = [System.IO.Path]::GetDirectoryName($outPath);
+                  if (!(Test-Path $dir)) { [System.IO.Directory]::CreateDirectory($dir) | Out-Null; }
+                  [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $outPath, $true);
+                }
+              }
+              $archive.Dispose();
+            `;
+            execSync(`powershell -NoProfile -Command "${psScript.replace(/\r?\n/g, ' ')}"`, { stdio: 'pipe' });
+            extractOk = true;
+          } catch (psErr) {
+            throw new Error(`Falha ao extrair arquivos da atualização: ${tarErr.message} | ${psErr.message}`);
+          }
+        }
+
+        // 3. Responder sucesso para o navegador antes de reiniciar
+        sendJson(res, 200, { ok: true, message: 'Atualização baixada e aplicada com sucesso! O motor reiniciará em instantes.' });
+
+        // 4. Agendar reinicialização desanexada e sair para liberar a porta 3456
+        const serverMjs = path.join(PROJECT_ROOT, 'src', 'server.mjs');
+        const restartCmd = `timeout /t 2 /nobreak >nul && "${process.execPath}" "${serverMjs}"`;
+        const child = spawn('cmd.exe', ['/c', restartCmd], {
+          detached: true,
+          stdio: 'ignore',
+          cwd: PROJECT_ROOT,
+        });
+        child.unref();
+
+        setTimeout(() => {
+          process.exit(0);
+        }, 1000);
+        return;
       } catch (err) {
-        return sendJson(res, 500, { error: `Falha ao acionar atualizador: ${err.message}` });
+        return sendJson(res, 500, { ok: false, error: `Falha ao aplicar atualização: ${err.message}` });
       }
     }
 
