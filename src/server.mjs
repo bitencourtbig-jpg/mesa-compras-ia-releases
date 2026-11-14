@@ -59,10 +59,10 @@ const PROJECT_ROOT = path.resolve(__dirname, '..');
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
 const PORT = Number(process.env.PORT || 3456);
 
-let APP_VERSION = '1.1.4';
+let APP_VERSION = '1.1.5';
 try {
   const pkgData = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
-  APP_VERSION = pkgData.version || '1.1.4';
+  APP_VERSION = pkgData.version || '1.1.5';
 } catch {}
 
 // Blindagem de seguranca: remove senhas expostas do .env na inicializacao
@@ -137,7 +137,7 @@ function buildSkuFilterSql(paramsObj, runId) {
     } else if (tab === 'buy') {
       where.push('sugestao_compra_un > 0');
     } else if (tab === 'pbm_replenish') {
-      where.push('(vendas_pbm_13s > 0 OR ddv_pbm_auto > 0)');
+      where.push('ddv_pbm_auto > 0');
     } else if (tab === 'non_med') {
       where.push('medicamento_efetivo = 0 AND (sugestao_compra_un > 0 OR estoque_atual > 0)');
     } else if (tab === 'expiring') {
@@ -378,7 +378,7 @@ const server = http.createServer(async (req, res) => {
               .prepare('SELECT COUNT(*) AS cnt FROM engine_sku_results WHERE run_id = ? AND dismissed = 1')
               .get(latestRun.id)?.cnt || 0,
             pbmCount: db
-              .prepare('SELECT COUNT(*) AS cnt FROM engine_sku_results WHERE run_id = ? AND ddv_pbm_auto > 0')
+              .prepare('SELECT COUNT(*) AS cnt FROM engine_sku_results WHERE run_id = ? AND ddv_pbm_auto > 0 AND dismissed = 0')
               .get(latestRun.id)?.cnt || 0,
           }
         : { macros: [], gruposPai: [], dismissedCount: 0, pbmCount: 0 };

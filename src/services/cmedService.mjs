@@ -15,6 +15,42 @@ export async function importOfficialCmedToSqlite(xlsxOrZipPath, { allowTolerance
   const db = getAnalyticsDb();
   const sourceName = path.basename(index.sourceFile);
 
+  // Garante integridade do esquema da tabela cmed_catalog
+  try {
+    const cmedCols = db.prepare('PRAGMA table_info(cmed_catalog)').all().map((c) => c.name);
+    if (cmedCols.length > 0 && !cmedCols.includes('concentracao')) {
+      db.exec('DROP TABLE IF EXISTS cmed_eans; DROP TABLE IF EXISTS cmed_catalog;');
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS cmed_catalog (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          source_name TEXT NOT NULL,
+          substancia_raw TEXT,
+          substancia_norm TEXT,
+          laboratorio TEXT,
+          registro TEXT,
+          produto TEXT,
+          apresentacao TEXT,
+          classe_terapeutica TEXT,
+          tipo_produto TEXT,
+          tarja TEXT,
+          concentracao TEXT,
+          forma TEXT,
+          pack_exact TEXT,
+          pack_bucket TEXT,
+          sig_key TEXT
+        );
+        CREATE TABLE IF NOT EXISTS cmed_eans (
+          ean TEXT NOT NULL,
+          cmed_id INTEGER NOT NULL,
+          FOREIGN KEY (cmed_id) REFERENCES cmed_catalog(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_cmed_eans_ean ON cmed_eans(ean);
+        CREATE INDEX IF NOT EXISTS idx_cmed_reg ON cmed_catalog(registro);
+        CREATE INDEX IF NOT EXISTS idx_cmed_sig ON cmed_catalog(sig_key);
+      `);
+    }
+  } catch {}
+
   db.exec('BEGIN');
   try {
     db.exec('DELETE FROM cmed_eans; DELETE FROM cmed_catalog;');

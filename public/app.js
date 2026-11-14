@@ -5230,6 +5230,9 @@ async function checkSystemUpdates(manual = true) {
 
   try {
     const res = await fetch('/api/system/check-update');
+    if (!res.ok) {
+      throw new Error(`Serviço temporariamente indisponível (HTTP ${res.status}). Aguarde o servidor reiniciar.`);
+    }
     const data = await res.json();
     if (currVerEl) currVerEl.textContent = `Versão atual instalada: v${data.currentVersion}`;
 
