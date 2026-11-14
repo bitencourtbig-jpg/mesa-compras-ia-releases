@@ -29,6 +29,7 @@ echo ======================================================================
 echo.
 
 cd /d "%~dp0"
+if not exist "package.json" if exist "..\linx_farma_big\package.json" cd /d "..\linx_farma_big"
 
 echo [*] [1/6] Atualizando versão no package.json...
 powershell -NoProfile -Command ^
