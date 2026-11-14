@@ -52,6 +52,19 @@ if (fs.existsSync(portableNode)) {
   console.warn('  ⚠️ node.exe não encontrado para embarcar no pacote.');
 }
 
+// 2.1 Copiar DLLs essenciais do Visual C++ para que node.exe rode em qualquer Windows
+const vcDlls = ['vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll', 'msvcp140_1.dll', 'msvcp140_2.dll', 'msvcp140_atomic_wait.dll'];
+for (const d of vcDlls) {
+  const sysPath = path.join('C:\\Windows\\System32', d);
+  const targetPath = path.join(DIST_CLIENTE, 'bin', d);
+  if (fs.existsSync(sysPath)) {
+    try {
+      fs.copyFileSync(sysPath, targetPath);
+    } catch {}
+  }
+}
+console.log('  ✓ Bibliotecas de sistema C++ (VCRUNTIME140/MSVCP140) embutidas em bin/.');
+
 // 3. Função de cópia recursiva
 function copyFolderSync(src, dest, filterFn = () => true) {
   if (!fs.existsSync(src)) return;
@@ -309,6 +322,91 @@ pause
 `;
 writeWindowsFile(path.join(DIST_CLIENTE, 'instalar_atalho_area_de_trabalho.bat'), batInstalarAtalho);
 
+// F. Ferramenta de Diagnóstico Automático (DIAGNOSTICAR_SISTEMA.bat)
+const batDiagnostico = `@echo off
+setlocal enabledelayedexpansion
+title Diagnostico do Sistema - Mesa de Compras IA
+color 0E
+cd /d "%~dp0"
+
+set "LOG_FILE=%~dp0data\\diagnostico_cliente.txt"
+if not exist "%~dp0data" mkdir "%~dp0data"
+
+echo ====================================================================== > "%LOG_FILE%"
+echo    DIAGNOSTICO TECNICO - MESA DE COMPRAS IA >> "%LOG_FILE%"
+echo    FSConsultoria Farmaceutica - Suporte: (17) 98120-5660 >> "%LOG_FILE%"
+echo    Data/Hora: %DATE% %TIME% >> "%LOG_FILE%"
+echo ====================================================================== >> "%LOG_FILE%"
+echo. >> "%LOG_FILE%"
+
+echo [*] Sistema Operacional: %OS% >> "%LOG_FILE%"
+echo [*] Arquitetura: %PROCESSOR_ARCHITECTURE% (64-bit/32-bit: %PROCESSOR_ARCHITEW6432%) >> "%LOG_FILE%"
+echo [*] Diretorio da Aplicacao: %~dp0 >> "%LOG_FILE%"
+echo. >> "%LOG_FILE%"
+
+echo [1/4] Testando executavel Node.js portatil... >> "%LOG_FILE%"
+if exist "%~dp0bin\\node.exe" (
+    echo   -> bin\\node.exe EXISTE na pasta. >> "%LOG_FILE%"
+    "%~dp0bin\\node.exe" -v >> "%LOG_FILE%" 2>&1
+    if errorlevel 1 (
+        echo   [FALHA] bin\\node.exe nao conseguiu executar! >> "%LOG_FILE%"
+        echo   Causa provavel: Windows 32-bit ou falta de DLLs do Visual C++. >> "%LOG_FILE%"
+    ) else (
+        echo   [OK] bin\\node.exe executou com sucesso! >> "%LOG_FILE%"
+    )
+) else (
+    echo   [ERRO] bin\\node.exe NAO ENCONTRADO na pasta bin! >> "%LOG_FILE%"
+)
+echo. >> "%LOG_FILE%"
+
+echo [2/4] Testando dependencias essenciais... >> "%LOG_FILE%"
+"%~dp0bin\\node.exe" -e "
+try {
+  require('node:sqlite');
+  console.log('  [OK] SQLite nativo carregado com sucesso.');
+} catch(e) {
+  console.log('  [ERRO] Falha no SQLite: ' + e.message);
+}
+try {
+  const fs = require('fs');
+  const dbPath = '%~dp0data\\\\analytics.db';
+  console.log('  analytics.db existe: ' + fs.existsSync(dbPath));
+} catch(e) {}
+" >> "%LOG_FILE%" 2>&1
+echo. >> "%LOG_FILE%"
+
+echo [3/4] Testando execucao do servidor na porta 3456... >> "%LOG_FILE%"
+start "" /B "%~dp0bin\\node.exe" "%~dp0src\\server.mjs" > "%~dp0data\\temp_server.log" 2>&1
+timeout /t 3 > nul
+
+netstat -ano | findstr "3456" >> "%LOG_FILE%" 2>&1
+if errorlevel 1 (
+    echo   [FALHA] A porta 3456 NAO esta escutando. >> "%LOG_FILE%"
+    echo   Log do servidor ao tentar subir: >> "%LOG_FILE%"
+    if exist "%~dp0data\\temp_server.log" type "%~dp0data\\temp_server.log" >> "%LOG_FILE%"
+) else (
+    echo   [OK] Servidor respondeu com sucesso na porta 3456! >> "%LOG_FILE%"
+)
+echo. >> "%LOG_FILE%"
+
+echo [4/4] Ultimas linhas de servidor_log.txt: >> "%LOG_FILE%"
+if exist "%~dp0data\\servidor_log.txt" (
+    powershell -NoProfile -Command "Get-Content '%~dp0data\\servidor_log.txt' -Tail 15" >> "%LOG_FILE%" 2>&1
+) else (
+    echo   (servidor_log.txt ainda nao foi criado) >> "%LOG_FILE%"
+)
+
+echo.
+echo ======================================================================
+echo   DIAGNOSTICO CONCLUIDO!
+echo   Abrindo o relatorio no Bloco de Notas...
+echo ======================================================================
+echo.
+
+notepad "%LOG_FILE%"
+`;
+writeWindowsFile(path.join(DIST_CLIENTE, 'DIAGNOSTICAR_SISTEMA.bat'), batDiagnostico);
+
 // 6.1 Compilar executável nativo Mesa_Compras_IA.exe se compilador disponível
 console.log('[6.1/8] Compilando executável nativo portátil (Mesa_Compras_IA.exe)...');
 const cscCompiler = 'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe';
@@ -350,7 +448,7 @@ const configNuvem = `# =========================================================
 # Exemplo de Link: https://drive.google.com/file/d/1aBcDeFgHiJkLmNoPqRsTuVwXyZ/view?usp=sharing
 # ==============================================================================
 GOOGLE_DRIVE_ID=
-VERSAO=1.1.2
+VERSAO=1.1.3
 CONTATO_SUPORTE=(17) 98120-5660
 `;
 writeWindowsFile(path.join(PASTA_ENTREGA, 'config_nuvem.ini'), configNuvem);

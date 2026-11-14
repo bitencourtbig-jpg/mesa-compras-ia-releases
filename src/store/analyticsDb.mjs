@@ -454,7 +454,18 @@ function initSchema(db) {
     if (!cols.includes('default_supplier_name')) db.exec('ALTER TABLE client_profiles ADD COLUMN default_supplier_name TEXT');
     if (!cols.includes('operation_mode')) db.exec("ALTER TABLE client_profiles ADD COLUMN operation_mode TEXT NOT NULL DEFAULT 'central'");
     if (!cols.includes('target_filial_id')) db.exec('ALTER TABLE client_profiles ADD COLUMN target_filial_id INTEGER');
+    if (!cols.includes('allow_pack_tolerance')) db.exec('ALTER TABLE client_profiles ADD COLUMN allow_pack_tolerance INTEGER NOT NULL DEFAULT 1');
+    if (!cols.includes('open_order_cutoff_days')) db.exec('ALTER TABLE client_profiles ADD COLUMN open_order_cutoff_days INTEGER NOT NULL DEFAULT 30');
+    if (!cols.includes('recent_entries_limit')) db.exec('ALTER TABLE client_profiles ADD COLUMN recent_entries_limit INTEGER NOT NULL DEFAULT 5');
+    if (!cols.includes('default_weeks')) db.exec('ALTER TABLE client_profiles ADD COLUMN default_weeks INTEGER NOT NULL DEFAULT 13');
+    if (!cols.includes('service_profile')) db.exec("ALTER TABLE client_profiles ADD COLUMN service_profile TEXT NOT NULL DEFAULT 'equilibrado'");
+    if (!cols.includes('active_sales_filials')) db.exec("ALTER TABLE client_profiles ADD COLUMN active_sales_filials TEXT NOT NULL DEFAULT '[2]'");
+    if (!cols.includes('ignored_filials')) db.exec("ALTER TABLE client_profiles ADD COLUMN ignored_filials TEXT NOT NULL DEFAULT '[3]'");
+  } catch (err) {
+    console.warn('Alerta na migracao de client_profiles:', err.message);
+  }
 
+  try {
     const skuCols = db.prepare('PRAGMA table_info(engine_sku_results)').all().map((c) => c.name);
     if (!skuCols.includes('curva_erp_ranking')) db.exec('ALTER TABLE engine_sku_results ADD COLUMN curva_erp_ranking TEXT');
     if (!skuCols.includes('curva_erp_classe')) db.exec('ALTER TABLE engine_sku_results ADD COLUMN curva_erp_classe TEXT');
@@ -467,14 +478,28 @@ function initSchema(db) {
     if (!skuCols.includes('filial_nome')) db.exec('ALTER TABLE engine_sku_results ADD COLUMN filial_nome TEXT');
     if (!skuCols.includes('filial_reduz')) db.exec('ALTER TABLE engine_sku_results ADD COLUMN filial_reduz TEXT');
     if (!skuCols.includes('transito_remanejamento')) db.exec('ALTER TABLE engine_sku_results ADD COLUMN transito_remanejamento REAL DEFAULT 0');
+  } catch (err) {
+    console.warn('Alerta na migracao de engine_sku_results:', err.message);
+  }
 
+  try {
     const grpCols = db.prepare('PRAGMA table_info(client_group_coverage_config)').all().map((c) => c.name);
     if (!grpCols.includes('codigo')) db.exec('ALTER TABLE client_group_coverage_config ADD COLUMN codigo TEXT');
     if (!grpCols.includes('desc_arvore')) db.exec('ALTER TABLE client_group_coverage_config ADD COLUMN desc_arvore TEXT');
     if (!grpCols.includes('grupo_pai_nome')) db.exec('ALTER TABLE client_group_coverage_config ADD COLUMN grupo_pai_nome TEXT');
     if (!grpCols.includes('grupo_filho_nome')) db.exec('ALTER TABLE client_group_coverage_config ADD COLUMN grupo_filho_nome TEXT');
   } catch (err) {
-    console.warn('Alerta na migracao de esquemas:', err.message);
+    console.warn('Alerta na migracao de client_group_coverage_config:', err.message);
+  }
+
+  try {
+    const polCols = db.prepare('PRAGMA table_info(client_filial_policies)').all().map((c) => c.name);
+    if (!polCols.includes('data_inauguracao')) db.exec('ALTER TABLE client_filial_policies ADD COLUMN data_inauguracao TEXT');
+    if (!polCols.includes('dias_carencia')) db.exec('ALTER TABLE client_filial_policies ADD COLUMN dias_carencia INTEGER DEFAULT 90');
+    if (!polCols.includes('bloquear_doacao_remanejamento')) db.exec('ALTER TABLE client_filial_policies ADD COLUMN bloquear_doacao_remanejamento INTEGER DEFAULT 1');
+    if (!polCols.includes('tipo_reposicao')) db.exec("ALTER TABLE client_filial_policies ADD COLUMN tipo_reposicao TEXT DEFAULT 'sellout_1to1'");
+  } catch (err) {
+    console.warn('Alerta na migracao de client_filial_policies:', err.message);
   }
 }
 

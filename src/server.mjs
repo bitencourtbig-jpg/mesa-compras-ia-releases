@@ -58,10 +58,10 @@ const PROJECT_ROOT = path.resolve(__dirname, '..');
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
 const PORT = Number(process.env.PORT || 3456);
 
-let APP_VERSION = '1.1.1';
+let APP_VERSION = '1.1.3';
 try {
   const pkgData = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
-  APP_VERSION = pkgData.version || '1.1.1';
+  APP_VERSION = pkgData.version || '1.1.3';
 } catch {}
 
 const MIME = {
