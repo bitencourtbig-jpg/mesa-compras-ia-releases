@@ -26,7 +26,72 @@ export function getAnalyticsDb(dbPath = DEFAULT_DB_PATH) {
 }
 
 function initSchema(db) {
+  // Migrações e compatibilidade de colunas para bancos virgens ou existentes
+  try {
+    const cols = db.prepare("PRAGMA table_info(cmed_catalog)").all();
+    if (cols && cols.length > 0) {
+      const colNames = new Set(cols.map(c => c.name));
+      if (!colNames.has('sig_key')) db.exec("ALTER TABLE cmed_catalog ADD COLUMN sig_key TEXT;");
+      if (!colNames.has('substancia_raw')) db.exec("ALTER TABLE cmed_catalog ADD COLUMN substancia_raw TEXT;");
+      if (!colNames.has('substancia_norm')) db.exec("ALTER TABLE cmed_catalog ADD COLUMN substancia_norm TEXT;");
+      if (!colNames.has('source_name')) db.exec("ALTER TABLE cmed_catalog ADD COLUMN source_name TEXT DEFAULT 'ANVISA';");
+    }
+    const esrCols = db.prepare("PRAGMA table_info(engine_sku_results)").all();
+    if (esrCols && esrCols.length > 0) {
+      const colNames = new Set(esrCols.map(c => c.name));
+      if (!colNames.has('filial_id')) {
+        db.exec("DROP TABLE IF EXISTS engine_sku_results;");
+      }
+    }
+    const erCols = db.prepare("PRAGMA table_info(engine_runs)").all();
+    if (erCols && erCols.length > 0) {
+      const colNames = new Set(erCols.map(c => c.name));
+      if (!colNames.has('client_code')) {
+        db.exec("DROP TABLE IF EXISTS engine_runs;");
+      }
+    }
+  } catch {}
+
   db.exec(`
+    CREATE TABLE IF NOT EXISTS system_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS system_licenses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_code TEXT NOT NULL,
+      cnpj TEXT NOT NULL,
+      machine_id TEXT NOT NULL,
+      license_key TEXT NOT NULL,
+      issued_at TEXT NOT NULL,
+      valid_until TEXT NOT NULL,
+      plan_type TEXT DEFAULT 'mensal',
+      max_filiais INTEGER DEFAULT 1,
+      status TEXT DEFAULT 'ACTIVE',
+      activated_at TEXT,
+      signature TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now', 'localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS issued_licenses_ledger (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_name TEXT NOT NULL,
+      cnpj TEXT NOT NULL,
+      machine_id TEXT NOT NULL,
+      contact_phone TEXT,
+      monthly_price REAL DEFAULT 0,
+      plan_type TEXT DEFAULT 'mensal',
+      days INTEGER DEFAULT 30,
+      license_key TEXT NOT NULL,
+      issued_at TEXT NOT NULL,
+      valid_until TEXT NOT NULL,
+      status TEXT DEFAULT 'ACTIVE',
+      notes TEXT,
+      created_at TEXT DEFAULT (datetime('now', 'localtime'))
+    );
+
     CREATE TABLE IF NOT EXISTS client_profiles (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       code TEXT UNIQUE NOT NULL,
