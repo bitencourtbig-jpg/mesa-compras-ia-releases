@@ -1,0 +1,11 @@
+.env
+node_modules/
+dist/
+data/*.db-journal
+data/*.db-wal
+*gerador*
+*licenca_generator*
+Painel_Proprietario*
+*.log
+.DS_Store
+Thumbs.db

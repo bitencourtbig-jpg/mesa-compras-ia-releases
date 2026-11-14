@@ -1,0 +1,1561 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mesa de Compras IA — Inteligência em Abastecimento Farmacêutico</title>
+  <link rel="stylesheet" href="/styles.css?v=1.1.0" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <svg class="icon-lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 2v20M2 12h20M4.93 4.93l14.14 14.14M19.07 4.93L4.93 19.07"/>
+        </svg>
+        <div>
+          <div class="brand-name">Mesa de Compras IA</div>
+          <div id="client-badge" class="brand-sub">FSConsultoria Farmacêutica</div>
+        </div>
+      </div>
+
+      <nav class="nav-list" aria-label="Navegacao principal">
+        <button class="nav-item active" data-view="home" title="Início &amp; Apresentação Executiva do Motor">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+          <span>🏠 Início &amp; Apresentação</span>
+        </button>
+        <button class="nav-item" data-view="cockpit">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
+          <span>Mesa de Compras &amp; IA</span>
+        </button>
+        <button class="nav-item" data-view="bi">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><rect x="7" y="10" width="3" height="7"/><rect x="12" y="6" width="3" height="11"/><rect x="17" y="13" width="3" height="4"/></svg>
+          <span>BI &amp; Indicadores</span>
+        </button>
+        <button class="nav-item" data-view="molecules">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="12" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="M8.7 10.7l6.6-3.4M8.7 13.3l6.6 3.4"/></svg>
+          <span>Moléculas &amp; CMED</span>
+        </button>
+        <button class="nav-item" data-view="transfers">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3l4 4-4 4"/><path d="M3 7h18"/><path d="M7 21l-4-4 4-4"/><path d="M21 17H3"/></svg>
+          <span>Remanejamento &amp; Lotes</span>
+        </button>
+        <button class="nav-item" data-view="pbm">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>
+          <span>PBM &amp; NSU / CPF</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button id="btn-open-welcome-gate" class="btn btn-secondary btn-sm" style="width:100%;justify-content:center;margin-bottom:6px;" title="Ver Capa de Abertura &amp; Licenciamento">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <span>Licença &amp; Acesso</span>
+        </button>
+        <button id="btn-open-glossary-side" class="btn btn-secondary btn-sm" style="width:100%;justify-content:center;margin-bottom:6px;">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <span>Legenda das Siglas</span>
+        </button>
+        <div id="cmed-status" class="meta-block">CMED: —</div>
+        <div id="run-meta" class="meta-block">Ref: —</div>
+      </div>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar">
+        <div class="topbar-title">
+          <h1 id="view-title">Mesa de Compras por Exceção</h1>
+          <span id="view-subtitle" class="muted">100% Mix (Medicamentos, Perfumaria, Suplementos e Varejo)</span>
+        </div>
+
+        <div class="topbar-controls">
+          <label class="control-group">
+            <span>Janela</span>
+            <select id="ctrl-weeks">
+              <option value="13">13 sem (91d)</option>
+              <option value="9">9 sem (63d)</option>
+              <option value="6">6 sem (42d)</option>
+            </select>
+          </label>
+          <label class="control-group">
+            <span>Perfil</span>
+            <select id="ctrl-profile">
+              <option value="enxuto">Enxuto</option>
+              <option value="equilibrado" selected>Equilibrado</option>
+              <option value="alta">Alta Disponibilidade</option>
+            </select>
+          </label>
+          <label class="control-group">
+            <span>Entradas</span>
+            <select id="ctrl-entries">
+              <option value="3">3 últimas</option>
+              <option value="5" selected>5 últimas</option>
+              <option value="10">10 últimas</option>
+              <option value="15">15 últimas</option>
+            </select>
+          </label>
+          <button id="btn-recalc" class="btn btn-primary">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+            <span>Sincronizar &amp; Calcular</span>
+          </button>
+          <button id="btn-open-quotation-modal" class="btn btn-primary" style="background:#047857;border-color:#059669;" title="Abre a tela de revisão e fechamento para exportar Cotefácil, Planilha Padrão ERP ou gravar no banco de dados">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
+            <span>Fechar Cotação / Pedido (<span id="btn-quotation-count">0</span>)</span>
+          </button>
+          <button id="btn-open-db-config" class="btn btn-secondary" title="Configurar conexão de banco MariaDB (Acesso Técnico Protegido por Senha Master)">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <span>Conexão / Banco (Técnico)</span>
+          </button>
+          <button id="btn-license-badge" class="btn btn-secondary btn-license" title="Status da Assinatura / Licença de Uso do Software">
+            <span id="license-indicator-dot" class="sub-dot active"></span>
+            <span id="txt-license-badge">Assinatura: 30d</span>
+          </button>
+          <button id="btn-open-group-config" class="btn btn-secondary" title="Configurar parâmetros de dias mínimo e máximo de estoque por Grupo de Produtos e Curva ABC">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
+            <span>Grupos &amp; Curvas</span>
+          </button>
+          <button id="btn-export-xlsx" class="btn btn-secondary" title="Baixa pasta Excel completa com Parecer IA, Melhor Custo, Moleculas e Lotes">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            <span>Excel Decisão (.xlsx)</span>
+          </button>
+          <button id="btn-export-cotefacil" class="btn btn-secondary" title="Planilha limpa EAN + Quantidade pronta para envio ao Cotefacil ou distribuidores">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <span>Cotefácil (.xlsx)</span>
+          </button>
+          <a id="btn-export" class="btn btn-ghost" href="/api/export/buy.csv" title="Exportacao leve CSV separada por ponto e virgula">
+            <span>CSV</span>
+          </a>
+        </div>
+      </header>
+
+      <!-- BARRA DE CONTROLE MULTI-LOJA & POLÍTICAS DE REDE -->
+      <section id="multiloja-bar" class="multiloja-bar">
+        <div class="multiloja-left">
+          <span class="multiloja-title">🏬 Visão da Rede:</span>
+          <div id="multiloja-chips" class="multiloja-chips">
+            <button type="button" class="filial-chip active" data-filial="all">
+              <span class="filial-chip-icon">🏬</span>
+              <span class="filial-chip-label">Rede Consolidada</span>
+            </button>
+            <!-- Chips dinâmicos: L02 • AMAZO, L03 • DR.VI, L04 • H. GABRIEL (Carência) -->
+          </div>
+        </div>
+        <div class="multiloja-right" style="display:flex;gap:8px;align-items:center;">
+          <button id="btn-goto-transfers" class="btn btn-secondary btn-sm" type="button" style="border-color:#0f766e;color:#0f766e;font-weight:700;display:inline-flex;align-items:center;gap:6px;" title="Acessar Central de Remanejamento &amp; Transferências entre Lojas">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;"><path d="M17 3l4 4-4 4"/><path d="M3 7h18"/><path d="M7 21l-4-4 4-4"/><path d="M21 17H3"/></svg>
+            <span>🔄 Remanejamento &amp; Lotes</span>
+            <span id="badge-top-transfers" class="badge" style="background:#0f766e;color:#fff;font-size:10px;padding:2px 7px;border-radius:10px;display:none;">0 rotas</span>
+          </button>
+          <button id="btn-open-filiais-policies" class="btn btn-secondary btn-sm" type="button" title="Configurar período de carência de lojas novas e travas de remanejamento">
+            ⚙️ Políticas de Filiais &amp; Carência
+          </button>
+        </div>
+      </section>
+
+      <section id="kpi-strip" class="kpi-strip" aria-label="Indicadores da rede"></section>
+
+      <div id="status-banner" class="banner hidden" role="status"></div>
+
+      <!-- VIEW 0: HOME DE BOAS-VINDAS & APRESENTAÇÃO EXECUTIVA -->
+      <section id="view-home" class="view-section">
+        <div class="home-container">
+          <!-- HERO BANNER -->
+          <div class="home-hero-card">
+            <div class="home-hero-content">
+              <div class="home-badge-tag">
+                <span class="pulse-dot"></span>
+                <span>FSCONSULTORIA FARMACÊUTICA • MESA DE COMPRAS IA</span>
+              </div>
+              <h1 class="home-hero-title">Maximização de Caixa, Ruptura Zero e Compras de Alta Margem</h1>
+              <p class="home-hero-desc">
+                A plataforma de inteligência desenvolvida para transformar as compras da sua farmácia em um gerador de rentabilidade contínua:
+                calcula a <strong>demanda real expurgando rupturas</strong> com matriz ABCxXYZ, compara apresentações por <strong>molécula para comprar mais barato</strong>, audita <strong>PBM com precisão</strong> e prioriza o <strong>remanejamento entre filiais</strong>.
+              </p>
+              <div class="home-hero-actions">
+                <button id="btn-home-start" class="btn btn-hero-start" type="button">
+                  <span>🚀 Comece Aqui • Acessar Mesa de Compras</span>
+                  <svg class="icon-inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:18px;height:18px;"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                </button>
+                <button id="btn-home-open-config" class="btn btn-hero-secondary" type="button">
+                  <svg class="icon-inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                  <span>🔒 Setup &amp; Banco (Técnico Master)</span>
+                </button>
+                <button id="btn-home-open-cmed" class="btn btn-hero-secondary" type="button">
+                  <svg class="icon-inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                  <span>📥 Importar Tabela CMED</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- CARD DE ASSINATURA DINÂMICO & SUPORTE FSCONSULTORIA (COM ALERTA 10 DIAS) -->
+          <div id="home-license-card" class="home-license-card"></div>
+
+          <!-- STATUS DO AMBIENTE (CMED & BANCO DA FARMÁCIA) -->
+          <div id="home-setup-status-grid" class="home-setup-grid"></div>
+
+          <!-- OS 4 PILARES DE VALOR DO MOTOR -->
+          <div class="home-features-section">
+            <div class="home-section-header">
+              <h2>Os 4 Superpoderes de Inteligência do Motor</h2>
+              <p class="muted">Como a inteligência analítica gera economia imediata e mais margem na sua drogaria</p>
+            </div>
+
+            <div class="home-cards-grid">
+              <div class="feature-card">
+                <div class="feature-icon" style="background:#dcfce7; color:#15803d;">📈</div>
+                <h3>Demanda Real &amp; Ajuste de Ruptura (ABCxXYZ)</h3>
+                <p>Sistemas e ERPs convencionais calculam média simples de vendas. Se o produto zerou por 15 dias, a média cai pela metade e o sistema compra menos do que devia! Nosso algoritmo expurga dias de estoque zerado e projeta a demanda real não atendida.</p>
+                <span class="feature-tag">Elimina Rupturas de Curva A</span>
+              </div>
+
+              <div class="feature-card">
+                <div class="feature-icon" style="background:#e0f2fe; color:#0369a1;">🔬</div>
+                <h3>Varredura por Molécula &amp; Menor Custo CMED</h3>
+                <p>Cruza 27.000 apresentações oficiais da ANVISA/CMED. Ao cotar um genérico ou similar, o motor compara todas as marcas concorrentes da mesma fórmula e concentração, apontando o laboratório de menor custo histórico registrado.</p>
+                <span class="feature-tag">Economia Média de 12% a 24%</span>
+              </div>
+
+              <div class="feature-card">
+                <div class="feature-icon" style="background:#fef3c7; color:#b45309;">🔄</div>
+                <h3>Remanejamento Inteligente de Rede (Transfer-First)</h3>
+                <p>Antes de gastar dinheiro com compras externas em distribuidores, o motor localiza estoques parados ou excedentes em filiais da mesma rede e gera guias de transferência interna, destravando capital de giro parado.</p>
+                <span class="feature-tag">Protege Caixa &amp; Validades Curtas</span>
+              </div>
+
+              <div class="feature-card">
+                <div class="feature-icon" style="background:#f3e8ff; color:#7e22ce;">💊</div>
+                <h3>Auditoria de PBM &amp; Blindagem de Margem</h3>
+                <p>Vendas subsidiadas de programas de fidelidade e convênios operam com margens reduzidas. O motor audita cupons por NSU/Cartão, isola o Sell-Out subsidiado da venda pura e impede estoques inflados de baixa rentabilidade.</p>
+                <span class="feature-tag">Margem Líquida Protegida</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- ORIENTAÇÃO DO ANALISTA / CRIAÇÃO DE USUÁRIO SELECT -->
+          <div class="home-analyst-guide">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+              <h3 style="margin:0; font-size:14px; display:flex; align-items:center; gap:8px;">
+                <span>📘 Guia de Implantação do Técnico • Conexão Segura ao Banco de Dados da Drogaria</span>
+              </h3>
+              <span class="badge" style="background:#dbeafe; color:#1e40af; font-size:11px;">100% Somente Leitura (SELECT)</span>
+            </div>
+            <p style="font-size:12.5px; color:var(--text-muted); line-height:1.5; margin-bottom:12px;">
+              Para total tranquilidade e conformidade da drogaria, configure um usuário no banco MariaDB exclusivo com permissão de <strong>SELECT</strong>. O motor opera em modo estrito de leitura, garantindo que o ERP permaneça totalmente intocado e seguro.
+            </p>
+            <div style="background:#0f172a; border-radius:8px; padding:12px 16px; position:relative;">
+              <pre id="home-sql-code" style="color:#a5f3fc; font-family:monospace; font-size:12.5px; margin:0; line-height:1.5;">CREATE USER IF NOT EXISTS 'compras_consulta'@'%' IDENTIFIED BY 'Consultoria@2026';
+GRANT SELECT ON gerente.* TO 'compras_consulta'@'%';
+FLUSH PRIVILEGES;</pre>
+              <button id="btn-copy-home-sql" class="btn btn-secondary btn-sm" type="button" style="position:absolute; right:12px; top:12px; font-size:11.5px;">📋 Copiar Comando SQL</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 1: COCKPIT SKUS -->
+      <section id="view-cockpit" class="view-section hidden">
+        <div class="toolbar">
+          <div class="tabs" id="sku-tabs">
+            <button class="tab active" data-tab="exceptions">Exceções IA</button>
+            <button class="tab" data-tab="buy">Sugestão de Compra</button>
+            <button class="tab" data-tab="selected">⭐ Meus Selecionados (<span id="selected-tab-count">0</span>)</button>
+            <button class="tab" data-tab="pbm_replenish">💊 Reposição PBM (<span id="pbm-tab-count">0</span>)</button>
+            <button class="tab" data-tab="groups_summary">🌳 Resumo por Grupo &amp; Árvore ERP</button>
+            <button class="tab" data-tab="dismissed">🚫 Não Comprar Agora (<span id="dismissed-tab-count">0</span>)</button>
+            <button class="tab" data-tab="non_med">Não-Medicamentos</button>
+            <button class="tab" data-tab="expiring">Validade Curta / Vencidos</button>
+            <button class="tab" data-tab="negative">Saldo Negativo</button>
+            <button class="tab" data-tab="all">Todos</button>
+          </div>
+
+          <div class="filters-row">
+            <input id="filter-q" type="search" placeholder="Buscar produto, código, EAN ou laboratório..." />
+            <select id="filter-abc">
+              <option value="">Curva: Todas</option>
+              <option value="A">Curva A (55%)</option>
+              <option value="B">Curva B (35%)</option>
+              <option value="C">Curva C (10%)</option>
+              <option value="D">Curva D (Sem giro)</option>
+            </select>
+            <select id="filter-macro">
+              <option value="">Categoria: Todas</option>
+              <option value="MEDICAMENTO">Medicamento</option>
+              <option value="PERFUMARIA_HPC">Perfumaria / HPC</option>
+              <option value="SUPLEMENTO_VITAMINA">Suplementos / Nutrição</option>
+              <option value="DERMOCOSMETICO">Dermocosméticos</option>
+              <option value="CONVENIENCIA_VAREJO">Conveniência / Varejo</option>
+            </select>
+            <select id="filter-labora" style="width: 175px;" title="Filtrar por Fabricante / Laboratório farmacêutico ou marca">
+              <option value="">🏢 Fabricante: Todos</option>
+            </select>
+            <select id="filter-grupo-pai">
+              <option value="">Grupo Pai: Todos</option>
+            </select>
+            <select id="filter-grupo-filho">
+              <option value="">Grupo Filho: Todos</option>
+            </select>
+            <select id="filter-stock-status">
+              <option value="">Estoque: Todos</option>
+              <option value="zero">🔴 Estoque Zerado (0)</option>
+              <option value="positive">🟢 Estoque Positivo (&gt; 0)</option>
+              <option value="transit">🚚 Em Trânsito (TR &gt; 0)</option>
+            </select>
+            <select id="filter-pbm" style="width: 175px;" title="Filtrar por impacto e reposição de programas PBM na análise">
+              <option value="">PBM: Todos os Itens</option>
+              <option value="pbm_auto_deducted">💊 Reposição PBM Deduzida</option>
+              <option value="with_pbm">📦 Com Venda PBM (91d)</option>
+              <option value="pure_buy">🛒 Compra Pura (Sem PBM)</option>
+            </select>
+            <div class="horizon-selector-box" title="Defina o horizonte de dias de cobertura para projeção e cálculo da sugestão de compras">
+              <span class="horizon-label">Horizonte:</span>
+              <button type="button" class="btn-horizon" data-days="3">3d</button>
+              <button type="button" class="btn-horizon" data-days="5">5d</button>
+              <button type="button" class="btn-horizon" data-days="7">7d</button>
+              <button type="button" class="btn-horizon" data-days="15">15d</button>
+              <button type="button" class="btn-horizon active" data-days="padrao">Padrão Sugerido (30d)</button>
+            </div>
+            <select id="filter-sort">
+              <option value="impact">Ordenar: Maior Compra R$</option>
+              <option value="roi">Ordenar: Maior ROI Marginal</option>
+              <option value="lost">Ordenar: Maior Venda Perdida</option>
+              <option value="expiry">Ordenar: Lote Vencendo</option>
+            </select>
+            <div class="budget-box">
+              <label for="filter-budget">Simular verba (R$):</label>
+              <input id="filter-budget" type="number" min="0" step="1000" placeholder="Ex: 50000" />
+              <button id="btn-budget" class="btn btn-secondary">Aplicar</button>
+              <button id="btn-budget-clear" class="btn btn-ghost hidden">Limpar</button>
+              <button id="btn-budget-audit" class="btn btn-secondary btn-sm hidden" type="button" style="margin-left:6px;" title="Ver detalhes de quais produtos entraram e quais foram cortados pelo teto de verba">
+                📊 Detalhes do Corte
+              </button>
+            </div>
+          </div>
+
+          <!-- ATALHOS RÁPIDOS DE FABRICANTES / LABORATÓRIOS (IMPECCABLE UX) -->
+          <div id="quick-labora-wrapper" class="quick-labora-wrapper">
+            <div class="quick-labora-header">
+              <span class="quick-labora-label">
+                <svg class="icon-inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18M3 7v14M21 7v14M6 11h4M6 15h4M14 11h4M14 15h4M9 3h6v4H9z"/></svg>
+                Principais Fabricantes:
+              </span>
+              <span class="quick-labora-hint">Clique para filtrar direto pelo laboratório farmacêutico</span>
+            </div>
+            <div id="quick-labora-chips" class="quick-chips-row">
+              <button type="button" class="quick-chip active" data-lab="">🏢 Todos</button>
+            </div>
+          </div>
+
+          <div class="selection-bar">
+            <div class="selection-left">
+              <span id="selection-status" class="selection-pill">Nenhum item marcado (exportará o filtro atual)</span>
+              <button id="btn-select-recommended" class="btn btn-secondary btn-sm">Marcar Recomendados desta Lista</button>
+              <button id="btn-clear-selection" class="btn btn-ghost btn-sm hidden">Limpar Seleção</button>
+              <span id="active-extra-chip" class="badge badge-info hidden" style="cursor:pointer;"></span>
+            </div>
+            <button id="btn-open-glossary-inline" class="btn-link-help">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              Entender Siglas (ABC/XYZ, DDV, LT, PBM, FEFO)
+            </button>
+          </div>
+        </div>
+
+        <!-- HERO CARD DE COTAÇÃO & IMPACTO FINANCEIRO (REV-018) -->
+        <div id="hero-quotation-card" class="hero-quotation-card hidden"></div>
+
+        <div id="table-summary" class="table-summary"></div>
+
+        <!-- CONTAINER DA ÁRVORE DE GRUPOS DO BIG (EXIBIDO NA ABA groups_summary) -->
+        <div id="view-groups-summary" class="group-tree-container hidden"></div>
+
+        <div id="table-wrap-skus" class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width:32px;text-align:center;"><input id="chk-select-all" type="checkbox" title="Selecionar todos visiveis" /></th>
+                <th class="th-sortable" data-sort="descricao"><span class="th-hint" data-hint="sku">SKU / Produto / EAN</span></th>
+                <th><span class="th-hint" data-hint="abcxyz">Cat. / Curva</span></th>
+                <th class="num th-sortable" data-sort="estoque"><span class="th-hint" data-hint="estoque">Estoque</span></th>
+                <th class="num th-sortable" data-sort="ddv"><span class="th-hint" data-hint="ddv">DDV Proj.</span></th>
+                <th class="num"><span class="th-hint" data-hint="lt">LT (d)</span></th>
+                <th class="num"><span class="th-hint" data-hint="minmax">Mín / Máx</span></th>
+                <th class="num th-sortable" data-sort="cob"><span class="th-hint" data-hint="cob">Cob.</span></th>
+                <th class="num th-sortable" data-sort="custo"><span class="th-hint" data-hint="custo">Custo Un.</span></th>
+                <th class="num th-sortable" data-sort="sugestao_un"><span class="th-hint" data-hint="comprar">Comprar</span></th>
+                <th class="num th-sortable" data-sort="sugestao_rs">Total (R$)</th>
+                <th><span class="th-hint" data-hint="confianca">Decisão Direta &amp; Confiança IA</span></th>
+                <th style="text-align:center;width:120px;">Ações</th>
+              </tr>
+            </thead>
+            <tbody id="sku-tbody"></tbody>
+          </table>
+        </div>
+
+        <!-- CONTROLES DE PAGINAÇÃO & DENSIDADE (REV-017) -->
+        <div id="table-pagination" class="pagination-bar"></div>
+      </section>
+
+      <!-- VIEW 2: MOLECULAS & CMED -->
+      <section id="view-molecules" class="view-section hidden">
+        <div class="toolbar">
+          <div class="filters-row">
+            <input id="mol-q" type="search" placeholder="Filtrar princípio ativo ou dosagem (ex: LOSARTANA, 50MG)..." />
+            <label class="checkbox-inline">
+              <input id="mol-only-savings" type="checkbox" checked />
+              <span>Apenas grupos com economia evitável</span>
+            </label>
+          </div>
+          <div class="actions-row">
+            <button id="btn-open-sync-big-apres" class="btn btn-primary" type="button" style="background:#0284c7;border-color:#0369a1;font-weight:600;display:inline-flex;align-items:center;gap:6px;" title="Cria e vincula as apresentações normalizadas pela IA no cadastro do ERP com autorização em lote">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+              <span>Sincronizar De &rarr; Para com o ERP (produto_apresentacao)</span>
+            </button>
+          </div>
+        </div>
+        <div id="mol-backups-bar" class="info-strip"></div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Chave Canônica (Molécula)</th>
+                <th class="num">SKUs / Labs</th>
+                <th class="num">Estoque Rede</th>
+                <th class="num">Giro/Dia</th>
+                <th class="num">Cob. Mol.</th>
+                <th class="num">Soma SKUs</th>
+                <th class="num">Nec. Líquida</th>
+                <th class="num">Economia (R$)</th>
+                <th>Melhor Custo Atual &amp; Ação</th>
+              </tr>
+            </thead>
+            <tbody id="mol-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- VIEW 3: REMANEJAMENTO & LOTES -->
+      <section id="view-transfers" class="view-section hidden">
+        <div class="transfers-header-strip" style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:16px;">
+          <div>
+            <h2 style="font-size:18px;font-weight:700;display:flex;align-items:center;gap:8px;margin:0 0 4px 0;">
+              <span>🔄 Central de Remanejamento &amp; Transferências Entre Lojas</span>
+              <span class="badge badge-accent">Transfer-First Inteligente</span>
+            </h2>
+            <div class="muted" style="font-size:12.5px;">
+              O motor resgata excessos e lotes curtos (FEFO) entre filiais maduras, protegendo lojas recém-inauguradas e reduzindo compras desnecessárias em distribuidores.
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;">
+            <button id="btn-refresh-transfers" class="btn btn-secondary btn-sm" type="button">🔄 Atualizar Rotas</button>
+          </div>
+        </div>
+
+        <div id="transfers-kpi-strip" class="kpi-strip" style="margin-bottom:18px;">
+          <!-- Preenchido via JS: Rotas, Unidades, Economia, Guias Emitidas -->
+        </div>
+
+        <!-- ROTAS SUGERIDAS (AGRUPADAS) -->
+        <div class="panel" style="margin-bottom:24px;">
+          <div class="panel-head">
+            <h3 style="margin:0;font-size:14px;font-weight:700;">🚚 Rotas de Transferência Sugeridas para a Rodada</h3>
+            <span id="transfer-routes-count" class="muted" style="font-size:12px;"></span>
+          </div>
+          <div id="transfer-routes-container" class="transfer-routes-container" style="padding:16px;display:flex;flex-direction:column;gap:16px;">
+            <!-- Preenchido via JS com cards de rotas -->
+          </div>
+        </div>
+
+        <!-- ORDENS DE TRANSFERÊNCIA ATIVAS NO MOTOR -->
+        <div class="panel" style="margin-bottom:24px;">
+          <div class="panel-head">
+            <h3 style="margin:0;font-size:14px;font-weight:700;">📋 Guias de Transferência Emitidas (Trânsito Interno no Motor)</h3>
+            <span id="active-transfers-count" class="muted" style="font-size:12px;"></span>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Código</th>
+                  <th>Origem ➔ Destino</th>
+                  <th>Emissão</th>
+                  <th class="num">Itens</th>
+                  <th class="num">Qtd (un)</th>
+                  <th class="num">Valor (R$)</th>
+                  <th>Status</th>
+                  <th>Ações Operacionais</th>
+                </tr>
+              </thead>
+              <tbody id="motor-transfers-tbody">
+                <!-- Preenchido via JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- PAINEL FEFO / LOTES CRÍTICOS -->
+        <div class="panel">
+          <div class="panel-head">
+            <h3 style="margin:0;font-size:14px;font-weight:700;">⏳ Lotes Críticos / FEFO (&le; 90d) ou Vencidos em `lote_novo`</h3>
+            <span id="expiring-count" class="muted" style="font-size:12px;"></span>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Filial</th>
+                  <th>Produto</th>
+                  <th class="num">Menor Validade</th>
+                  <th class="num">Vencendo 90d</th>
+                  <th class="num">Vencido</th>
+                  <th class="num">Risco (R$)</th>
+                  <th class="num">Margem / Ação Recomendada</th>
+                </tr>
+              </thead>
+              <tbody id="expiring-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 4: PBM & NSU / CPF -->
+      <section id="view-pbm" class="view-section hidden">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Regras de Reposição Automática por PBM (Detectados via `transacao_pbm`)</h2>
+            <span class="muted">Altere como o motor desconta cada programa na sugestão de compra</span>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Operadora</th>
+                  <th>Projeto PBM</th>
+                  <th class="num">Cupons (91d)</th>
+                  <th class="num">Unidades (91d)</th>
+                  <th>Reposição Automática</th>
+                </tr>
+              </thead>
+              <tbody id="pbm-rules-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-top: 16px;">
+          <div class="panel-head">
+            <h2>Trilha Auditável de Vendas PBM (NSU, Autorização e Cartão/CPF)</h2>
+            <input id="pbm-q" type="search" placeholder="Buscar NSU, autorização, CPF/cartão ou produto..." />
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Data / Hora</th>
+                  <th>Operadora / Projeto</th>
+                  <th>NSU</th>
+                  <th>Autorização</th>
+                  <th>Cartão / CPF</th>
+                  <th>Produto</th>
+                  <th class="num">Desc %</th>
+                  <th class="num">Desc (R$)</th>
+                </tr>
+              </thead>
+              <tbody id="pbm-audit-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 5: BI EXECUTIVO -->
+      <section id="view-bi" class="view-section hidden">
+        <div id="bi-content" class="bi-layout">
+          <div class="muted" style="padding:24px;text-align:center;">Carregando painel de BI...</div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- MODAL LEGENDA E GLOSSARIO -->
+  <div id="glossary-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="glossary-title">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div>
+          <h2 id="glossary-title">Legenda Completa de Siglas &amp; Guia Prático do Comprador</h2>
+          <div class="muted">Entenda cada indicador, sigla de farmácia e código de exceção gerado pelo motor</div>
+        </div>
+        <button id="btn-close-glossary" class="btn btn-ghost" aria-label="Fechar legenda">Fechar (Esc)</button>
+      </div>
+      <div class="modal-toolbar">
+        <input id="glossary-q" type="search" placeholder="Filtrar sigla ou termo (ex: AX, DDV, PBM, FEFO, CMED, RUPTURA)..." />
+        <div id="glossary-section-tabs" class="tabs"></div>
+      </div>
+      <div id="glossary-body" class="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- MODAL CONFIGURAÇÃO MULTI-CLIENTE & BANCO DE DADOS BIG -->
+  <div id="db-config-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="db-config-title">
+    <div class="modal-card" style="width: min(880px, 96vw); max-height: 92vh; display: flex; flex-direction: column;">
+      <div class="modal-head">
+        <div>
+          <h2 id="db-config-title">⚙️ Conexão &amp; Configuração da Farmácia</h2>
+          <div class="muted">Parâmetros de acesso ao MariaDB da Farmácia e Fornecedor Padrão de Pedido</div>
+        </div>
+        <button id="btn-close-db-config" class="btn btn-ghost" aria-label="Fechar configuracao">Fechar (Esc)</button>
+      </div>
+      <div class="modal-body">
+        <div style="background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; padding: 10px 14px; border-radius: 6px; font-size: 12px; display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px;">
+          <span>🔒 <strong>Área Técnica Restrita:</strong> Parâmetros de IP, porta e banco de dados protegidos. Apenas técnicos da consultoria possuem permissão de alteração.</span>
+          <button id="btn-lock-db-config" type="button" class="btn btn-sm btn-secondary" style="background:#fff; font-weight:600; color:#dc2626;">🔒 Bloquear Agora</button>
+        </div>
+        <div class="db-guidance-box" style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:12px 16px; margin-bottom:14px;">
+          <div style="font-weight:700; color:#166534; font-size:12.5px; display:flex; align-items:center; justify-content:space-between;">
+            <span>🛡️ Recomendação para o Cliente: Criar Usuário Somente Leitura (SELECT)</span>
+            <button id="btn-copy-modal-sql" type="button" class="btn btn-secondary btn-sm" style="font-size:11px; padding:3px 8px;">📋 Copiar SQL</button>
+          </div>
+          <div style="font-size:11.5px; color:#15803d; margin:4px 0 8px; line-height:1.4;">
+            Execute no HeidiSQL / DBeaver do servidor para garantir que o motor nunca faça alterações no ERP:
+          </div>
+          <div style="background:#0f172a; color:#a5f3fc; border-radius:6px; padding:8px 12px; font-family:monospace; font-size:11.5px; overflow-x:auto;">
+            <code>CREATE USER IF NOT EXISTS 'compras_consulta'@'%' IDENTIFIED BY 'Consultoria@2026'; GRANT SELECT ON gerente.* TO 'compras_consulta'@'%'; FLUSH PRIVILEGES;</code>
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="form-group" style="grid-column: span 2;">
+            <label for="cfg-operation-mode">🏢 Modo de Operação do Motor</label>
+            <select id="cfg-operation-mode" class="form-select" style="font-weight: 600;">
+              <option value="central">Central / Escritório (Consolidador Multi-Loja — ID=1 e filiais da rede)</option>
+              <option value="local">Loja Local / Filial Específica (Motor instalado diretamente na loja física)</option>
+            </select>
+            <div class="muted" style="font-size:11px; margin-top:2px;">
+              No modo Central, o comprador visualiza dados consolidados ou seleciona qualquer filial. No modo Loja Local, o cálculo e geração de pedidos travam exclusivamente no CNPJ da loja configurada.
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="cfg-client-name">Nome da Farmácia / Rede</label>
+            <input id="cfg-client-name" type="text" placeholder="Ex: Drogaria Apresentação" />
+          </div>
+          <div class="form-group">
+            <label for="cfg-db-host">Host / IP do Banco MariaDB</label>
+            <input id="cfg-db-host" type="text" placeholder="127.0.0.1 ou IP do Servidor do Banco" />
+          </div>
+          <div class="form-group">
+            <label for="cfg-db-port">Porta do Banco</label>
+            <input id="cfg-db-port" type="number" placeholder="3306" />
+          </div>
+          <div class="form-group">
+            <label for="cfg-db-user">Usuário do Banco</label>
+            <input id="cfg-db-user" type="text" placeholder="compras_consulta ou root" />
+          </div>
+          <div class="form-group">
+            <label for="cfg-db-password">Senha do Banco</label>
+            <input id="cfg-db-password" type="password" placeholder="Senha de acesso" />
+          </div>
+          <div class="form-group">
+            <label for="cfg-db-name">Nome do Banco (Database)</label>
+            <input id="cfg-db-name" type="text" placeholder="gerente" />
+          </div>
+          <div class="form-group">
+            <label for="cfg-buyer-filial">Filial Compradora (ID Loja)</label>
+            <div style="display:flex; gap:8px;">
+              <input id="cfg-buyer-filial" type="number" placeholder="2" style="width: 80px;" />
+              <select id="cfg-buyer-filial-select" class="form-select hidden" style="flex: 1; font-weight: 500; font-size: 13px;"></select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="cfg-buyer-cnpj">CNPJ Loja Destinatária</label>
+            <input id="cfg-buyer-cnpj" type="text" placeholder="28660206000167" />
+          </div>
+        </div>
+
+        <div style="margin-top: 10px; padding: 12px; background: var(--bg-subtle); border-radius: var(--radius); border: 1px solid var(--border);">
+          <div class="form-group">
+            <label for="cfg-supplier-id">ID do Fornecedor Padrão (Tabela Fornecedores do ERP)</label>
+            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+              <input id="cfg-supplier-id" type="number" style="width: 110px;" placeholder="Ex: 10" />
+              <button id="btn-search-supplier" class="btn btn-secondary btn-sm" type="button">Buscar Nome</button>
+              <button id="btn-browse-suppliers" class="btn btn-secondary btn-sm" type="button">🔍 Procurar na Lista do Banco</button>
+            </div>
+            <div id="supplier-live-feedback" class="supplier-lookup-card">
+              Digite o ID do fornecedor para confirmar o nome e CNPJ cadastrados no banco da farmácia.
+            </div>
+          </div>
+        </div>
+
+        <div id="conn-test-feedback" class="conn-status-box hidden"></div>
+      </div>
+      <div class="modal-footer" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+        <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--text-muted); cursor:pointer;">
+          <input type="checkbox" id="cfg-force-reset" />
+          <span>Resetar cálculos e sugestões antigas ao salvar</span>
+        </label>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button id="btn-test-db-connection" class="btn btn-secondary" type="button">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            <span>Testar Conexão em Tempo Real</span>
+          </button>
+          <button id="btn-cancel-db-config" class="btn btn-ghost" type="button">Cancelar</button>
+          <button id="btn-save-db-config" class="btn btn-primary" type="button">Salvar Configurações</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL BUSCADOR DE FORNECEDORES -->
+  <div id="supplier-picker-modal" class="modal-backdrop hidden" style="z-index: 1200;" role="dialog" aria-modal="true" aria-labelledby="supplier-picker-title">
+    <div class="modal-card" style="width: min(720px, 96vw); max-height: 85vh;">
+      <div class="modal-head">
+        <div>
+          <h3 id="supplier-picker-title" style="margin:0 0 4px 0; font-size:16px;">🔍 Fornecedores Cadastrados no Banco de Dados</h3>
+          <div class="muted" style="font-size:12px;">Selecione o fornecedor que representará o lote/pedido na tabela de fornecedores</div>
+        </div>
+        <button id="btn-close-supplier-picker" class="btn btn-ghost" type="button">Fechar (Esc)</button>
+      </div>
+      <div class="modal-body" style="gap:10px;">
+        <input id="supplier-picker-search" type="text" placeholder="Digite Razão Social, Fantasia ou CNPJ para filtrar..." style="width:100%; padding:9px 12px; font-size:13px; border:1px solid var(--border); border-radius:var(--radius);" />
+        <div id="supplier-picker-loading" class="muted hidden" style="padding:12px; text-align:center;">Carregando fornecedores do banco MariaDB...</div>
+        <div id="supplier-picker-results" style="max-height: 400px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-card);">
+          <!-- Lista de fornecedores preenchida via JS -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL VARREDURA INTELIGENTE DA MOLÉCULA & DECISÃO DE COMPRA -->
+  <div id="molecule-sweep-modal" class="modal-backdrop hidden" style="z-index: 1250;" role="dialog" aria-modal="true" aria-labelledby="sweep-modal-title">
+    <div class="modal-card" style="width: min(1220px, 98vw); max-height: 94vh;">
+      <div class="modal-head">
+        <div>
+          <h2 id="sweep-modal-title" style="margin:0 0 4px 0; font-size: 17px; display:flex; align-items:center; gap:8px;">
+            <span>🔬 Varredura Inteligente da Molécula</span>
+            <span id="sweep-modal-badge" class="badge badge-accent">IA Compras</span>
+          </h2>
+          <div id="sweep-modal-subtitle" class="muted" style="font-size:12px;">Visão matricial por loja de estoque, cobertura e custos de todos os fabricantes concorrentes da mesma apresentação</div>
+        </div>
+        <button id="btn-close-sweep-modal" class="btn btn-ghost" type="button">Fechar (Esc)</button>
+      </div>
+
+      <div class="modal-body" style="gap: 14px; overflow-y: auto;">
+        <!-- Banner de Diagnóstico Contextual da IA -->
+        <div id="sweep-ia-banner" class="sweep-banner">
+          <!-- Preenchido via JS com recomendação e análise de estoque -->
+        </div>
+
+        <!-- Tabela comparativa dos Laboratórios da Molécula com coluna por filial -->
+        <div style="border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; max-height: 420px; background: var(--bg-card);">
+          <table class="table" style="font-size: 11.5px; margin: 0; min-width: 980px;">
+            <thead id="sweep-thead">
+              <!-- Gerado dinamicamente com as lojas reais do cliente conectado -->
+            </thead>
+            <tbody id="sweep-tbody">
+              <!-- Linhas de SKUs preenchidas dinamicamente -->
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Barra inferior de Decisão Rápida do Comprador -->
+        <div id="sweep-action-bar" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; padding:12px 16px; background:var(--bg-subtle); border-radius:var(--radius); border:1px solid var(--border);">
+          <!-- Botoes de acao direta preenchidos via JS -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL REVISÃO E FECHAMENTO DE COTAÇÃO / PEDIDO -->
+  <div id="quotation-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="quotation-title">
+    <div class="modal-card" style="width: min(1200px, 98vw); max-height: 94vh;">
+      <div class="modal-head">
+        <div>
+          <h2 id="quotation-title">🛒 Revisão &amp; Fechamento de Cotação de Compras</h2>
+          <div class="muted">Selecione, edite as quantidades e gere arquivos para cotação externa ou grave diretamente no ERP</div>
+        </div>
+        <button id="btn-close-quotation" class="btn btn-ghost" aria-label="Fechar cotacao">Fechar (Esc)</button>
+      </div>
+
+      <div class="modal-body" style="gap: 12px;">
+        <div class="quotation-summary-bar">
+          <div class="summary-pill">
+            <span class="label">Total SKUs</span>
+            <span id="qmodal-total-skus" class="val">0</span>
+          </div>
+          <div class="summary-pill">
+            <span class="label">Unidades Totais</span>
+            <span id="qmodal-total-units" class="val highlight">0 un</span>
+          </div>
+          <div class="summary-pill">
+            <span class="label">Valor Estimado Total</span>
+            <span id="qmodal-total-rs" class="val highlight">R$ 0,00</span>
+          </div>
+          <div class="summary-pill">
+            <span class="label">Economia vs Última Entrada</span>
+            <span id="qmodal-savings-rs" class="val savings">R$ 0,00</span>
+          </div>
+          <div class="summary-pill">
+            <span class="label">Loja Compradora</span>
+            <span id="qmodal-store-desc" class="val" style="font-size:13px;font-weight:600;">Filial 2</span>
+          </div>
+        </div>
+
+        <div style="padding: 10px 14px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: var(--radius); font-size: 12px; color: #166534; display: flex; align-items: center; gap: 8px;">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+          <div>
+            <strong>Regra de Negociação Ativa:</strong> As estimativas de custo priorizam o <strong>Fornecedor Mais Barato nos Últimos 30 Dias</strong> (com fallback para a última compra). Você pode ajustar as quantidades a pedir diretamente na tabela abaixo.
+          </div>
+        </div>
+
+        <div id="qmodal-order-feedback" class="order-batch-alert hidden"></div>
+
+        <div class="table-wrap" style="max-height: 48vh; overflow-y: auto;">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width: 30px; text-align: center;"><input id="qmodal-chk-all" type="checkbox" checked title="Marcar/Desmarcar todos" /></th>
+                <th>SKU / Produto</th>
+                <th>EAN</th>
+                <th>Laboratório</th>
+                <th class="num">Estoque</th>
+                <th class="num">DDV</th>
+                <th class="num">Sug.</th>
+                <th class="num" style="width: 90px;">Qtd Pedir</th>
+                <th class="num">Último Custo</th>
+                <th>Menor Preço 30d (Fornecedor)</th>
+                <th class="num">Subtotal</th>
+              </tr>
+            </thead>
+            <tbody id="qmodal-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <div class="muted" style="font-size: 11px;">
+          Dica: Escolha <strong>Cotefácil TXT</strong> para plataformas de cotação ou <strong>Planilha Padrão ERP</strong> para importação manual no sistema sem necessidade de senha de banco.
+        </div>
+        <div class="modal-footer-actions">
+          <button id="btn-qmodal-check-pbm" class="btn btn-secondary" title="Verificar vendas autorizadas em PBM e abater reposições automáticas (REV-007)">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>
+            <span>Conferir Reposição PBM</span>
+          </button>
+          <button id="btn-qmodal-cotefacil-txt" class="btn btn-secondary" title="Exporta no formato oficial 1;CNPJ;3.0 / 2;EAN;QTD... / 9;COUNT">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            <span>Baixar Cotefácil (.txt)</span>
+          </button>
+          <button id="btn-qmodal-big-native-xlsx" class="btn btn-secondary" title="Exporta planilha com as 10 colunas exatas para importação no ERP">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <span>Baixar Planilha ERP (.xlsx)</span>
+          </button>
+          <button id="btn-qmodal-save-big" class="btn btn-primary" style="background:#0f766e;border-color:#0d9488;" title="Insere os itens diretamente na tabela de pedidos do banco via transação segura">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            <span>Gravar Pedido no ERP (pedidos)</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: SINCRONIZAR APRESENTAÇÕES COM CADASTRO DO ERP (DE -> PARA EM MASSA) -->
+  <div id="sync-big-apres-modal" class="modal-backdrop hidden" style="z-index: 10000;" role="dialog" aria-modal="true">
+    <div class="modal-card" style="max-width: 1240px; max-height: 92vh; display: flex; flex-direction: column;">
+      <div class="modal-header">
+        <div>
+          <h3>📥 Sincronização De &rarr; Para com o Cadastro do ERP</h3>
+          <p class="muted" style="margin-top: 2px;">
+            Gravação em massa das moléculas identificadas pela IA na tabela nativa <code>produto_apresentacao</code> e vínculo nos produtos do ERP.
+          </p>
+        </div>
+        <button id="btn-close-sync-big-apres" class="btn btn-ghost" type="button">Fechar (Esc)</button>
+      </div>
+
+      <div class="modal-body" style="overflow-y: auto; flex: 1; padding: 18px 24px; display: flex; flex-direction: column; gap: 14px;">
+        <!-- KPI STRIP DE SINCRONIZAÇÃO -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;">
+          <div class="kpi-cell" style="padding: 12px 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);">
+            <div class="kpi-label">Candidatos Identificados (IA)</div>
+            <div id="sync-kpi-total" class="kpi-val" style="font-size: 20px;">0</div>
+            <div class="kpi-sub">Medicamentos com apresentação válida</div>
+          </div>
+          <div class="kpi-cell" style="padding: 12px 16px; border: 1px solid var(--border); border-radius: var(--radius); background: #f0fdf4; border-color: #86efac;">
+            <div class="kpi-label">Prontos para Vincular no BIG</div>
+            <div id="sync-kpi-pending" class="kpi-val" style="font-size: 20px; color: #16a34a;">0</div>
+            <div class="kpi-sub">Sem apresentação ativa no ERP</div>
+          </div>
+          <div class="kpi-cell" style="padding: 12px 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);">
+            <div class="kpi-label">Apresentações Únicas</div>
+            <div id="sync-kpi-unique" class="kpi-val" style="font-size: 20px;">0</div>
+            <div class="kpi-sub">Moléculas agrupadas</div>
+          </div>
+          <div class="kpi-cell" style="padding: 12px 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);">
+            <div class="kpi-label">Já Vinculados no BIG</div>
+            <div id="sync-kpi-linked" class="kpi-val" style="font-size: 20px; color: #64748b;">0</div>
+            <div class="kpi-sub">Preservados por segurança</div>
+          </div>
+        </div>
+
+        <!-- BANNER DE REGRAS E DIRETRIZES -->
+        <div style="padding: 12px 16px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: var(--radius); font-size: 12px; color: #1e40af; display: flex; align-items: flex-start; gap: 10px;">
+          <svg class="icon" style="flex-shrink: 0; margin-top: 2px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+          <div>
+            <strong>Como o Linx BIG processa esta sincronização:</strong>
+            O motor busca ou cadastra a apresentação em <code>produto_apresentacao</code> (com substância, concentração e forma) e atualiza cada produto selecionado com <code>produto_apresentacao_id</code>, <code>considera_prod_apresentacao = 'S'</code> e <code>qtde_apres</code>. A gravação é 100% transacional ACID (rollback automático em caso de qualquer inconsistência).
+          </div>
+        </div>
+
+        <!-- OPÇÕES DE SEGURANÇA E FILTROS -->
+        <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 14px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: var(--radius);">
+          <div style="display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px;">
+            <label class="checkbox-inline" style="font-weight: 600;">
+              <input id="sync-opt-only-unlinked" type="checkbox" checked />
+              <span>Não sobrescrever vínculos manuais existentes no BIG</span>
+            </label>
+            <label class="checkbox-inline">
+              <input id="sync-opt-activate-considera" type="checkbox" checked />
+              <span>Ativar <code>considera_prod_apresentacao = 'S'</code></span>
+            </label>
+            <label class="checkbox-inline">
+              <input id="sync-opt-update-qtde" type="checkbox" checked />
+              <span>Gravar tamanho da embalagem em <code>qtde_apres</code></span>
+            </label>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <input id="sync-search-input" type="search" placeholder="Filtrar por nome, laboratório ou substância..." style="padding: 6px 10px; font-size: 12px; width: 280px;" />
+            <select id="sync-filter-status" style="padding: 6px 10px; font-size: 12px;">
+              <option value="ALL">Exibir Todos</option>
+              <option value="PENDING" selected>Apenas Não Vinculados no BIG</option>
+              <option value="LINKED">Apenas Já Vinculados</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- TOOLBAR DE VISUALIZAÇÃO E LIMPEZA -->
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 2px;">
+          <div style="display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface);">
+            <button id="btn-sync-view-clusters" class="btn btn-sm active" type="button" style="border-radius: 0; padding: 6px 14px; font-weight: 600;">
+              📦 Apresentações Canônicas (Agrupadas por IA)
+            </button>
+            <button id="btn-sync-view-skus" class="btn btn-sm" type="button" style="border-radius: 0; padding: 6px 14px; font-weight: 600; border-left: 1px solid var(--border);">
+              📋 Produtos / SKUs Individuais
+            </button>
+          </div>
+          <button id="btn-cleanup-sync-big-apres" class="btn btn-secondary btn-sm" type="button" style="color: #b91c1c; border-color: #fca5a5; background: #fef2f2; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;" title="Desvincula produtos e remove registros criados em testes anteriores (ID >= 1019)">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            <span>Limpar Cadastros Anteriores (IDs &ge; 1019)</span>
+          </button>
+        </div>
+
+        <!-- PROGRESS & FEEDBACK ALERT -->
+        <div id="sync-big-alert" class="order-batch-alert hidden"></div>
+
+        <!-- CONTAINER: VISÃO AGRUPADA POR APRESENTAÇÃO CANÔNICA -->
+        <div id="sync-clusters-container" style="max-height: 44vh; overflow-y: auto; display: flex; flex-direction: column; gap: 10px;">
+          <div style="text-align: center; padding: 24px;" class="muted">Carregando grupos de apresentações...</div>
+        </div>
+
+        <!-- CONTAINER: TABELA DE CANDIDATOS INDIVIDUAIS -->
+        <div id="sync-skus-container" class="table-wrap hidden" style="max-height: 44vh; overflow-y: auto;">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width: 34px; text-align: center;"><input id="sync-chk-all" type="checkbox" checked title="Marcar/Desmarcar todos" /></th>
+                <th>Cód BIG</th>
+                <th>Descrição do Produto no BIG</th>
+                <th>Laboratório</th>
+                <th>Molécula / Substância (CMED &bull; IA)</th>
+                <th>Concentração</th>
+                <th>Apresentação / Embalagem</th>
+                <th>Status no BIG</th>
+              </tr>
+            </thead>
+            <tbody id="sync-tbody">
+              <tr><td colspan="8" style="text-align: center; padding: 24px;" class="muted">Carregando candidatos de De &rarr; Para do Linx BIG...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <div id="sync-selection-count" class="muted" style="font-size: 12px; font-weight: 600;">
+          0 itens selecionados para gravação
+        </div>
+        <div class="modal-footer-actions">
+          <button id="btn-cancel-sync-big-apres" class="btn btn-secondary" type="button">Cancelar</button>
+          <button id="btn-execute-sync-big-apres" class="btn btn-primary" type="button" style="background:#0284c7;border-color:#0369a1;font-weight:600;display:inline-flex;align-items:center;gap:8px;">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            <span id="btn-execute-sync-label">Autorizar e Gravar no Linx BIG</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: PARÂMETROS DE GRUPOS & CURVAS ABC (DIAS DE ESTOQUE) -->
+  <div id="group-config-modal" class="modal-backdrop hidden" style="z-index: 10000;" role="dialog" aria-modal="true">
+    <div class="modal-card" style="max-width: 1180px; max-height: 90vh; display: flex; flex-direction: column;">
+      <div class="modal-header">
+        <div>
+          <h3>🎯 Parâmetros de Cobertura por Grupo &amp; Curva ABC</h3>
+          <p class="muted" style="margin-top: 2px;">
+            Defina os dias mínimo e máximo de estoque para cada grupo do ERP e curva ABC.
+            O motor só dispara compras quando o estoque disponível for menor ou igual ao Ponto de Pedido (Mínimo).
+          </p>
+        </div>
+        <button id="btn-close-group-config" class="btn btn-ghost" type="button">Fechar (Esc)</button>
+      </div>
+
+      <div class="modal-body" style="overflow-y: auto; flex: 1; padding: 16px 22px; display: flex; flex-direction: column; gap: 12px;">
+        <!-- REGRAS DE PARETO DA REDE (CORTES DE FATURAMENTO COM AUDITORIA IA) -->
+        <div class="pareto-config-box" style="padding: 12px 16px; background: var(--bg-subtle); border-radius: var(--radius); border: 1px solid var(--border);">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <strong style="font-size: 13px;">📊 Cortes de Pareto da Rede (Percentual Acumulado do Faturamento)</strong>
+            <span id="pareto-total-check" class="badge badge-accent">Total: 100%</span>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;">
+            <div>
+              <label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px;">Curva A: <span id="val-pareto-a">55%</span> do faturamento</label>
+              <input type="range" id="slider-pareto-a" min="30" max="80" value="55" step="1" style="width: 100%;" />
+            </div>
+            <div>
+              <label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px;">Curva B: <span id="val-pareto-b">35%</span> do faturamento</label>
+              <input type="range" id="slider-pareto-b" min="10" max="50" value="35" step="1" style="width: 100%;" />
+            </div>
+            <div>
+              <label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px;">Curva C: <span id="val-pareto-c">10%</span> do faturamento</label>
+              <input type="range" id="slider-pareto-c" min="5" max="30" value="10" step="1" style="width: 100%;" />
+            </div>
+          </div>
+          <div id="pareto-ai-guard" class="pareto-ai-guard" style="margin-top: 10px; font-size: 12px; padding: 8px 12px; border-radius: 6px; background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe;">
+            🛡️ <strong>IA Guardiã de Capital:</strong> Divisão equilibrada (55% A / 35% B / 10% C). Concentra o capital de compra nos itens de maior rentabilidade e giro diário, reduzindo drasticamente imobilização em produtos lentos.
+          </div>
+        </div>
+
+        <!-- BARRA DE PRESETS & BUSCA -->
+        <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; background: var(--bg-subtle); padding: 10px 14px; border-radius: var(--radius); border: 1px solid var(--border);">
+          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+            <span style="font-size: 12px; font-weight: 600;">Aplicar Predefinição em Massa:</span>
+            <button id="btn-preset-pharma" class="btn btn-secondary btn-sm" type="button" title="A: 3-12d / B: 7-15d / C: 10-20d / D: 0d">
+              💊 Farmacêutico IA
+            </button>
+            <button id="btn-preset-enxuto" class="btn btn-secondary btn-sm" type="button" title="A: 3-7d / B: 5-10d / C: 7-15d / D: 0d">
+              ⚡ Giro Rápido
+            </button>
+            <button id="btn-preset-alta" class="btn btn-secondary btn-sm" type="button" title="A: 7-15d / B: 10-20d / C: 15-30d / D: 0d">
+              🛡️ Alta Segurança
+            </button>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <input id="group-config-search" type="text" placeholder="Filtrar por grupo ou categoria..." style="padding: 5px 10px; font-size: 12px; border: 1px solid var(--border); border-radius: 4px; width: 220px;" />
+          </div>
+        </div>
+
+        <div id="group-config-alert" class="order-batch-alert hidden"></div>
+
+        <!-- TABELA DE GRUPOS -->
+        <div class="table-wrap" style="max-height: 52vh; overflow-y: auto;">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Grupo no Linx BIG</th>
+                <th>Macro Categoria</th>
+                <th class="num">SKUs Ativos</th>
+                <th style="text-align: center;">Curva A (Mín / Máx dias)</th>
+                <th style="text-align: center;">Curva B (Mín / Máx dias)</th>
+                <th style="text-align: center;">Curva C (Mín / Máx dias)</th>
+                <th style="text-align: center;">Curva D (Mín / Máx dias)</th>
+                <th>Origem</th>
+              </tr>
+            </thead>
+            <tbody id="group-config-tbody">
+              <tr><td colspan="9" style="text-align: center; padding: 24px;" class="muted">Carregando grupos do Linx BIG...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <div id="group-config-summary" class="muted" style="font-size: 12px;">
+          Carregando grupos...
+        </div>
+        <div class="modal-footer-actions">
+          <button id="btn-cancel-group-config" class="btn btn-secondary" type="button">Cancelar</button>
+          <button id="btn-save-group-config" class="btn btn-primary" type="button" style="background:#0f766e;border-color:#0d9488;">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            <span>Salvar Parâmetros e Recalcular</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BOTÃO FLUTUANTE: REGISTRADOR DE CRÍTICAS / DEV INSPECTOR -->
+  <button id="btn-floating-dev-inspector" class="btn-floating-inspector hidden" type="button" title="Registrar crítica ou melhoria nesta tela para refatoração (Atalho: F2)">
+    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+    <span>💬 Registrar Crítica</span>
+    <span id="inspector-pending-count" class="inspector-badge hidden">0</span>
+  </button>
+
+  <!-- MODAL: REGISTRADOR DE CRÍTICAS & MELHORIAS (DEV INSPECTOR) -->
+  <div id="dev-inspector-modal" class="modal-backdrop hidden" style="z-index: 10000;" role="dialog" aria-modal="true">
+    <div class="modal-card" style="max-width: 820px; max-height: 90vh; display: flex; flex-direction: column;">
+      <div class="modal-header">
+        <div>
+          <h3>💬 Gravador de Críticas &amp; Melhorias (Modo Dev)</h3>
+          <p class="muted" style="margin-top: 2px;">
+            Tire um instantâneo desta tela com seus comentários para que a IA possa analisar e aplicar no código-fonte via Antigravity.
+          </p>
+        </div>
+        <button id="btn-close-dev-inspector" class="btn btn-ghost" type="button">Fechar (Esc)</button>
+      </div>
+
+      <div class="modal-body" style="overflow-y: auto; flex: 1; padding: 18px 22px; display: flex; flex-direction: column; gap: 14px;">
+        <!-- ABAS: NOVO FEEDBACK / LISTA DO BACKLOG -->
+        <div style="display: flex; gap: 8px; border-bottom: 1px solid var(--border); padding-bottom: 8px;">
+          <button id="tab-inspector-form" class="btn btn-sm btn-primary" type="button">➕ Nova Crítica / Sugestão</button>
+          <button id="tab-inspector-list" class="btn btn-sm btn-secondary" type="button">📋 Backlog Gravado (<span id="inspector-tab-count">0</span>)</button>
+        </div>
+
+        <!-- ABA 1: FORMULÁRIO -->
+        <div id="inspector-pane-form" style="display: flex; flex-direction: column; gap: 12px;">
+          <!-- SNAPSHOT DE CONTEXTO CAPTURADO AUTOMATICAMENTE -->
+          <div class="inspector-context-box">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <strong>📸 Contexto Operacional Capturado:</strong>
+              <span id="inspector-ctx-time" class="muted" style="font-size: 11px;">Agora</span>
+            </div>
+            <div><strong>Tela / Visão:</strong> <span id="inspector-ctx-view">Mesa de Compras</span></div>
+            <div><strong>Filtros Ativos:</strong> <span id="inspector-ctx-filters">Todos</span></div>
+            <div id="inspector-ctx-sku-wrap" class="hidden"><strong>Produto em Foco:</strong> <span id="inspector-ctx-sku">—</span></div>
+          </div>
+
+          <label style="display: flex; flex-direction: column; gap: 4px; font-weight: 600; font-size: 13px;">
+            <span>Severidade / Tipo:</span>
+            <select id="inspector-severidade" style="padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius); font-size: 12px;">
+              <option value="media">💡 Melhoria / Sugestão de Regra ou Visual</option>
+              <option value="alta">⚠️ Inconsistência nos Dados / Cálculo Divergente</option>
+              <option value="bloqueante">🚨 Bloqueante / Erro Crítico</option>
+              <option value="baixa">ℹ️ Ajuste Menor / Cosmético</option>
+            </select>
+          </label>
+
+          <label style="display: flex; flex-direction: column; gap: 4px; font-weight: 600; font-size: 13px;">
+            <span>O que está errado, faltando ou precisa melhorar? <span style="color:#ef4444;">*</span></span>
+            <textarea id="inspector-critica" rows="4" style="padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); font-size: 13px; font-family: inherit; resize: vertical;" placeholder="Ex: A Curva BZ ficou confusa para o cliente, deixar apenas Curva B e colocar a volatilidade no detalhe... ou O filtro de estoque mínimo deveria desconsiderar produtos inativos..."></textarea>
+          </label>
+
+          <label style="display: flex; flex-direction: column; gap: 4px; font-weight: 600; font-size: 13px;">
+            <span>Impacto esperado / Como deveria ficar na sua visão:</span>
+            <input id="inspector-impacto" type="text" style="padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius); font-size: 12px;" placeholder="Ex: Exibir somente Curva A/B/C/D com cores limpas e sem siglas extras na tabela principal." />
+          </label>
+
+          <div id="inspector-feedback-msg" class="order-batch-alert hidden"></div>
+        </div>
+
+        <!-- ABA 2: LISTAGEM DE CRÍTICAS DO BACKLOG -->
+        <div id="inspector-pane-list" class="hidden" style="max-height: 48vh; overflow-y: auto; display: flex; flex-direction: column; gap: 10px;">
+          <div id="inspector-reviews-container" class="muted" style="text-align: center; padding: 20px;">Carregando críticas do backlog...</div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <div class="muted" style="font-size: 11px;">
+          As críticas são salvas em <code>dev_reviews/backlog_melhorias.json</code> para leitura automatizada pelo Antigravity.
+        </div>
+        <div class="modal-footer-actions">
+          <button id="btn-cancel-dev-inspector" class="btn btn-secondary" type="button">Cancelar</button>
+          <button id="btn-save-dev-inspector" class="btn btn-primary" type="button" style="background:#0f172a;border-color:#334155;">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            <span>Salvar Crítica no Backlog</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: SUSPENDER COMPRA DO PRODUTO (MOTOR OU BIG) -->
+  <div id="modal-suspend-big" class="modal-backdrop hidden" style="z-index: 1300;" role="dialog" aria-modal="true" aria-labelledby="modal-suspend-title">
+    <div class="modal-card" style="width: min(520px, 95vw);">
+      <div class="modal-head">
+        <div>
+          <h3 id="modal-suspend-title" style="margin:0 0 4px 0;">🛑 Suspender Compra do Produto</h3>
+          <div class="muted" style="font-size:12px;">Defina o bloqueio de compras no Motor Inteligente ou no ERP</div>
+        </div>
+        <button id="btn-close-suspend-modal" class="btn btn-ghost" type="button">Fechar (Esc)</button>
+      </div>
+      <div class="modal-body" style="gap:12px;">
+        <div id="suspend-sku-info" class="inspector-context-box" style="font-size:13px;">
+          <strong>Produto:</strong> <span id="suspend-sku-desc">—</span>
+        </div>
+
+        <div class="form-group" style="padding:10px 12px; background:var(--bg-subtle); border-radius:var(--radius); border:1px solid var(--border);">
+          <label style="font-weight:600; font-size:13px; display:block; margin-bottom:8px;">Onde aplicar o bloqueio?</label>
+          <div style="display:flex; flex-direction:column; gap:8px; font-size:13px;">
+            <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer;">
+              <input type="radio" name="suspend-target" id="suspend-target-motor" value="motor" checked style="margin-top:2px;" />
+              <div>
+                <strong>🔒 Exclusivo no Motor Inteligente (Recomendado)</strong>
+                <div class="muted" style="font-size:11px;">Não altera o banco do BIG. O Motor zera sugestões e arquiva o item até a data limite.</div>
+              </div>
+            </label>
+            <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer;">
+              <input type="radio" name="suspend-target" id="suspend-target-big" value="big" style="margin-top:2px;" />
+              <div>
+                <strong>🏛️ Gravar também no Linx BIG (ERP)</strong>
+                <div class="muted" style="font-size:11px;">Insere na tabela <code>produtos_suspensos_compra</code> do BIG bloqueando no ERP.</div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="suspend-days">Período de Bloqueio:</label>
+          <select id="suspend-days" style="padding:8px 10px; font-size:13px; border:1px solid var(--border); border-radius:var(--radius); width:100%;">
+            <option value="15">15 dias</option>
+            <option value="30" selected>30 dias (1 mês)</option>
+            <option value="60">60 dias (2 meses)</option>
+            <option value="90">90 dias (3 meses)</option>
+            <option value="180">180 dias (6 meses)</option>
+            <option value="365">1 ano (Bloqueio Longo)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="suspend-motivo">Justificativa / Motivo:</label>
+          <input id="suspend-motivo" type="text" value="Excesso de estoque / Sem giro / Decisão Comprador" style="padding:8px 10px; font-size:13px; border:1px solid var(--border); border-radius:var(--radius); width:100%;" />
+        </div>
+        <div id="suspend-feedback" class="order-batch-alert hidden"></div>
+      </div>
+      <div class="modal-footer" style="display:flex; justify-content:flex-end; gap:8px;">
+        <button id="btn-cancel-suspend" class="btn btn-secondary" type="button">Cancelar</button>
+        <button id="btn-confirm-suspend" class="btn btn-primary" type="button" style="background:#dc2626;border-color:#b91c1c;">
+          Confirmar Suspensão
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: ENSINAR / CORRIGIR MOLÉCULA (APRENDIZADO DE IA) -->
+  <div id="modal-teach-molecule" class="modal-backdrop hidden" style="z-index: 1350;" role="dialog" aria-modal="true" aria-labelledby="modal-teach-title">
+    <div class="modal-card" style="width: min(540px, 95vw);">
+      <div class="modal-head">
+        <div>
+          <h3 id="modal-teach-title" style="margin:0 0 4px 0; display:flex; align-items:center; gap:8px;">
+            <span>🧠 Ensinar Molécula à IA</span>
+            <span class="badge badge-accent">Propriedade do Motor</span>
+          </h3>
+          <div class="muted" style="font-size:12px;">Ajuste o princípio ativo e concentração. A IA memoriza e aprende com você sem alterar o BIG.</div>
+        </div>
+        <button id="btn-close-teach-modal" class="btn btn-ghost" type="button">✕</button>
+      </div>
+      <div class="modal-body" style="gap:12px;">
+        <div id="teach-sku-info" class="inspector-context-box" style="font-size:13px;">
+          <strong>Produto:</strong> <span id="teach-sku-desc">—</span>
+        </div>
+        <div class="form-group">
+          <label for="teach-substancia">Princípio Ativo / Substância:</label>
+          <input id="teach-substancia" type="text" placeholder="Ex: COLECALCIFEROL, DIPIRONA, LOSARTANA POTASSICA" style="padding:8px 10px; font-size:13px; border:1px solid var(--border); border-radius:var(--radius); width:100%; text-transform:uppercase;" />
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px;">
+          <div class="form-group">
+            <label for="teach-conc">Concentração:</label>
+            <input id="teach-conc" type="text" placeholder="Ex: 500MG, 10000UI" style="padding:8px 10px; font-size:13px; border:1px solid var(--border); border-radius:var(--radius); width:100%; text-transform:uppercase;" />
+          </div>
+          <div class="form-group">
+            <label for="teach-forma">Forma:</label>
+            <input id="teach-forma" type="text" placeholder="Ex: CPR, CAP, GTS" style="padding:8px 10px; font-size:13px; border:1px solid var(--border); border-radius:var(--radius); width:100%; text-transform:uppercase;" />
+          </div>
+          <div class="form-group">
+            <label for="teach-pack">Embalagem:</label>
+            <input id="teach-pack" type="text" placeholder="Ex: 30UN, 4CAP" style="padding:8px 10px; font-size:13px; border:1px solid var(--border); border-radius:var(--radius); width:100%; text-transform:uppercase;" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="teach-motivo">Motivo da Correção:</label>
+          <input id="teach-motivo" type="text" value="Correção manual do Comprador - erro de cadastro BIG" style="padding:8px 10px; font-size:13px; border:1px solid var(--border); border-radius:var(--radius); width:100%;" />
+        </div>
+        <div id="teach-feedback" class="order-batch-alert hidden"></div>
+      </div>
+      <div class="modal-footer" style="display:flex; justify-content:flex-end; gap:8px;">
+        <button id="btn-cancel-teach" class="btn btn-secondary" type="button">Cancelar</button>
+        <button id="btn-confirm-teach" class="btn btn-primary" type="button">
+          Salvar &amp; Ensinar IA
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Informativo: Comparativo de Curva ABC (Motor vs Linx BIG) -->
+  <div id="curve-info-modal" class="modal-backdrop hidden" style="z-index: 1350;" role="dialog" aria-modal="true" aria-labelledby="curve-info-title">
+    <div class="modal-card" style="width: min(520px, 94vw);">
+      <div class="modal-head">
+        <div>
+          <h3 id="curve-info-title" style="margin:0;font-size:15px;display:flex;align-items:center;gap:6px;">
+            <span>ℹ️ Auditoria da Curva ABC</span>
+          </h3>
+          <div class="muted" style="font-size:12px;margin-top:2px;">Metodologia de Faturamento Pareto vs. Registro Histórico do ERP</div>
+        </div>
+        <button id="btn-close-curve-info" class="btn btn-ghost btn-sm" aria-label="Fechar">✕</button>
+      </div>
+      <div class="modal-body" style="padding:16px;">
+        <div id="curve-info-content"></div>
+      </div>
+      <div class="modal-footer" style="display:flex; justify-content:flex-end;">
+        <button id="btn-ok-curve-info" class="btn btn-primary btn-sm" type="button">Fechar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: AUDITORIA DE ALOCAÇÃO DE VERBA (REV-010) -->
+  <div id="modal-budget-audit" class="modal-backdrop hidden" style="z-index: 1360;" role="dialog" aria-modal="true" aria-labelledby="modal-budget-audit-title">
+    <div class="modal-card" style="width: min(840px, 96vw); max-height: 90vh;">
+      <div class="modal-head">
+        <div>
+          <h3 id="modal-budget-audit-title" style="margin:0 0 4px 0; display:flex; align-items:center; gap:8px;">
+            <span>📊 Auditoria de Alocação de Verba</span>
+            <span class="badge badge-accent">Inteligência de Caixa</span>
+          </h3>
+          <div class="muted" style="font-size:12px;">Transparência total dos critérios de inclusão e produtos cortados pelo limite de orçamento</div>
+        </div>
+        <button id="btn-close-budget-audit" class="btn btn-ghost" type="button">✕</button>
+      </div>
+      <div class="modal-body" style="gap:14px; overflow-y:auto; padding:16px;">
+        <div id="budget-audit-summary-cards" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:10px;">
+          <!-- Preenchido via JS -->
+        </div>
+        <div style="font-size:13px; font-weight:600; color:var(--text); margin-top:10px;">
+          ✂️ Produtos Cortados pelo Limite de Verba (Priorizados itens de Curva A/B e Ruptura)
+        </div>
+        <div style="border:1px solid var(--border); border-radius:var(--radius); overflow-x:auto; max-height:360px;">
+          <table class="data-table" style="font-size:12px; margin:0; width:100%;">
+            <thead>
+              <tr>
+                <th>Produto / Descrição</th>
+                <th>Laboratório</th>
+                <th>Curva</th>
+                <th class="num">Qtd Cortada</th>
+                <th class="num">Valor Cortado</th>
+                <th>Critério / Motivo do Corte</th>
+              </tr>
+            </thead>
+            <tbody id="budget-audit-tbody">
+              <!-- Preenchido via JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer" style="display:flex; justify-content:flex-end;">
+        <button id="btn-ok-budget-audit" class="btn btn-primary" type="button">Fechar Auditoria</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: POLÍTICAS DE FILIAIS, CARÊNCIA DE LOJAS NOVAS & REMANEJAMENTO -->
+  <div id="modal-filiais-policies" class="modal-backdrop hidden">
+    <div class="modal-card" style="width: min(880px, 96vw); max-height: 90vh;">
+      <div class="modal-head">
+        <div>
+          <h3 style="margin:0 0 4px 0; display:flex; align-items:center; gap:8px;">
+            <span>⚙️ Políticas de Filiais, Carência &amp; Remanejamento Multi-Loja</span>
+            <span class="badge badge-accent">Proteção de Caixa</span>
+          </h3>
+          <div class="muted" style="font-size:12px;">Configure o tempo de maturação das filiais, proteção contra desfalque de mix e modelo de reposição</div>
+        </div>
+        <button id="btn-close-filiais-policies" class="btn btn-ghost" type="button">✕</button>
+      </div>
+      <div class="modal-body" style="gap:16px; overflow-y:auto; padding:18px;">
+        <div class="order-batch-alert info" style="font-size:12px;line-height:1.5;">
+          <strong>💡 Sugestão Inteligente da IA:</strong> Lojas inauguradas há menos de 90 dias (como a <strong>Loja 4</strong>) não possuem curva estatística confiável. O motor recomenda <strong>90 dias de carência</strong> com reposição em <em>Sell-Out 1:1 validada na rede</em> e <strong>bloqueio estrito de doação de estoque</strong>, garantindo que o estoque de inauguração não seja drenado. Você tem total controle para ajustar esses parâmetros abaixo.
+        </div>
+
+        <div id="filiais-policies-list" style="display:flex;flex-direction:column;gap:14px;">
+          <!-- Preenchido dinamicamente via JS com cards por filial -->
+        </div>
+      </div>
+      <div class="modal-footer" style="display:flex; justify-content:space-between; align-items:center;">
+        <span class="muted" style="font-size:11.5px;">Alterações afetam os cálculos da próxima sincronização/recálculo</span>
+        <div style="display:flex;gap:10px;">
+          <button id="btn-cancel-filiais-policies" class="btn btn-secondary" type="button">Cancelar</button>
+          <button id="btn-save-filiais-policies" class="btn btn-primary" type="button">Salvar Políticas</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL CAPA DE ABERTURA & CONTROLE DE LICENÇA (SAAS GATE) -->
+  <div id="modal-welcome-gate" class="modal-backdrop hidden" style="z-index: 12000;" role="dialog" aria-modal="true" aria-labelledby="welcome-gate-title">
+    <div class="modal-card" style="width: min(840px, 96vw); max-height: 94vh; overflow-y: auto;">
+      <div class="modal-head" style="background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); color: #fff; padding: 20px 24px;">
+        <div style="display:flex; align-items:center; gap: 14px;">
+          <div style="background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 10px; width: 44px; height: 44px; display:flex; align-items:center; justify-content:center; color: #10b981;">
+            <svg style="width: 26px; height: 26px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20M4.93 4.93l14.14 14.14M19.07 4.93L4.93 19.07"/></svg>
+          </div>
+          <div>
+            <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: #10b981; font-weight: 700;">FSConsultoria Farmacêutica • Tecnologia Especializada</div>
+            <h2 id="welcome-gate-title" style="margin: 2px 0 0; font-size: 18px; color: #fff; font-weight: 700;">Mesa de Compras IA • Licenciamento &amp; Acesso</h2>
+          </div>
+        </div>
+        <button id="btn-close-welcome-gate" class="btn btn-ghost" style="color: #94a3b8;" title="Fechar">✕</button>
+      </div>
+
+      <div class="modal-body" style="padding: 24px; gap: 20px;">
+        <!-- Card Farmácia & Hardware Lock -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px;">
+          <div style="background: var(--bg-subtle, #f8fafc); border: 1px solid var(--border, #e2e8f0); border-radius: 8px; padding: 14px 16px;">
+            <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted, #64748b); font-weight: 600; margin-bottom: 4px;">Cliente Licenciado</div>
+            <div id="gate-client-name" style="font-size: 15px; font-weight: 700; color: var(--text-primary, #0f172a);">Drogaria Bom Jesus</div>
+            <div id="gate-client-cnpj" style="font-size: 12px; color: var(--text-muted, #64748b); margin-top: 2px;">CNPJ: 07.105.688/0001-13</div>
+          </div>
+
+          <div style="background: var(--bg-subtle, #f8fafc); border: 1px solid var(--border, #e2e8f0); border-radius: 8px; padding: 14px 16px;">
+            <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted, #64748b); font-weight: 600; margin-bottom: 4px;">Blindagem de Hardware (Anti-Cópia)</div>
+            <div style="display:flex; align-items:center; justify-content:space-between; gap: 8px;">
+              <code id="gate-machine-id" style="font-family: monospace; font-size: 13px; font-weight: 700; color: #0369a1; background: #e0f2fe; padding: 3px 8px; border-radius: 4px;">LNX-XXXX-XXXX-XXXX</code>
+              <button id="btn-copy-machine-id" class="btn btn-secondary btn-sm" title="Copiar ID da Máquina para suporte ou emissão de chave">📋 Copiar ID</button>
+            </div>
+            <div style="font-size: 11px; color: var(--text-muted, #64748b); margin-top: 4px;">Vinculado exclusivamente a esta máquina física</div>
+          </div>
+        </div>
+
+        <!-- Banner de Status da Assinatura -->
+        <div id="gate-license-banner" style="border-radius: 8px; padding: 16px 20px; display: flex; align-items: center; justify-content: space-between; gap: 16px; background: #ecfdf5; border: 1px solid #a7f3d0;">
+          <div>
+            <div id="gate-license-headline" style="font-size: 15px; font-weight: 700; display:flex; align-items:center; gap: 8px; color: #065f46;">
+              <span id="gate-status-dot" style="width: 10px; height: 10px; border-radius: 50%; background: #10b981; display: inline-block;"></span>
+              <span id="gate-status-text">Assinatura Ativa</span>
+            </div>
+            <div id="gate-license-sub" style="font-size: 12.5px; margin-top: 4px; color: #047857;">Válida até --/--/---- • 30 dias restantes</div>
+          </div>
+          <div id="gate-license-plan-badge" class="badge badge-success" style="font-size: 12px; padding: 4px 10px; font-weight: 700; text-transform: uppercase;">MENSAL</div>
+        </div>
+
+        <!-- Inserir Nova Chave Mensal (Ativação) -->
+        <div style="background: #ffffff; border: 1px solid var(--border, #e2e8f0); border-radius: 8px; padding: 16px 18px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
+            <div style="font-weight: 600; font-size: 13.5px; display:flex; align-items:center; gap: 6px;">
+              <span>🔑 Inserir / Renovar Chave de Assinatura</span>
+            </div>
+            <span style="font-size: 11.5px; color: var(--text-muted, #64748b);">Fornecida mensalmente após o pagamento</span>
+          </div>
+          <div style="display: flex; gap: 10px;">
+            <input id="input-activation-key" type="text" placeholder="Cole sua chave: LIC-071056-20261215-XXXX-XXXX-XXXX" style="flex:1; font-family: monospace; font-size: 13px; text-transform: uppercase; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px;" />
+            <button id="btn-activate-key" class="btn btn-primary" style="white-space: nowrap;">⚡ Ativar Assinatura</button>
+          </div>
+          <div id="activation-feedback" style="display:none; margin-top: 10px; font-size: 12px; padding: 8px 12px; border-radius: 6px;"></div>
+        </div>
+
+        <!-- Acesso Rápido Cockpit e Área Técnica -->
+        <div style="display: flex; gap: 12px; align-items: center; justify-content: space-between; padding-top: 8px; border-top: 1px solid var(--border, #e2e8f0);">
+          <button id="btn-open-master-tools" class="btn btn-secondary btn-sm" style="color: #64748b;" title="Acesso restrito à equipe técnica para configurar conexão de banco de dados">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <span>🔒 Acesso Técnico (Banco de Dados)</span>
+          </button>
+          <button id="btn-enter-cockpit" class="btn btn-primary" style="padding: 10px 24px; font-size: 14px; font-weight: 700; background: #047857; border-color: #059669;">
+            <span>🚀 Acessar Mesa de Compras</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL AUTENTICAÇÃO SENHA MASTER -->
+  <div id="modal-master-auth" class="modal-backdrop hidden" style="z-index: 13000;" role="dialog" aria-modal="true" aria-labelledby="master-auth-title">
+    <div class="modal-card" style="width: min(480px, 94vw);">
+      <div class="modal-head" style="background: #1e293b; color: #fff; padding: 16px 20px;">
+        <div style="display:flex; align-items:center; gap: 10px;">
+          <span style="font-size: 18px;">🔒</span>
+          <div>
+            <h2 id="master-auth-title" style="margin: 0; font-size: 16px; color: #fff; font-weight: 700;">Acesso Técnico Master</h2>
+            <div style="font-size: 11.5px; color: #94a3b8;">Área restrita da equipe de implantação e suporte</div>
+          </div>
+        </div>
+        <button id="btn-close-master-auth" class="btn btn-ghost" style="color: #94a3b8;" title="Fechar">✕</button>
+      </div>
+      <div class="modal-body" style="padding: 20px; gap: 14px;">
+        <p style="margin: 0; font-size: 13px; color: var(--text-primary, #334155); line-height: 1.5;">
+          Para proteger as credenciais de banco e parametrizações técnicas, digite a <strong>Senha Master</strong>:
+        </p>
+        <div>
+          <label style="font-size: 12px; font-weight: 600; display:block; margin-bottom: 6px;">Senha Master</label>
+          <input id="input-master-password" type="password" placeholder="Digite a Senha Master..." style="width:100%; box-sizing:border-box; padding: 9px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px;" autocomplete="current-password" />
+        </div>
+        <div id="master-auth-error" style="display:none; font-size: 12px; color: #dc2626; background: #fee2e2; border: 1px solid #fca5a5; padding: 8px 12px; border-radius: 6px;"></div>
+
+        <!-- Seção Expansível para Alterar a Senha Master -->
+        <div style="border-top: 1px solid #e2e8f0; padding-top: 12px; margin-top: 4px;">
+          <button id="btn-toggle-change-master-pwd" type="button" class="btn btn-sm btn-ghost" style="color: #4f46e5; font-weight: 600; padding: 4px 0; font-size: 12px; display:flex; align-items:center; gap: 6px;">
+            <span>⚙️ Deseja alterar a Senha Master padrão? Clique aqui</span>
+          </button>
+          <div id="box-change-master-pwd" style="display:none; margin-top: 10px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px;">
+            <div style="font-size: 11px; font-weight:700; color: #4338ca; text-transform: uppercase; margin-bottom: 8px;">Alteração de Senha Master</div>
+            <div style="display:flex; flex-direction:column; gap: 8px;">
+              <div>
+                <label style="font-size: 11px; font-weight:600; display:block; margin-bottom:3px;">Nova Senha Master</label>
+                <input id="input-new-master-pwd" type="password" placeholder="Mínimo 6 caracteres..." style="width:100%; box-sizing:border-box; padding: 7px 10px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 13px;" />
+              </div>
+              <div>
+                <label style="font-size: 11px; font-weight:600; display:block; margin-bottom:3px;">Confirmar Nova Senha</label>
+                <input id="input-confirm-new-master-pwd" type="password" placeholder="Repita a nova senha..." style="width:100%; box-sizing:border-box; padding: 7px 10px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 13px;" />
+              </div>
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-top: 4px;">
+                <span style="font-size: 10.5px; color: #64748b;">Salva no banco SQLite e no arquivo .env</span>
+                <button id="btn-save-new-master-pwd" type="button" class="btn btn-sm btn-primary" style="background:#4338ca;">Salvar Nova Senha</button>
+              </div>
+              <div id="change-pwd-feedback" style="display:none; font-size: 11.5px; padding: 6px 10px; border-radius: 4px; margin-top: 4px;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="display:flex; justify-content: flex-end; gap: 10px; padding: 14px 20px;">
+        <button id="btn-cancel-master-auth" class="btn btn-secondary" type="button">Cancelar</button>
+        <button id="btn-confirm-master-auth" class="btn btn-primary" type="button">🔓 Desbloquear Acesso</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: IMPORTADOR OFICIAL CMED / ANVISA -->
+  <div id="modal-cmed-import" class="modal-backdrop hidden" style="z-index: 12500;" role="dialog" aria-modal="true" aria-labelledby="cmed-import-title">
+    <div class="modal-card" style="width: min(640px, 94vw);">
+      <div class="modal-head" style="background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); color:#fff; padding:18px 22px;">
+        <div>
+          <h2 id="cmed-import-title" style="margin:0; font-size:16px; font-weight:700; display:flex; align-items:center; gap:8px;">
+            <span>🔬 Importação da Planilha Oficial CMED (ANVISA)</span>
+          </h2>
+          <div style="font-size:12px; color:#94a3b8; margin-top:2px;">Atualize a base de medicamentos para inteligência de molécula e menor custo</div>
+        </div>
+        <button id="btn-close-cmed-import" class="btn btn-ghost" style="color:#94a3b8;" type="button">✕</button>
+      </div>
+      <div class="modal-body" style="padding:22px; gap:16px;">
+        <div style="background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; padding:14px; font-size:12.5px; color:#1e40af; line-height:1.5;">
+          <strong>Passo 1:</strong> Baixe a planilha mais recente <em>"Lista PMC"</em> direto no portal oficial da Anvisa:<br>
+          <a href="https://www.gov.br/anvisa/pt-br/assuntos/medicamentos/cmed/precos" target="_blank" rel="noopener noreferrer" style="color:#2563eb; font-weight:700; text-decoration:underline; display:inline-block; margin-top:6px;">
+            🔗 Abrir Página de Preços da CMED / ANVISA (gov.br) ↗
+          </a>
+        </div>
+
+        <div style="background:var(--bg-subtle); border:2px dashed var(--border-strong); border-radius:10px; padding:24px; text-align:center;">
+          <input id="input-cmed-file" type="file" accept=".xlsx,.zip" style="display:none;" />
+          <div style="font-size:32px; margin-bottom:8px;">📁</div>
+          <div style="font-weight:700; font-size:14px; margin-bottom:4px;">Selecione o arquivo da CMED (.xlsx ou .zip)</div>
+          <div class="muted" style="font-size:12px; margin-bottom:14px;">Arquivo oficial baixado da Anvisa (Ex: Lista_PMC_2026.xlsx)</div>
+          <button id="btn-select-cmed-file" class="btn btn-secondary" type="button">Escolher Arquivo do Computador</button>
+          <div id="cmed-selected-file-label" style="margin-top:10px; font-size:12px; font-weight:600; color:#0f766e;"></div>
+        </div>
+
+        <div id="cmed-import-progress" style="display:none; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:12px; font-size:12px; color:#166534;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <div class="spinner" style="width:16px;height:16px;border-width:2px;"></div>
+            <span id="cmed-import-progress-text">Importando e indexando apresentações... Aguarde ~15 segundos.</span>
+          </div>
+        </div>
+
+        <div id="cmed-import-feedback" style="display:none; border-radius:8px; padding:12px; font-size:12.5px;"></div>
+      </div>
+      <div class="modal-footer" style="display:flex; justify-content:space-between; align-items:center;">
+        <span class="muted" style="font-size:11.5px;">A importação popula a tabela cmed_catalog local</span>
+        <div style="display:flex; gap:10px;">
+          <button id="btn-cancel-cmed-import" class="btn btn-secondary" type="button">Cancelar</button>
+          <button id="btn-submit-cmed-import" class="btn btn-primary" type="button" disabled>⚡ Iniciar Importação</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js?v=1.2.0"></script>
+</body>
+</html>
+

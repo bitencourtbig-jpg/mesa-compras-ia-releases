@@ -1,0 +1,16 @@
+{
+  "name": "linx-farma-big-analytics",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --no-warnings src/server.mjs",
+    "engine:run": "node --no-warnings scripts/run_engine.mjs"
+  },
+  "description": "Mesa de Compras IA • Motor de Inteligência em Compras e Abastecimento Farmacêutico (FSConsultoria)",
+  "dependencies": {
+    "adm-zip": "^0.6.1",
+    "exceljs": "^4.4.0",
+    "mysql2": "^3.11.5"
+  }
+}
