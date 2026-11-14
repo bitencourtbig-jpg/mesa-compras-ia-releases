@@ -56,8 +56,8 @@ set "OUT_UPDATER=..\Entrega_Mesa_Compras_IA\Atualizar_Mesa_Compras_IA.exe"
 set "ICO_FILE=assets\icone_mesa_compras.ico"
 
 if exist "%CSC_COMPILER%" (
-    %CSC_COMPILER% /nologo /optimize+ /target:exe /out:"%OUT_INSTALADOR%" /r:System.IO.Compression.FileSystem.dll /win32icon:"%ICO_FILE%" "%SRC_INSTALADOR%" > nul 2>&1
-    %CSC_COMPILER% /nologo /optimize+ /target:exe /out:"%OUT_UPDATER%" /r:System.IO.Compression.FileSystem.dll /win32icon:"%ICO_FILE%" "%SRC_UPDATER%" > nul 2>&1
+    %CSC_COMPILER% /nologo /optimize+ /target:exe /out:"%OUT_INSTALADOR%" /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll /win32icon:"%ICO_FILE%" "%SRC_INSTALADOR%" > nul 2>&1
+    %CSC_COMPILER% /nologo /optimize+ /target:exe /out:"%OUT_UPDATER%" /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll /win32icon:"%ICO_FILE%" "%SRC_UPDATER%" > nul 2>&1
     echo   ✓ Instalador_Mesa_Compras_IA.exe e Atualizar_Mesa_Compras_IA.exe compilados com sucesso.
 )
 
