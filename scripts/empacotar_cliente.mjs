@@ -419,14 +419,12 @@ if (fs.existsSync(cscCompiler) && fs.existsSync(srcLauncher)) {
 }
 
 const srcUpdater = path.resolve(PASTA_ENTREGA, 'dev_tools', 'Updater.cs');
-const outUpdater = path.join(DIST_CLIENTE, 'Atualizar_Mesa_Compras_IA.exe');
 const outUpdaterEntrega = path.join(PASTA_ENTREGA, 'Atualizar_Mesa_Compras_IA.exe');
 
 if (fs.existsSync(cscCompiler) && fs.existsSync(srcUpdater)) {
   try {
-    execSync(`"${cscCompiler}" /nologo /optimize+ /target:exe /out:"${outUpdater}" /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll /r:System.dll /win32icon:"${icoPath}" "${srcUpdater}"`, { stdio: 'inherit' });
-    fs.copyFileSync(outUpdater, outUpdaterEntrega);
-    console.log('  ✓ Executável Atualizar_Mesa_Compras_IA.exe gerado na pasta raiz e entrega.');
+    execSync(`"${cscCompiler}" /nologo /optimize+ /target:exe /out:"${outUpdaterEntrega}" /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll /r:System.dll /win32icon:"${icoPath}" "${srcUpdater}"`, { stdio: 'inherit' });
+    console.log('  ✓ Executável Atualizar_Mesa_Compras_IA.exe compilado com sucesso.');
   } catch (err) {
     console.warn('  ⚠️ Falha ao compilar Updater.cs:', err.message);
   }
