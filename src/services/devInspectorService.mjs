@@ -6,7 +6,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BACKLOG_PATH = path.resolve(__dirname, '..', '..', 'dev_reviews', 'backlog_melhorias.json');
 
 export function isInspectorEnabled() {
-  return process.env.ENABLE_DEV_INSPECTOR !== 'false';
+  return false;
 }
 
 export function readBacklog() {

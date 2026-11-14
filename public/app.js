@@ -1084,8 +1084,16 @@ async function loadOverview() {
   if (data.licenseStatus) {
     state.licenseStatus = data.licenseStatus;
     updateLicenseBadge(data.licenseStatus);
-    if (!sessionStorage.getItem('big_welcome_seen') || data.licenseStatus.isExpired || !data.licenseStatus.isValid) {
-      openWelcomeGate(Boolean(data.licenseStatus.isExpired || !data.licenseStatus.isValid));
+    const days = Number(data.licenseStatus.daysRemaining || 0);
+    const isExp = Boolean(data.licenseStatus.isExpired || !data.licenseStatus.isValid || days <= 0);
+
+    // O modal bloqueante SÓ abre automaticamente se a licença estiver REALMENTE EXPIRADA!
+    // Se a licença estiver ativa com dias normais, entra direto na Home Page sem popups invasivos.
+    if (isExp) {
+      openWelcomeGate(true);
+    } else if (days <= 10) {
+      // Aviso sutil se faltarem 10 dias ou menos para renovar
+      showBanner(`⚠️ Sua licença mensal da Mesa de Compras IA vence em ${days} dia(s). Contate a FSConsultoria no WhatsApp (17) 98120-5660 para renovar.`);
     }
   }
 }
@@ -6158,6 +6166,6 @@ function bindEvents() {
 
 (async function init() {
   bindEvents();
-  await Promise.all([loadGlossary(), loadOverview(), initDevInspector()]);
+  await Promise.all([loadGlossary(), loadOverview()]);
   switchView('home');
 })();
