@@ -5208,6 +5208,99 @@ async function activateLicenseKeyAction() {
   }
 }
 
+// =========================================================================
+// GESTÃO DE ATUALIZAÇÃO AUTOMÁTICA DO SISTEMA
+// =========================================================================
+async function checkSystemUpdates(manual = true) {
+  const modal = document.getElementById('update-modal');
+  const box = document.getElementById('update-modal-status-box');
+  const notes = document.getElementById('update-modal-notes');
+  const btnApply = document.getElementById('btn-apply-update');
+  const currVerEl = document.getElementById('update-modal-curr-ver');
+
+  if (modal) modal.classList.remove('hidden');
+  if (box) {
+    box.style.background = '#eff6ff';
+    box.style.border = '1px solid #bfdbfe';
+    box.style.color = '#1e40af';
+    box.innerHTML = '🔍 Conectando à nuvem oficial no GitHub para verificar novas versões...';
+  }
+  if (notes) notes.style.display = 'none';
+  if (btnApply) btnApply.style.display = 'none';
+
+  try {
+    const res = await fetch('/api/system/check-update');
+    const data = await res.json();
+    if (currVerEl) currVerEl.textContent = `Versão atual instalada: v${data.currentVersion}`;
+
+    if (data.hasUpdate) {
+      if (box) {
+        box.style.background = '#f0fdf4';
+        box.style.border = '1px solid #bbf7d0';
+        box.style.color = '#166534';
+        box.innerHTML = `🎉 <strong>Nova versão disponível: ${data.latestVersion}</strong><br><span style="font-size:12px;">Uma versão mais recente foi publicada com melhorias no motor e na estabilidade.</span>`;
+      }
+      if (notes && data.notes) {
+        notes.style.display = 'block';
+        notes.innerHTML = `<strong>Notas da Versão:</strong><br>${data.notes.replace(/\n/g, '<br>')}`;
+      }
+      if (btnApply) {
+        btnApply.style.display = 'inline-block';
+        btnApply.onclick = applySystemUpdate;
+      }
+    } else {
+      if (box) {
+        box.style.background = '#f0fdf4';
+        box.style.border = '1px solid #bbf7d0';
+        box.style.color = '#166534';
+        box.innerHTML = `✓ <strong>Seu sistema já está 100% atualizado!</strong><br><span style="font-size:12px;">Você está utilizando a versão oficial mais recente (${data.currentVersion}).</span>`;
+      }
+    }
+  } catch (err) {
+    if (box) {
+      box.style.background = '#fef2f2';
+      box.style.border = '1px solid #fecaca';
+      box.style.color = '#991b1b';
+      box.innerHTML = `⚠️ <strong>Falha ao verificar atualizações:</strong> ${err.message}`;
+    }
+  }
+}
+
+async function applySystemUpdate() {
+  const btnApply = document.getElementById('btn-apply-update');
+  const box = document.getElementById('update-modal-status-box');
+  if (btnApply) {
+    btnApply.disabled = true;
+    btnApply.textContent = '⏳ Baixando e atualizando...';
+  }
+  if (box) {
+    box.style.background = '#fffbeb';
+    box.style.border = '1px solid #fef3c7';
+    box.style.color = '#92400e';
+    box.innerHTML = `🔄 <strong>Atualização iniciada em segundo plano!</strong><br>O motor está baixando o pacote oficial do GitHub. Seus dados e licença serão preservados.<br><strong>Aguarde ~15 segundos... esta página recarregará automaticamente.</strong>`;
+  }
+
+  try {
+    await fetch('/api/system/apply-update', { method: 'POST' });
+    setTimeout(() => {
+      const pollTimer = setInterval(() => {
+        fetch('/api/license/status').then(r => {
+          if (r.ok) {
+            clearInterval(pollTimer);
+            window.location.reload();
+          }
+        }).catch(() => {});
+      }, 2000);
+    }, 5000);
+  } catch (err) {
+    if (box) {
+      box.style.background = '#fef2f2';
+      box.style.color = '#991b1b';
+      box.innerHTML = `Erro ao acionar atualizador: ${err.message}`;
+    }
+  }
+}
+
 function bindEvents() {
   document.querySelectorAll('.nav-item').forEach((btn) => {
     btn.addEventListener('click', () => switchView(btn.dataset.view));
@@ -6149,6 +6242,17 @@ function bindEvents() {
   document.getElementById('btn-submit-cmed-import')?.addEventListener('click', submitCmedImport);
   document.getElementById('btn-close-cmed-import')?.addEventListener('click', closeCmedImportModal);
   document.getElementById('btn-cancel-cmed-import')?.addEventListener('click', closeCmedImportModal);
+
+  // Botões de Verificação de Atualização Automática
+  document.getElementById('btn-check-updates')?.addEventListener('click', () => checkSystemUpdates(true));
+  document.getElementById('btn-close-update-modal')?.addEventListener('click', () => {
+    document.getElementById('update-modal')?.classList.add('hidden');
+    syncBodyModalState();
+  });
+  document.getElementById('btn-cancel-update')?.addEventListener('click', () => {
+    document.getElementById('update-modal')?.classList.add('hidden');
+    syncBodyModalState();
+  });
 
   // Acessibilidade Impeccable: Tecla ESC fecha qualquer modal ativo
   window.addEventListener('keydown', (e) => {

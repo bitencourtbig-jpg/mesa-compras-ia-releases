@@ -43,6 +43,7 @@ import {
   activateLicenseKey,
   getMasterPassword,
   updateMasterPassword,
+  sanitizeEnvFile,
   recordIssuedLicense,
   listIssuedLicenses,
   deleteIssuedLicense,
@@ -58,11 +59,14 @@ const PROJECT_ROOT = path.resolve(__dirname, '..');
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
 const PORT = Number(process.env.PORT || 3456);
 
-let APP_VERSION = '1.1.3';
+let APP_VERSION = '1.1.4';
 try {
   const pkgData = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
-  APP_VERSION = pkgData.version || '1.1.3';
+  APP_VERSION = pkgData.version || '1.1.4';
 } catch {}
+
+// Blindagem de seguranca: remove senhas expostas do .env na inicializacao
+sanitizeEnvFile();
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -407,6 +411,59 @@ const server = http.createServer(async (req, res) => {
         ...status,
         currentMachineId: machineId,
       });
+    }
+
+    if (pathname === '/api/system/check-update' && req.method === 'GET') {
+      try {
+        const ghRes = await fetch('https://api.github.com/repos/bitencourtbig-jpg/mesa-compras-ia-releases/releases/latest', {
+          headers: { 'User-Agent': 'MesaComprasIA-Client' },
+        });
+        if (!ghRes.ok) {
+          return sendJson(res, 200, { hasUpdate: false, currentVersion: APP_VERSION, error: 'GitHub indisponível' });
+        }
+        const data = await ghRes.json();
+        const latestTag = data.tag_name || '';
+        const cleanLatest = latestTag.replace(/^v/, '');
+        const hasUpdate = cleanLatest !== APP_VERSION;
+        return sendJson(res, 200, {
+          hasUpdate,
+          currentVersion: APP_VERSION,
+          latestVersion: latestTag,
+          releaseName: data.name || latestTag,
+          publishedAt: data.published_at,
+          notes: data.body || '',
+          downloadUrl: 'https://github.com/bitencourtbig-jpg/mesa-compras-ia-releases/releases/latest/download/Mesa_Compras_IA_Core.zip',
+        });
+      } catch (err) {
+        return sendJson(res, 200, { hasUpdate: false, currentVersion: APP_VERSION, error: err.message });
+      }
+    }
+
+    if (pathname === '/api/system/apply-update' && req.method === 'POST') {
+      try {
+        const updaterExe = path.resolve(PROJECT_ROOT, 'Atualizar_Mesa_Compras_IA.exe');
+        const { spawn } = await import('node:child_process');
+        if (fs.existsSync(updaterExe)) {
+          const child = spawn(updaterExe, [], {
+            detached: true,
+            stdio: 'ignore',
+            cwd: PROJECT_ROOT,
+          });
+          child.unref();
+          return sendJson(res, 200, { ok: true, message: 'Atualizador iniciado com sucesso! O serviço reiniciará com a nova versão.' });
+        } else {
+          const dlCmd = `powershell -NoProfile -Command "Invoke-WebRequest -Uri 'https://github.com/bitencourtbig-jpg/mesa-compras-ia-releases/releases/latest/download/Atualizar_Mesa_Compras_IA.exe' -OutFile '${PROJECT_ROOT}\\Atualizar_Mesa_Compras_IA.exe'; Start-Process '${PROJECT_ROOT}\\Atualizar_Mesa_Compras_IA.exe'"`;
+          const child = spawn('cmd.exe', ['/c', dlCmd], {
+            detached: true,
+            stdio: 'ignore',
+            cwd: PROJECT_ROOT,
+          });
+          child.unref();
+          return sendJson(res, 200, { ok: true, message: 'Atualizador obtido da nuvem. O serviço será atualizado em instantes.' });
+        }
+      } catch (err) {
+        return sendJson(res, 500, { error: `Falha ao acionar atualizador: ${err.message}` });
+      }
     }
 
     if (pathname === '/api/license/activate' && req.method === 'POST') {

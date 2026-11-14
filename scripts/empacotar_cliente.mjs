@@ -134,15 +134,10 @@ function writeWindowsFile(filePath, content) {
   fs.writeFileSync(filePath, crlf, 'utf8');
 }
 
-// A. .env padrão
+// A. .env padrao limpo (sem credenciais nem senhas explicitas)
 const envContent = `PORT=3456
-DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_USER=compras_consulta
-DB_PASSWORD=Consultoria@2026
-DB_NAME=gerente
-BIG_MASTER_PASSWORD=Consultoria@2026
-ENABLE_DEV_INSPECTOR=false
+NODE_ENV=production
+# Seguranca FSConsultoria: Credenciais de banco e senhas de acesso operam criptografadas internamente.
 `;
 writeWindowsFile(path.join(DIST_CLIENTE, '.env'), envContent);
 
@@ -420,6 +415,20 @@ if (fs.existsSync(cscCompiler) && fs.existsSync(srcLauncher)) {
     console.log('  ✓ Executável nativo Mesa_Compras_IA.exe gerado com sucesso.');
   } catch (err) {
     console.warn('  ⚠️ Falha ao compilar Launcher.cs:', err.message);
+  }
+}
+
+const srcUpdater = path.resolve(PASTA_ENTREGA, 'dev_tools', 'Updater.cs');
+const outUpdater = path.join(DIST_CLIENTE, 'Atualizar_Mesa_Compras_IA.exe');
+const outUpdaterEntrega = path.join(PASTA_ENTREGA, 'Atualizar_Mesa_Compras_IA.exe');
+
+if (fs.existsSync(cscCompiler) && fs.existsSync(srcUpdater)) {
+  try {
+    execSync(`"${cscCompiler}" /nologo /optimize+ /target:exe /out:"${outUpdater}" /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll /r:System.dll /win32icon:"${icoPath}" "${srcUpdater}"`, { stdio: 'inherit' });
+    fs.copyFileSync(outUpdater, outUpdaterEntrega);
+    console.log('  ✓ Executável Atualizar_Mesa_Compras_IA.exe gerado na pasta raiz e entrega.');
+  } catch (err) {
+    console.warn('  ⚠️ Falha ao compilar Updater.cs:', err.message);
   }
 }
 

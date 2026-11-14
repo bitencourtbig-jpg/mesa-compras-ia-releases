@@ -95,26 +95,31 @@ export function updateMasterPassword(currentPassword, newPassword) {
 
   process.env.BIG_MASTER_PASSWORD = cleanNew;
 
-  // Persiste também no arquivo .env na raiz do projeto
+  // Higieniza o arquivo .env para que nunca exponha senhas em texto puro
+  sanitizeEnvFile();
+
+  return { ok: true, message: '✓ Senha Master atualizada com sucesso no banco de dados blindado!' };
+}
+
+/**
+ * Remove qualquer credencial ou senha em texto puro do .env
+ */
+export function sanitizeEnvFile() {
   try {
     const envPath = path.resolve(process.cwd(), '.env');
-    let envContent = '';
     if (fs.existsSync(envPath)) {
-      envContent = fs.readFileSync(envPath, 'utf8');
-      if (envContent.includes('BIG_MASTER_PASSWORD=')) {
-        envContent = envContent.replace(/BIG_MASTER_PASSWORD=.*/g, `BIG_MASTER_PASSWORD=${cleanNew}`);
-      } else {
-        envContent += `\nBIG_MASTER_PASSWORD=${cleanNew}\n`;
-      }
-    } else {
-      envContent = `BIG_MASTER_PASSWORD=${cleanNew}\n`;
+      const content = fs.readFileSync(envPath, 'utf8');
+      const lines = content.split(/\r?\n/).filter((l) => {
+        const t = l.trim();
+        if (!t || t.startsWith('#')) return true;
+        if (t.startsWith('BIG_MASTER_PASSWORD=') || t.startsWith('DB_PASSWORD=') || t.startsWith('DB_USER=')) return false;
+        return true;
+      });
+      fs.writeFileSync(envPath, lines.join('\r\n'), 'utf8');
     }
-    fs.writeFileSync(envPath, envContent, 'utf8');
   } catch (err) {
-    console.warn('[SECURITY] Não foi possível atualizar o arquivo .env:', err.message);
+    // Silencioso
   }
-
-  return { ok: true, message: '✓ Senha Master atualizada com sucesso no banco de dados e no ambiente!' };
 }
 
 /**

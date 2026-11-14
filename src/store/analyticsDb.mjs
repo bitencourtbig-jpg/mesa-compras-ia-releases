@@ -501,6 +501,61 @@ function initSchema(db) {
   } catch (err) {
     console.warn('Alerta na migracao de client_filial_policies:', err.message);
   }
+
+  try {
+    const remCols = db.prepare('PRAGMA table_info(engine_remanejamento)').all().map((c) => c.name);
+    if (remCols.length > 0 && !remCols.includes('produto_id')) {
+      db.exec('DROP TABLE IF EXISTS engine_remanejamento;');
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS engine_remanejamento (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          run_id INTEGER NOT NULL,
+          produto_id INTEGER NOT NULL,
+          descricao TEXT NOT NULL,
+          filial_origem INTEGER NOT NULL,
+          filial_destino INTEGER NOT NULL,
+          tipo TEXT NOT NULL,
+          qtd_sugerida REAL NOT NULL,
+          custo_unit REAL NOT NULL,
+          valor_total REAL NOT NULL,
+          validade_prioritaria TEXT,
+          motivo TEXT NOT NULL
+        );
+      `);
+    }
+  } catch (err) {
+    console.warn('Alerta na migracao de engine_remanejamento:', err.message);
+  }
+
+  try {
+    const molCols = db.prepare('PRAGMA table_info(engine_molecule_summary)').all().map((c) => c.name);
+    if (molCols.length > 0 && !molCols.includes('molecule_key')) {
+      db.exec('DROP TABLE IF EXISTS engine_molecule_summary;');
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS engine_molecule_summary (
+          run_id INTEGER NOT NULL,
+          molecule_key TEXT NOT NULL,
+          substancia TEXT NOT NULL,
+          concentracao TEXT,
+          forma TEXT,
+          pack_bucket TEXT,
+          eh_referencia INTEGER NOT NULL DEFAULT 0,
+          skus_count INTEGER NOT NULL,
+          labs_count INTEGER NOT NULL,
+          estoque_total REAL NOT NULL,
+          transito_total REAL NOT NULL,
+          ddv_proj_total REAL NOT NULL,
+          cobertura_molecula_dias REAL NOT NULL,
+          sugestao_sku_soma REAL NOT NULL,
+          necessidade_liquida_molecula REAL NOT NULL,
+          sugestoes_skus_json TEXT,
+          sugestoes_transf_json TEXT
+        );
+      `);
+    }
+  } catch (err) {
+    console.warn('Alerta na migracao de engine_molecule_summary:', err.message);
+  }
 }
 
 export function upsertClientProfile(profile) {
