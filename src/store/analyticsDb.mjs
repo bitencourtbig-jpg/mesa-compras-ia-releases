@@ -1394,6 +1394,9 @@ export function upsertOlFabricante(clientCode, data) {
 
 export function recordBuyerLearning(clientCode, record) {
   const db = getAnalyticsDb();
+  const rawPid = record.produto_id !== undefined && record.produto_id !== null ? Number(record.produto_id) : 0;
+  const safeProdId = !isNaN(rawPid) ? rawPid : 0;
+
   const stmt = db.prepare(`
     INSERT INTO buyer_learning_log (
       client_code, filial_id, produto_id, principio_ativo_id, molecule_key,
@@ -1404,7 +1407,7 @@ export function recordBuyerLearning(clientCode, record) {
   stmt.run(
     clientCode,
     Number(record.filial_id || 0),
-    Number(record.produto_id),
+    safeProdId,
     Number(record.principio_ativo_id || 0),
     record.molecule_key || null,
     record.descricao || '',

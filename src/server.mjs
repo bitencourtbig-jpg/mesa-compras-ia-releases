@@ -116,7 +116,8 @@ function getCuradoriaDecisions(clientCode, runId) {
       'DEDUZIU_ESTOQUE_MOLECULA',
       'REMANEJOU_E_CANCELOU_COMPRA_EXTERNA',
       'CANCELOU_COMPRA_FILIAL_INDIVIDUAL',
-      'EXECUTOU_SOLUCAO_IA_1CLIQUE'
+      'EXECUTOU_SOLUCAO_IA_1CLIQUE',
+      'HOMOLOGOU_EM_LOTE'
     )
     ORDER BY id DESC
   `).all(clientCode);
@@ -2755,10 +2756,12 @@ function buildMoleculeMatricialCard(db, runId, molRow, clientCode, filiais, susp
 
         let count = 0;
         for (const pm of pendingMols) {
+          const pId = pm.melhor_sku_id ? Number(pm.melhor_sku_id) : 0;
           recordBuyerLearning(clientCode, {
             filial_id: 0,
+            produto_id: pId,
             molecule_key: pm.molecule_key,
-            descricao: pm.substancia,
+            descricao: pm.melhor_sku_desc || pm.substancia || `Molécula ${pm.molecule_key}`,
             tipo_evento: 'HOMOLOGOU_EM_LOTE',
             motivo: 'Homologação expressa em lote na Pré-Tela de Curadoria IA',
             acao_futura: 'APROVADO',

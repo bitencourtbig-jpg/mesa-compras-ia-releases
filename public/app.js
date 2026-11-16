@@ -4664,6 +4664,8 @@ async function loadAndRenderCuradoria() {
                   badgeAction = '<span class="badge" style="background:#fee2e2;color:#991b1b;font-weight:800;">✕ Suspensão Balcão</span>';
                 } else if (acts.includes('REMANEJOU_E_CANCELOU_COMPRA_EXTERNA')) {
                   badgeAction = '<span class="badge" style="background:#dcfce7;color:#15803d;font-weight:800;">🚚 Transfer-First</span>';
+                } else if (acts.includes('HOMOLOGOU_EM_LOTE')) {
+                  badgeAction = '<span class="badge" style="background:#e0f2fe;color:#0369a1;font-weight:800;">⚡ Lote Aprovado</span>';
                 }
 
                 let routeStr = '<span class="badge badge-success" style="font-size:10px;">🏠 Balcão Local</span>';
@@ -6714,19 +6716,40 @@ function renderOlTable(items) {
 }
 
 function goToCockpitWithManufacturer(fab) {
+  // 1. Alterna para a visão Cockpit
   switchView('cockpit');
-  const selLab = document.getElementById('filter-lab');
+
+  // 2. Garante que vai para a aba de Sugestão de Compra
+  switchSkuTab('buy');
+
+  // 3. Define o laboratório no state com o nome da indústria
+  const cleanFab = (fab || '').trim();
+  state.labora = cleanFab;
+  state.search = '';
+  state.page = 1;
+  state.offset = 0;
+
+  // 4. Atualiza o dropdown filter-labora
+  const selLab = document.getElementById('filter-labora');
   if (selLab) {
-    // Adiciona opção se não existir
-    let opt = Array.from(selLab.options).find(o => o.value.toUpperCase() === fab.toUpperCase());
-    if (!opt) {
-      opt = new Option(fab, fab);
+    let opt = Array.from(selLab.options).find(o => o.value.trim().toUpperCase() === cleanFab.toUpperCase());
+    if (!opt && cleanFab) {
+      opt = new Option(cleanFab, cleanFab);
       selLab.add(opt);
     }
-    selLab.value = opt.value;
-    state.lab = opt.value;
+    selLab.value = opt ? opt.value : cleanFab;
   }
+
+  // 5. Limpa campo de busca para não restringir indevidamente
+  const inpSearch = document.getElementById('filter-search');
+  if (inpSearch) inpSearch.value = '';
+
+  // 6. Sincroniza chips rápidos e carrega os SKUs do fabricante
+  syncQuickLaboraChips();
   loadSkus();
+
+  // 7. Notifica o comprador com mensagem clara
+  showBanner(`Filtrando produtos sugeridos da indústria ${cleanFab} para análise de pedido direto / OL.`);
 }
 
 function openModalOlSupplier(data = null) {
