@@ -5,8 +5,12 @@ const round2 = (v) => Math.round((Number(v || 0) + Number.EPSILON) * 100) / 100;
 /**
  * Gera agregacoes executivas de BI a partir dos resultados persistidos no SQLite.
  */
-export function buildExecutiveBi(clientCode, runId, summary = {}) {
+export function buildExecutiveBi(clientCode, runId, summary = {}, filialId = null) {
   const db = getAnalyticsDb();
+
+  const filialWhere = (filialId && filialId !== 'all' && !isNaN(Number(filialId)) && Number(filialId) > 0)
+    ? ` AND filial_id = ${Number(filialId)}`
+    : '';
 
   // 1. Quebra por Macrocategoria (100% do Mix)
   const byMacro = db
@@ -21,7 +25,7 @@ export function buildExecutiveBi(clientCode, runId, summary = {}) {
               SUM(CASE WHEN estoque_atual <= 0 AND ddv_projetada > 0 AND abc_class IN ('A','B') THEN 1 ELSE 0 END) AS rupturas_ab,
               ROUND(AVG(CASE WHEN margem_pct > 0 AND margem_pct < 95 THEN margem_pct END), 1) AS margem_media_pct
        FROM engine_sku_results
-       WHERE run_id = ?
+       WHERE run_id = ?${filialWhere}
        GROUP BY macro_categoria
        ORDER BY compra_sugerida_rs DESC, estoque_rs DESC`
     )
@@ -37,7 +41,7 @@ export function buildExecutiveBi(clientCode, runId, summary = {}) {
               ROUND(SUM(venda_perdida_est_rs), 2) AS perda_rs,
               SUM(CASE WHEN estoque_atual <= 0 AND ddv_projetada > 0 THEN 1 ELSE 0 END) AS zerados
        FROM engine_sku_results
-       WHERE run_id = ?
+       WHERE run_id = ?${filialWhere}
        GROUP BY abc_class, xyz_class`
     )
     .all(runId);
@@ -56,7 +60,7 @@ export function buildExecutiveBi(clientCode, runId, summary = {}) {
               ROUND(SUM(sugestao_compra_rs), 2) AS compra_rs,
               ROUND(AVG(lead_time_dias), 1) AS lt_medio_dias
        FROM engine_sku_results
-       WHERE run_id = ? AND sugestao_compra_un > 0
+       WHERE run_id = ? AND sugestao_compra_un > 0${filialWhere}
        GROUP BY fornecedor
        ORDER BY compra_rs DESC
        LIMIT 12`
@@ -69,15 +73,20 @@ export function buildExecutiveBi(clientCode, runId, summary = {}) {
       `SELECT ROUND(SUM(CASE WHEN estoque_atual > 0 THEN estoque_atual * custo_unit ELSE 0 END), 2) AS capital_total_estoque,
               ROUND(SUM(CASE WHEN ddv_pbm_auto > 0 THEN ddv_pbm_auto * 30 * custo_unit ELSE 0 END), 2) AS economia_mensal_pbm_rs,
               ROUND(SUM(CASE WHEN ddv_pbm_auto > 0 THEN ddv_pbm_auto * 30 ELSE 0 END), 0) AS economia_mensal_pbm_un,
+              ROUND(SUM(CASE WHEN estoque_max > 0 AND estoque_atual > estoque_max THEN (estoque_atual - estoque_max) * custo_unit ELSE 0 END), 2) AS capital_excesso_max,
+              ROUND(SUM(CASE WHEN abc_class = 'D' AND estoque_atual > 0 THEN estoque_atual * custo_unit ELSE 0 END), 2) AS capital_parado_d,
+              ROUND(SUM(lote_vencendo_90d_rs), 2) AS lotes_vencendo_90d_rs,
+              ROUND(SUM(lote_vencido_qtd * custo_unit), 2) AS lotes_vencidos_rs,
+              ROUND(SUM(venda_perdida_est_rs), 2) AS venda_perdida_est_rs,
               COUNT(DISTINCT CASE WHEN excecoes_json LIKE '%FLAG_MEDICAMENTO_INCORRETO%' THEN produto_id END) AS divergencia_flag_med
        FROM engine_sku_results
-       WHERE run_id = ?`
+       WHERE run_id = ?${filialWhere}`
     )
     .get(runId);
 
   // 5. Ranking de Excecoes IA detectadas
   const excRows = db
-    .prepare("SELECT excecoes_json, sugestao_compra_rs FROM engine_sku_results WHERE run_id = ? AND excecoes_json <> '[]'")
+    .prepare(`SELECT excecoes_json, sugestao_compra_rs FROM engine_sku_results WHERE run_id = ? AND excecoes_json <> '[]'${filialWhere}`)
     .all(runId);
 
   const excCounter = new Map();
@@ -101,7 +110,7 @@ export function buildExecutiveBi(clientCode, runId, summary = {}) {
               ROUND(SUM(CASE WHEN estoque_atual <= 0 THEN venda_perdida_est_rs ELSE 0 END), 2) AS perda_ruptura_rs,
               ROUND(100.0 * SUM(CASE WHEN estoque_atual > 0 THEN 1 ELSE 0 END) / MAX(1, COUNT(*)), 1) AS nivel_servico_pct
        FROM engine_sku_results
-       WHERE run_id = ? AND abc_class = 'A'`
+       WHERE run_id = ? AND abc_class = 'A'${filialWhere}`
     )
     .get(runId);
 
@@ -117,7 +126,7 @@ export function buildExecutiveBi(clientCode, runId, summary = {}) {
               ROUND(SUM(sugestao_compra_un) * (MAX(custo_unit) - MIN(custo_unit)), 2) AS economia_potencial_rs
        FROM engine_sku_results
        WHERE run_id = ? AND molecule_key IS NOT NULL AND custo_unit > 0
-         AND (macro_categoria = 'MEDICAMENTO' OR grupo_nome LIKE '%GENERICO%' OR grupo_nome LIKE '%SIMILAR%')
+         AND (macro_categoria = 'MEDICAMENTO' OR grupo_nome LIKE '%GENERICO%' OR grupo_nome LIKE '%SIMILAR%')${filialWhere}
        GROUP BY molecule_key
        HAVING labs_count > 1 AND dif_custo_un > 0.50 AND total_sug_un > 0
        ORDER BY economia_potencial_rs DESC
@@ -126,9 +135,9 @@ export function buildExecutiveBi(clientCode, runId, summary = {}) {
     .all(runId);
 
   const capitalTotal = Number(capRow?.capital_total_estoque || 0);
-  const capitalExcesso = Number(summary.capitalExcessoAcimaMaxRs || 0);
-  const capitalParadoD = Number(summary.capitalParadoCurvaDRs || 0);
-  const capitalRiscoVal = Number(summary.lotesVencendo90dRs || 0) + Number(summary.lotesVencidosRs || 0);
+  const capitalExcesso = Number(capRow?.capital_excesso_max ?? (summary.capitalExcessoAcimaMaxRs || 0));
+  const capitalParadoD = Number(capRow?.capital_parado_d ?? (summary.capitalParadoCurvaDRs || 0));
+  const capitalRiscoVal = Number(capRow?.lotes_vencendo_90d_rs || 0) + Number(capRow?.lotes_vencidos_rs || 0);
   const capitalSaudavel = Math.max(0, round2(capitalTotal - capitalExcesso - capitalParadoD));
 
   return {
@@ -138,7 +147,7 @@ export function buildExecutiveBi(clientCode, runId, summary = {}) {
       capitalExcesso,
       capitalParadoD,
       capitalRiscoVal,
-      vendaPerdida91d: Number(summary.vendaPerdidaEstimadaRs91d || 0),
+      vendaPerdida91d: Number(capRow?.venda_perdida_est_rs ?? (summary.vendaPerdidaEstimadaRs91d || 0)),
     },
     iaImpact: {
       economiaMoleculaRs: Number(summary.economiaMoleculaRs || 0),

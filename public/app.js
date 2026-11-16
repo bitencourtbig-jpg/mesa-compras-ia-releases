@@ -1,6 +1,14 @@
 const state = {
+  remanFilters: {
+    search: '',
+    tipo: 'ALL',
+    curva: 'ALL',
+    origem: 'ALL',
+    destino: 'ALL',
+    minValor: 0,
+  },
   view: 'home',
-  tab: 'exceptions',
+  tab: 'buy',
   q: '',
   abc: '',
   abcxyz: '',
@@ -167,12 +175,14 @@ function formatFilialTag(filialId, nomeReduz, nomeCompleto) {
 }
 
 function badgeForException(code) {
-  if (code.startsWith('RUPTURA_') || code === 'LOTE_VENCIDO') return `<span class="badge badge-danger">${esc(code)}</span>`;
-  if (code.includes('PBM') || code.includes('MOLECULA')) return `<span class="badge badge-info">${esc(code)}</span>`;
-  if (code.includes('LOTE') || code.includes('PERDA') || code.includes('ALTA_CUSTO') || code.includes('NEGATIVO'))
-    return `<span class="badge badge-warn">${esc(code)}</span>`;
-  if (code.includes('REMANEJAMENTO')) return `<span class="badge badge-success">${esc(code)}</span>`;
-  return `<span class="badge badge-neutral">${esc(code)}</span>`;
+  if (!code) return '<span class="badge badge-neutral">—</span>';
+  const str = String(code);
+  if (str.startsWith('RUPTURA_') || str === 'LOTE_VENCIDO') return `<span class="badge badge-danger">${esc(str)}</span>`;
+  if (str.includes('PBM') || str.includes('MOLECULA')) return `<span class="badge badge-info">${esc(str)}</span>`;
+  if (str.includes('LOTE') || str.includes('PERDA') || str.includes('ALTA_CUSTO') || str.includes('NEGATIVO'))
+    return `<span class="badge badge-warn">${esc(str)}</span>`;
+  if (str.includes('REMANEJAMENTO')) return `<span class="badge badge-success">${esc(str)}</span>`;
+  return `<span class="badge badge-neutral">${esc(str)}</span>`;
 }
 
 function badgeForAction(ia) {
@@ -275,7 +285,18 @@ function syncQuickLaboraChips() {
   });
 }
 
+function isLicenseExpired() {
+  const lic = state.licenseStatus;
+  if (!lic) return false;
+  const days = Number(lic.daysRemaining !== undefined ? lic.daysRemaining : 0);
+  return Boolean(lic.isExpired || !lic.isValid || days <= 0);
+}
+
 function switchView(viewName) {
+  if (isLicenseExpired() && viewName !== 'home') {
+    openWelcomeGate(true);
+    return;
+  }
   document.querySelectorAll('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.view === viewName));
   state.view = viewName;
   document.querySelectorAll('.view-section').forEach((sec) => sec.classList.add('hidden'));
@@ -293,6 +314,8 @@ function switchView(viewName) {
 
   const titles = {
     home: ['Início & Apresentação Executiva', 'Mesa de Compras IA • Motor de Inteligência em Abastecimento Farmacêutico'],
+    budget: ['Dotação Orçamentária & Open-to-Buy (OTB)', 'Controle de Teto de Compras • Score Ponderado & CMV Ajustado por Tendência'],
+    ols: ['Operações Logísticas (OL) & Compras Diretas da Indústria', 'Consultor IA de Canal • Projeção de Demanda, Pedidos Mínimos e Ganho de Margem (+8% a +15%)'],
     cockpit: ['Mesa de Compras por Exceção', '100% Mix com Veredito Direto, Confiança IA e Exportação Cotefácil'],
     bi: ['BI Executivo de Estoque & Compras', 'Onde o capital está parado, retorno por categoria e impacto da Inteligência Artificial'],
     molecules: ['Compra de Molécula & Curadoria CMED', 'Consolidação por Princípio Ativo + Dosagem + Regra 28–30 CP'],
@@ -316,79 +339,102 @@ function renderHomeScreen() {
   const container = document.getElementById('view-home');
   if (!container) return;
 
-  const lic = state.licenseStatus || { isValid: false, isExpired: true, daysRemaining: 0 };
+  const lic = state.licenseStatus;
   const ov = state.overview || {};
   const profile = ov.profile || {};
   const cmed = ov.cmedImport || null;
-  const days = Number(lic.daysRemaining || 0);
-  const isExp = lic.isExpired || !lic.isValid || days <= 0;
-  const isNear = !isExp && days <= 10;
 
   // 1. Renderiza o Card de Assinatura & Suporte com Alerta de 10 dias / WhatsApp
   const licenseCard = document.getElementById('home-license-card');
   if (licenseCard) {
-    if (isExp) {
+    if (!lic) {
+      // Estado de carregamento neutro — NUNCA acusa expirado antes de obter os dados reais do servidor!
       licenseCard.innerHTML = `
-        <div style="background: #fef2f2; border: 1.5px solid #f87171; border-radius: 12px; padding: 20px 24px; display: flex; justify-content: space-between; align-items: center; gap: 20px; flex-wrap: wrap;">
-          <div>
-            <div style="font-size: 15px; font-weight: 800; color: #991b1b; display: flex; align-items: center; gap: 8px;">
-              <span>🚨 Assinatura Mensal Expirada!</span>
-              <span class="badge" style="background:#fee2e2; color:#b91c1c;">Acesso Bloqueado</span>
-            </div>
-            <div style="font-size: 13px; color: #b91c1c; margin-top: 4px; line-height: 1.4;">
-              Seu período de uso venceu em <strong>${lic.validUntil ? lic.validUntil.split('-').reverse().join('/') : 'Data não informada'}</strong>.<br>
-              Para continuar calculando suas cotações e gerando pedidos, renove a licença com a <strong>FSConsultoria</strong>.
-            </div>
-          </div>
-          <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
-            <a href="https://wa.me/5517981205660?text=${encodeURIComponent('Olá FSConsultoria! Meu sistema Mesa de Compras IA expirou (Máquina: ' + (lic.currentMachineId || '') + '). Gostaria de receber a chave de renovação mensal.')}" target="_blank" rel="noopener noreferrer" class="btn" style="background:#25d366; border:1px solid #16a34a; color:#fff; font-weight:700; padding:11px 20px; font-size:13.5px; text-decoration:none; display:inline-flex; align-items:center; gap:8px; border-radius:8px; box-shadow:0 4px 12px rgba(37,211,102,0.3);">
-              <span>📲 Renovar no WhatsApp (17) 98120-5660</span>
-            </a>
-            <button id="btn-home-quick-activate" class="btn btn-secondary" type="button">🔑 Inserir Nova Chave</button>
-          </div>
-        </div>
-      `;
-    } else if (isNear) {
-      licenseCard.innerHTML = `
-        <div style="background: #fffbeb; border: 1.5px solid #f59e0b; border-radius: 12px; padding: 20px 24px; display: flex; justify-content: space-between; align-items: center; gap: 20px; flex-wrap: wrap;">
-          <div>
-            <div style="font-size: 15px; font-weight: 800; color: #92400e; display: flex; align-items: center; gap: 8px;">
-              <span>⚠️ Licença a Vencer: Restam ${days} dias de Assinatura!</span>
-              <span class="badge" style="background:#fef3c7; color:#b45309;">Renovação Próxima</span>
-            </div>
-            <div style="font-size: 13px; color: #b45309; margin-top: 4px; line-height: 1.4;">
-              Sua licença mensal vence em <strong>${lic.validUntil ? lic.validUntil.split('-').reverse().join('/') : ''}</strong> (${days} dias restantes).<br>
-              Garanta a continuidade do cálculo da sua drogaria sem interrupções solicitando a renovação à FSConsultoria.
-            </div>
-          </div>
-          <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
-            <a href="https://wa.me/5517981205660?text=${encodeURIComponent('Olá FSConsultoria! Meu sistema Mesa de Compras IA vence em ' + days + ' dias (Máquina: ' + (lic.currentMachineId || '') + '). Gostaria de antecipar a renovação.')}" target="_blank" rel="noopener noreferrer" class="btn" style="background:#25d366; border:1px solid #16a34a; color:#fff; font-weight:700; padding:11px 20px; font-size:13.5px; text-decoration:none; display:inline-flex; align-items:center; gap:8px; border-radius:8px; box-shadow:0 4px 12px rgba(37,211,102,0.3);">
-              <span>📲 Falar com FSConsultoria no WhatsApp (17) 98120-5660</span>
-            </a>
-            <button id="btn-home-quick-activate" class="btn btn-secondary" type="button">🔑 Inserir Chave</button>
-          </div>
+        <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px 24px; display: flex; align-items: center; gap: 12px; color: #64748b; font-size: 13.5px;">
+          <span style="font-size: 16px;">⏳</span>
+          <span>Verificando autenticidade da assinatura e blindagem da máquina...</span>
         </div>
       `;
     } else {
-      licenseCard.innerHTML = `
-        <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 18px 24px; display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap;">
-          <div>
-            <div style="font-size: 14.5px; font-weight: 700; color: #166534; display: flex; align-items: center; gap: 8px;">
-              <span style="width:10px; height:10px; border-radius:50%; background:#10b981; display:inline-block;"></span>
-              <span>Assinatura Ativa • ${days} dias restantes</span>
-              <span class="badge" style="background:#dcfce7; color:#15803d; font-size:11px;">Válida até ${lic.validUntil ? lic.validUntil.split('-').reverse().join('/') : ''}</span>
+      const days = Number(lic.daysRemaining !== undefined ? lic.daysRemaining : 0);
+      const isExp = Boolean(lic.isExpired || !lic.isValid || days <= 0);
+      const isNear = !isExp && days <= 10;
+      const validUntilFmt = lic.validUntil ? lic.validUntil.split('-').reverse().join('/') : '--/--/----';
+      const clientTitle = lic.clientName || profile.name || 'Cliente Licenciado';
+      const machId = lic.currentMachineId || lic.machineId || 'LNX-MAQUINA';
+      const rawCnpj = String(lic.cnpj || '').replace(/\D/g, '');
+      const formattedCnpj = rawCnpj.length === 14 ? rawCnpj.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5') : rawCnpj;
+
+      if (isExp) {
+        licenseCard.innerHTML = `
+          <div style="background: #fef2f2; border: 1.5px solid #f87171; border-radius: 12px; padding: 20px 24px; display: flex; justify-content: space-between; align-items: center; gap: 20px; flex-wrap: wrap;">
+            <div>
+              <div style="font-size: 15px; font-weight: 800; color: #991b1b; display: flex; align-items: center; gap: 8px;">
+                <span>🚨 Assinatura Mensal Expirada!</span>
+                <span class="badge" style="background:#fee2e2; color:#b91c1c;">Acesso Bloqueado</span>
+              </div>
+              <div style="font-size: 13px; color: #b91c1c; margin-top: 4px; line-height: 1.4;">
+                Seu período de uso venceu em <strong>${validUntilFmt}</strong>.<br>
+                Para continuar calculando suas cotações e gerando pedidos, renove a licença com a <strong>FSConsultoria</strong>.
+              </div>
             </div>
-            <div style="font-size: 12px; color: #15803d; margin-top: 3px;">
-              Farmácia: <strong>${esc(lic.clientName || profile.name || 'Drogaria')}</strong> • Hardware ID: <code>${lic.currentMachineId || ''}</code>
+            <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+              <a href="https://wa.me/5517981205660?text=${encodeURIComponent('Olá FSConsultoria! Meu sistema Mesa de Compras IA está bloqueado. CNPJ: ' + rawCnpj + ', Máquina: ' + machId + '. Gostaria de negociar os valores das chaves para liberação imediata.')}" target="_blank" rel="noopener noreferrer" class="btn" style="background:#25d366; border:1px solid #16a34a; color:#fff; font-weight:700; padding:11px 20px; font-size:13.5px; text-decoration:none; display:inline-flex; align-items:center; gap:8px; border-radius:8px; box-shadow:0 4px 12px rgba(37,211,102,0.3);">
+                <span>📲 Negociar Licença no WhatsApp (17) 98120-5660</span>
+              </a>
+              <button id="btn-home-quick-activate" class="btn btn-secondary" type="button">🔑 Inserir Chave</button>
             </div>
           </div>
-          <div>
-            <a href="https://wa.me/5517981205660?text=${encodeURIComponent('Olá FSConsultoria! Gostaria de tirar uma dúvida sobre o Mesa de Compras IA.')}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm" style="text-decoration:none; display:inline-flex; align-items:center; gap:6px;">
-              <span>💬 Suporte FSConsultoria (17) 98120-5660</span>
-            </a>
+        `;
+      } else if (isNear) {
+        licenseCard.innerHTML = `
+          <div style="background: #fffbeb; border: 1.5px solid #f59e0b; border-radius: 12px; padding: 20px 24px; display: flex; justify-content: space-between; align-items: center; gap: 20px; flex-wrap: wrap;">
+            <div>
+              <div style="font-size: 15px; font-weight: 800; color: #92400e; display: flex; align-items: center; gap: 8px;">
+                <span>⚠️ Licença a Vencer: Restam ${days} dias de Assinatura!</span>
+                <span class="badge" style="background:#fef3c7; color:#b45309;">Renovação Próxima</span>
+              </div>
+              <div style="font-size: 13px; color: #b45309; margin-top: 4px; line-height: 1.4;">
+                Sua licença mensal vence em <strong>${validUntilFmt}</strong> (${days} dias restantes).<br>
+                Garanta a continuidade do cálculo da sua drogaria sem interrupções solicitando a renovação à FSConsultoria.
+              </div>
+            </div>
+            <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+              <a href="https://wa.me/5517981205660?text=${encodeURIComponent('Olá FSConsultoria! Meu sistema Mesa de Compras IA vence em ' + days + ' dias (CNPJ: ' + rawCnpj + ', Máquina: ' + machId + '). Gostaria de antecipar a renovação.')}" target="_blank" rel="noopener noreferrer" class="btn" style="background:#25d366; border:1px solid #16a34a; color:#fff; font-weight:700; padding:11px 20px; font-size:13.5px; text-decoration:none; display:inline-flex; align-items:center; gap:8px; border-radius:8px; box-shadow:0 4px 12px rgba(37,211,102,0.3);">
+                <span>📲 Falar com FSConsultoria no WhatsApp (17) 98120-5660</span>
+              </a>
+              <button id="btn-home-quick-activate" class="btn btn-secondary" type="button">🔑 Inserir Chave</button>
+            </div>
           </div>
-        </div>
-      `;
+        `;
+      } else {
+        // ASSINATURA ATIVA E REGULARIZADA!
+        licenseCard.innerHTML = `
+          <div style="background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 12px; padding: 18px 24px; display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap;">
+            <div>
+              <div style="font-size: 15px; font-weight: 800; color: #166534; display: flex; align-items: center; gap: 8px;">
+                <span style="width:10px; height:10px; border-radius:50%; background:#10b981; display:inline-block; box-shadow: 0 0 0 3px rgba(16,185,129,0.25);"></span>
+                <span>✓ Assinatura Ativa &amp; Regularizada • ${days} dias restantes</span>
+                <span class="badge" style="background:#dcfce7; color:#15803d; font-size:11px; font-weight:700;">Válida até ${validUntilFmt}</span>
+              </div>
+              <div style="font-size: 12.5px; color: #15803d; margin-top: 4px;">
+                Cliente: <strong>${esc(clientTitle)}</strong> ${formattedCnpj ? `• CNPJ: ${formattedCnpj}` : ''} • Blindagem Hardware: <code>${machId}</code>
+              </div>
+            </div>
+            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+              <a href="https://wa.me/5517981205660?text=${encodeURIComponent('Olá FSConsultoria! Gostaria de tirar uma dúvida sobre a Mesa de Compras IA (Cliente: ' + clientTitle + ').')}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm" style="text-decoration:none; display:inline-flex; align-items:center; gap:6px;">
+                <span>💬 Suporte FSConsultoria (17) 98120-5660</span>
+              </a>
+              <button id="btn-home-quick-activate" class="btn btn-secondary btn-sm" type="button" title="Ver detalhes da licença ou renovar antecipadamente">🔑 Chave de Licença</button>
+            </div>
+          </div>
+        `;
+      }
+
+      const quickBtn = document.getElementById('btn-home-quick-activate');
+      if (quickBtn) {
+        quickBtn.onclick = () => openWelcomeGate(false);
+      }
     }
   }
 
@@ -748,7 +794,12 @@ async function triggerTopBarParamChange() {
     await loadOverview();
     await refreshActiveView();
   } catch (err) {
-    showBanner(`Falha ao recalcular perfil: ${err.message}`, true);
+    const isConnErr = /ETIMEDOUT|ECONNRESET|timeout/i.test(err.message || '');
+    if (isConnErr) {
+      showBanner(`Aviso: Conexão com o banco do Linx BIG demorou a responder (${err.message}). Clique em "Sincronizar & Calcular" para reconectar.`, true);
+    } else {
+      showBanner(`Falha ao recalcular perfil: ${err.message}`, true);
+    }
   }
 }
 
@@ -795,25 +846,26 @@ function renderMultilojaBar() {
   if (btnTransf) btnTransf.style.display = 'inline-flex';
   if (btnPol) btnPol.style.display = 'inline-flex';
 
-  const chips = [
-    `<button type="button" class="filial-chip ${state.selectedFilial === 'all' ? 'active' : ''}" data-filial="all">
+  const chips = [];
+  chips.push(`
+    <button type="button" class="filial-chip ${state.selectedFilial === 'all' ? 'active' : ''}" data-filial="all">
       <span class="filial-chip-icon">🏬</span>
       <span class="filial-chip-label">Rede Consolidada</span>
       <span class="filial-chip-badge">${policies.length} Lojas</span>
-    </button>`
-  ];
+    </button>
+  `);
 
   for (const pol of policies) {
     const fId = String(pol.filial_id);
     const isCarencia = Boolean(pol.emCarencia || pol.bloquear_doacao_remanejamento === 1 || (pol.diasOperacao && pol.diasOperacao <= (pol.dias_carencia || 90)));
     const cleanLabel = formatFilialTag(pol.filial_id, pol.nome_reduz, pol.nome_loja);
 
-    const badgeText = isCarencia ? `Carência ${pol.diasOperacao || 41}d` : 'Ativa';
+    const badgeText = isSingleStore ? 'Loja Única' : (isCarencia ? `Carência ${pol.diasOperacao || 41}d` : 'Ativa');
     const isActive = state.selectedFilial === fId;
 
     chips.push(`
       <button type="button" class="filial-chip ${isCarencia ? 'carencia' : ''} ${isActive ? 'active' : ''}" data-filial="${esc(fId)}" title="${esc(pol.nome_loja)} ${isCarencia ? '(Recém-inaugurada sob proteção de carência)' : ''}">
-        <span class="filial-chip-icon">${isCarencia ? '🐣' : '🏪'}</span>
+        <span class="filial-chip-icon">${isSingleStore ? '🏪' : (isCarencia ? '🐣' : '🏪')}</span>
         <span class="filial-chip-label">${esc(cleanLabel)}</span>
         <span class="filial-chip-badge">${badgeText}</span>
       </button>
@@ -827,9 +879,10 @@ function renderMultilojaBar() {
       if (state.selectedFilial === fId) return;
       state.selectedFilial = fId;
       renderMultilojaBar();
+      renderKpiStrip(state.selectedFilial);
       state.offset = 0;
       state.page = 1;
-      loadSkus();
+      refreshActiveView();
     });
   });
 }
@@ -1033,38 +1086,7 @@ async function loadOverview() {
     document.getElementById('run-meta').textContent =
       `Run #${latestRun.id} | Ref ${s.referenceDate} (${s.weeksWindow}s, ${(s.elapsedMs / 1000).toFixed(1)}s)`;
 
-    document.getElementById('kpi-strip').innerHTML = `
-      <div class="kpi-cell">
-        <div class="kpi-label">Rupturas Curva A / B</div>
-        <div class="kpi-val kpi-danger">${num(s.rupturasCurvaA)} / ${num(s.rupturasCurvaB)}</div>
-        <div class="kpi-sub">${num(s.skusComExcecao)} itens com exceção IA</div>
-      </div>
-      <div class="kpi-cell">
-        <div class="kpi-label">Venda Perdida Est. (91d)</div>
-        <div class="kpi-val kpi-danger">${brl(s.vendaPerdidaEstimadaRs91d)}</div>
-        <div class="kpi-sub">Via estoque_posterior + giro</div>
-      </div>
-      <div class="kpi-cell">
-        <div class="kpi-label">Sugestão Compra Líquida</div>
-        <div class="kpi-val kpi-accent">${brl(s.totalSugestaoCompraRs)}</div>
-        <div class="kpi-sub">${num(s.skusSugestaoCompra)} SKUs (100% mix)</div>
-      </div>
-      <div class="kpi-cell">
-        <div class="kpi-label">Economia Compra Molécula</div>
-        <div class="kpi-val kpi-accent">${brl(s.economiaMoleculaRs)}</div>
-        <div class="kpi-sub">${num(s.economiaMoleculaUn)} un evitadas na rede</div>
-      </div>
-      <div class="kpi-cell">
-        <div class="kpi-label">Excesso &gt; Máx + Parado D</div>
-        <div class="kpi-val kpi-warn">${brl(s.capitalExcessoAcimaMaxRs)}</div>
-        <div class="kpi-sub">+ ${brl(s.capitalParadoCurvaDRs)} sem giro (D)</div>
-      </div>
-      <div class="kpi-cell">
-        <div class="kpi-label">Risco Validade (lote_novo)</div>
-        <div class="kpi-val kpi-warn">${brl(s.lotesVencendo90dRs)}</div>
-        <div class="kpi-sub">+ ${brl(s.lotesVencidosRs)} já vencido em saldo</div>
-      </div>
-    `;
+    renderKpiStrip(state.selectedFilial || 'all');
   } else {
     document.getElementById('run-meta').textContent = 'Nenhuma sincronização realizada ainda nesta base.';
     document.getElementById('kpi-strip').innerHTML = `
@@ -1101,15 +1123,73 @@ async function loadOverview() {
     const days = Number(data.licenseStatus.daysRemaining || 0);
     const isExp = Boolean(data.licenseStatus.isExpired || !data.licenseStatus.isValid || days <= 0);
 
-    // O modal bloqueante SÓ abre automaticamente se a licença estiver REALMENTE EXPIRADA!
+    // O modal bloqueante SÓ abre se a licença estiver REALMENTE EXPIRADA!
     // Se a licença estiver ativa com dias normais, entra direto na Home Page sem popups invasivos.
     if (isExp) {
       openWelcomeGate(true);
-    } else if (days <= 10) {
-      // Aviso sutil se faltarem 10 dias ou menos para renovar
-      showBanner(`⚠️ Sua licença mensal da Mesa de Compras IA vence em ${days} dia(s). Contate a FSConsultoria no WhatsApp (17) 98120-5660 para renovar.`);
+    } else {
+      const modal = document.getElementById('modal-welcome-gate');
+      if (modal && !sessionStorage.getItem('big_welcome_open_manual')) {
+        modal.classList.add('hidden');
+        syncBodyModalState();
+      }
+      if (days <= 10) {
+        showBanner(`⚠️ Sua licença mensal da Mesa de Compras IA vence em ${days} dia(s). Contate a FSConsultoria no WhatsApp (17) 98120-5660 para renovar.`);
+      }
+    }
+
+    // Se estiver na tela inicial, re-renderiza imediatamente com os dados de licença confirmados
+    if (state.view === 'home' || !state.view) {
+      renderHomeScreen();
     }
   }
+}
+
+function renderKpiStrip(targetFilial = 'all') {
+  const latestRun = state.overview?.latestRun;
+  if (!latestRun) return;
+  const filialKpis = state.overview?.filialKpis || {};
+  const s = (targetFilial && targetFilial !== 'all' && filialKpis[targetFilial])
+    ? filialKpis[targetFilial]
+    : latestRun.summary;
+
+  const kpiEl = document.getElementById('kpi-strip');
+  if (!kpiEl || !s) return;
+
+  const scopeLabel = (targetFilial && targetFilial !== 'all') ? `Filial L0${targetFilial}` : 'Rede Consolidada';
+
+  kpiEl.innerHTML = `
+    <div class="kpi-cell">
+      <div class="kpi-label">Rupturas Curva A / B <span class="badge badge-neutral" style="font-size:10px; margin-left:4px;">${scopeLabel}</span></div>
+      <div class="kpi-val kpi-danger">${num(s.rupturasCurvaA)} / ${num(s.rupturasCurvaB)}</div>
+      <div class="kpi-sub">${num(s.skusComExcecao)} itens com exceção IA</div>
+    </div>
+    <div class="kpi-cell">
+      <div class="kpi-label">Venda Perdida Est. (91d)</div>
+      <div class="kpi-val kpi-danger">${brl(s.vendaPerdidaEstimadaRs91d)}</div>
+      <div class="kpi-sub">Via estoque_posterior + giro</div>
+    </div>
+    <div class="kpi-cell">
+      <div class="kpi-label">Sugestão Compra Líquida</div>
+      <div class="kpi-val kpi-accent">${brl(s.totalSugestaoCompraRs)}</div>
+      <div class="kpi-sub">${num(s.skusSugestaoCompra)} SKUs a comprar</div>
+    </div>
+    <div class="kpi-cell">
+      <div class="kpi-label">Economia Compra Molécula</div>
+      <div class="kpi-val kpi-accent">${brl(s.economiaMoleculaRs)}</div>
+      <div class="kpi-sub">${num(s.economiaMoleculaUn)} un evitadas na rede</div>
+    </div>
+    <div class="kpi-cell">
+      <div class="kpi-label">Excesso &gt; Máx + Parado D</div>
+      <div class="kpi-val kpi-warn">${brl(s.capitalExcessoAcimaMaxRs)}</div>
+      <div class="kpi-sub">+ ${brl(s.capitalParadoCurvaDRs)} sem giro (D)</div>
+    </div>
+    <div class="kpi-cell">
+      <div class="kpi-label">Risco Validade (lote_novo)</div>
+      <div class="kpi-val kpi-warn">${brl(s.lotesVencendo90dRs)}</div>
+      <div class="kpi-sub">+ ${brl(s.lotesVencidosRs)} vencido físico em saldo</div>
+    </div>
+  `;
 }
 
 function renderTableSummary(data) {
@@ -1395,8 +1475,26 @@ function renderPagination(data) {
 }
 
 async function loadSkus() {
+  if (state.activeSkusAbortController) {
+    try { state.activeSkusAbortController.abort(); } catch {}
+  }
+  state.activeSkusAbortController = new AbortController();
+  const currentSignal = state.activeSkusAbortController.signal;
+
+  if (state.tab === 'curadoria') {
+    document.getElementById('table-wrap-skus')?.classList.add('hidden');
+    document.getElementById('view-groups-summary')?.classList.add('hidden');
+    document.getElementById('view-curadoria-container')?.classList.remove('hidden');
+    document.getElementById('table-summary').textContent = '🧬 Curadoria IA de Moléculas • Homologação de De-Para e Substituições por Genéricos/Similares CMED antes da compra final.';
+    document.getElementById('table-pagination')?.classList.add('hidden');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    await loadAndRenderCuradoria();
+    return;
+  }
+
   if (state.tab === 'groups_summary') {
     document.getElementById('table-wrap-skus')?.classList.add('hidden');
+    document.getElementById('view-curadoria-container')?.classList.add('hidden');
     document.getElementById('view-groups-summary')?.classList.remove('hidden');
     document.getElementById('table-summary').textContent = '🌳 Resumo por Grupo & Árvore ERP do Linx BIG — Visão consolidada de SKUs, estoque e orçamento por categoria pai e filho.';
     document.getElementById('table-pagination')?.classList.add('hidden');
@@ -1407,12 +1505,7 @@ async function loadSkus() {
 
   document.getElementById('table-wrap-skus')?.classList.remove('hidden');
   document.getElementById('view-groups-summary')?.classList.add('hidden');
-
-  if (state.activeSkusAbortController) {
-    try { state.activeSkusAbortController.abort(); } catch {}
-  }
-  state.activeSkusAbortController = new AbortController();
-  const currentSignal = state.activeSkusAbortController.signal;
+  document.getElementById('view-curadoria-container')?.classList.add('hidden');
 
   updateSelectionUi();
   const params = new URLSearchParams({
@@ -1492,8 +1585,14 @@ async function loadSkus() {
 
   try {
     const data = await apiGet(`/api/skus?${params.toString()}`, currentSignal);
-  state.visibleSkus = data.rows || [];
-  state.budgetAuditData = data.budgetAudit || null;
+    if (state.tab === 'buy') {
+      data.rows = (data.rows || []).filter((r) => {
+        const q = r.budget_qtd !== undefined ? Number(r.budget_qtd) : Number(r.sugestao_compra_un || 0);
+        return q > 0 && r.ia_analysis?.acaoCodigo !== 'NAO_COMPRAR';
+      });
+    }
+    state.visibleSkus = data.rows || [];
+    state.budgetAuditData = data.budgetAudit || null;
   updateSelectionUi();
 
   const btnAudit = document.getElementById('btn-budget-audit');
@@ -1508,6 +1607,7 @@ async function loadSkus() {
 
   renderTableSummary(data);
   renderPagination(data);
+  checkOlOpportunityForManufacturer(state.labora);
 
   if (!data.rows || data.rows.length === 0) {
     if (!state.overview?.latestRun) {
@@ -1967,17 +2067,31 @@ async function openMoleculeSweep(molKey, skuId, filialId = null) {
   const banner = document.getElementById('sweep-ia-banner');
   const tbody = document.getElementById('sweep-tbody');
   const actionBar = document.getElementById('sweep-action-bar');
+  const storeDiagContainer = document.getElementById('sweep-store-diagnostic');
+  const remanSynergyContainer = document.getElementById('sweep-reman-synergy');
+  const matrixContainer = document.getElementById('sweep-matrix-container');
+  const matrixHeader = document.getElementById('sweep-matrix-header');
+  const matrixCountBadge = document.getElementById('sweep-matrix-count-badge');
+  const toggleIcon = document.getElementById('btn-toggle-matrix-icon');
+  const toggleText = document.getElementById('btn-toggle-matrix-text');
 
+  // Reset visual do modal
   banner.className = 'sweep-banner info';
+  banner.style = '';
   banner.innerHTML = '<strong>Consultando laboratórios, fabricantes e curvas da molécula em tempo real...</strong>';
-  tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:24px;" class="muted">Carregando dados da molécula...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;padding:24px;" class="muted">Carregando dados da molécula...</td></tr>';
   actionBar.innerHTML = '';
+  if (storeDiagContainer) { storeDiagContainer.style.display = 'none'; storeDiagContainer.innerHTML = ''; }
+  if (remanSynergyContainer) { remanSynergyContainer.style.display = 'none'; remanSynergyContainer.innerHTML = ''; }
+  if (matrixContainer) { matrixContainer.style.display = 'none'; }
+  if (toggleIcon) toggleIcon.textContent = '▶';
+  if (toggleText) toggleText.textContent = 'Ver Matriz Completa';
 
   const fId = filialId || (state.selectedFilial !== 'all' ? state.selectedFilial : 2);
 
   try {
     const res = await apiGet(`/api/molecules/sweep?key=${encodeURIComponent(molKey)}&skuId=${skuId || 0}&filialId=${fId || 2}`);
-    const { targetSku, cheapestSku, otherStockTotal, otherCoverageDays, skus, summary, substancia, concentracao, forma, packBucket, ia_advice } = res;
+    const { targetSku, cheapestSku, otherStockTotal, otherCoverageDays, skus, summary, substancia, concentracao, forma, packBucket, ia_advice, store_analysis, remanejamento_sinergia } = res;
 
     // 1. Atualizar Título da Modal
     document.getElementById('sweep-modal-title').innerHTML = `
@@ -1985,42 +2099,218 @@ async function openMoleculeSweep(molKey, skuId, filialId = null) {
       <span class="badge badge-accent">${esc(forma)} &bull; ${esc(packBucket)}</span>
     `;
 
-    // 2. Banner de Diagnóstico da IA (com suporte a Curva D / Estoque Parado - REV-020)
-    if (ia_advice) {
-      banner.className = `sweep-banner ${ia_advice.severity || 'warning'}`;
-      banner.innerHTML = `
-        <div style="font-size:14px; font-weight:700; margin-bottom:4px;">${ia_advice.title}</div>
-        <div style="font-size:12.5px; line-height:1.5;">${esc(ia_advice.message)}</div>
-      `;
-    } else if (targetSku && targetSku.sugestao_compra_un > 0 && otherStockTotal > 0 && otherCoverageDays >= 14) {
-      banner.className = 'sweep-banner warning';
-      banner.innerHTML = `
-        <div style="font-size:14px; font-weight:700;">⚠️ Estoque Existente da Mesma Molécula em Outros Laboratórios</div>
-        <div>
-          O motor sugeriu a compra de <strong>${targetSku.sugestao_compra_un} un de ${esc(targetSku.descricao)} (${esc(targetSku.labora)})</strong> totalizando <strong>${brl(targetSku.sugestao_compra_rs)}</strong>.<br>
-          Porém, sua loja já possui <strong>${otherStockTotal} unidades em estoque</strong> de outros laboratórios desta mesma apresentação, com <strong>${otherCoverageDays} dias de cobertura</strong> garantida!
-        </div>
-      `;
-    } else if (cheapestSku && targetSku && targetSku.produto_id !== cheapestSku.produto_id && targetSku.custo_unit > cheapestSku.custo_unit) {
-      const diffUnit = targetSku.custo_unit - cheapestSku.custo_unit;
-      banner.className = 'sweep-banner info';
-      banner.innerHTML = `
-        <div style="font-size:14px; font-weight:700;">💡 Oportunidade de Maior Margem / Menor Custo</div>
-        <div>
-          O fabricante <strong>${esc(cheapestSku.labora)} (${esc(cheapestSku.descricao)})</strong> tem o menor custo de compra registrado: <strong>${brl(cheapestSku.custo_unit)}</strong> vs <strong>${brl(targetSku.custo_unit)}</strong> da marca sugerida (Economia de <strong>${brl(diffUnit)}</strong> por unidade).
-        </div>
-      `;
+    // Atualizar badge da matriz de fabricantes
+    if (matrixCountBadge) matrixCountBadge.textContent = `${skus.length} ${skus.length > 1 ? 'marcas' : 'marca'}`;
+
+    const targetSugUn = Number(targetSku?.total_sugestao_un || targetSku?.sugestao_compra_un || 0);
+    const targetSugRs = Number(targetSku?.total_sugestao_rs || targetSku?.sugestao_compra_rs || 0);
+    const hasReman = remanejamento_sinergia && remanejamento_sinergia.hasOpportunities;
+    const isDeadStock = ia_advice?.type === 'DEAD_STOCK_WARNING';
+    const isEnoughStock = ia_advice?.type === 'ENOUGH_STOCK_WARNING';
+    const isMargin = ia_advice?.type === 'MARGIN_OPPORTUNITY';
+
+    // 2. Banner Executivo com Ação de 1 Clique (REV-024)
+    let masterActionTitle = '';
+    let masterActionBtnText = '';
+    let masterActionType = '';
+    let ecoHighlight = 0;
+
+    if (hasReman) {
+      ecoHighlight = remanejamento_sinergia.economiaRemanejamentoRs || targetSugRs;
+      masterActionTitle = '🔄 A IA recomenda REMANEJAR INTERNAMENTE (Transfer-First)';
+      masterActionBtnText = `⚡ 1-Clique: Aplicar Remanejamento & Bloquear Compras (${brl(ecoHighlight)})`;
+      masterActionType = 'REMAN';
+    } else if (isDeadStock) {
+      ecoHighlight = targetSugRs > 0 ? targetSugRs : (ia_advice.ecoDead || 0);
+      masterActionTitle = '🛑 A IA recomenda NÃO COMPRAR na distribuidora agora';
+      masterActionBtnText = `⚡ 1-Clique: Bloquear Compras & Desovar Balcão (${brl(ecoHighlight)})`;
+      masterActionType = 'BLOCK_ALL';
+    } else if (isMargin && cheapestSku) {
+      ecoHighlight = ia_advice.economiaTotal || 0;
+      masterActionTitle = `🟢 A IA recomenda TROCAR para ${esc(cheapestSku.labora)} (Menor Custo)`;
+      masterActionBtnText = `⚡ 1-Clique: Trocar Fabricante (Economizar ${brl(ecoHighlight)})`;
+      masterActionType = 'SWITCH';
+    } else if (isEnoughStock) {
+      ecoHighlight = ia_advice.ecoDeducao || targetSugRs;
+      masterActionTitle = '📉 A IA recomenda DESCONTAR ESTOQUE ALTERNATIVO do pedido';
+      masterActionBtnText = `⚡ 1-Clique: Abater Estoque Existente (${brl(ecoHighlight)})`;
+      masterActionType = 'DEDUCT';
     } else {
-      banner.className = 'sweep-banner success';
-      banner.innerHTML = `
-        <div style="font-size:14px; font-weight:700;">✓ Varredura da Molécula Concluída</div>
-        <div>
-          Total de <strong>${skus.length} produtos</strong> cadastrados nesta molécula na loja. Estoque total somado: <strong>${summary.estoque_total} un</strong> (Cobertura média: <strong>${summary.cobertura_molecula_dias} dias</strong>).
+      masterActionTitle = '✓ Molécula Equilibrada na Rede';
+      masterActionBtnText = '✓ Liberar Compra Homologada';
+      masterActionType = 'KEEP';
+    }
+
+    banner.className = 'sweep-banner';
+    banner.style = 'background:linear-gradient(135deg, #fff5f5 0%, #fef2f2 100%); border:1.5px solid #f87171; border-radius:12px; padding:14px 18px; box-shadow:0 2px 6px rgba(0,0,0,0.03);';
+    if (!isDeadStock && !hasReman && isMargin) {
+      banner.style = 'background:linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border:1.5px solid #60a5fa; border-radius:12px; padding:14px 18px;';
+    } else if (!isDeadStock && !hasReman && !isMargin) {
+      banner.style = 'background:linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border:1.5px solid #86efac; border-radius:12px; padding:14px 18px;';
+    }
+
+    banner.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; width:100%;">
+        <div style="flex:1; min-width:300px;">
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <span style="font-size:14.5px; font-weight:800; color:#0f172a;">${masterActionTitle}</span>
+            ${ecoHighlight > 0 ? `<span style="background:#15803d; color:#ffffff; font-size:11px; font-weight:800; padding:3px 9px; border-radius:999px;">Economia: ${brl(ecoHighlight)}</span>` : ''}
+            ${targetSugUn > 0 ? `<span style="background:#f1f5f9; color:#334155; font-size:11px; font-weight:700; padding:3px 9px; border-radius:999px;">Pedido: ${targetSugUn} un (${brl(targetSugRs)})</span>` : ''}
+          </div>
+          <div style="font-size:12px; color:#334155; margin-top:5px; line-height:1.45;">
+            ${isDeadStock ? `Existem <strong>${ia_advice.deadTotalQty} un de Curva D (${esc(ia_advice.deadLabsList)})</strong> paradas na rede e lojas com marcas concorrentes. A prioridade da IA é desovar no balcão e proteger o capital de giro!`
+              : hasReman ? `O motor localizou estoques excedentes e lotes com validade próxima em lojas doadoras que cobrem a demanda das filiais sem comprar de distribuidoras!`
+              : isMargin ? `Existe opção idêntica de menor custo homologada (${esc(cheapestSku.labora)}) gerando economia imediata no pedido.`
+              : 'Estoque distribuído em conformidade com as políticas da rede.'}
+          </div>
+        </div>
+
+        ${targetSugUn > 0 ? `
+          <div style="display:flex; align-items:center; gap:8px;">
+            <button id="btn-master-ia-1click" class="btn btn-primary" type="button" style="font-weight:800; font-size:13px; padding:10px 20px; border-radius:8px; border:none; box-shadow:0 2px 6px rgba(0,0,0,0.15); display:inline-flex; align-items:center; gap:6px; cursor:pointer;" title="Executa a decisão recomendada da IA para toda a rede em 1 clique">
+              <span>${masterActionBtnText}</span>
+            </button>
+          </div>
+        ` : ''}
+      </div>
+    `;
+
+    // 3. Renderizar Filiais com Ação Requerida (MOSTRAR APENAS O QUE DÁ PRA SER FEITO) (REV-024)
+    if (storeDiagContainer && store_analysis && store_analysis.length > 0) {
+      storeDiagContainer.style.display = 'flex';
+
+      // Filtra estritamente as filiais que têm algo a ser feito
+      const actionableStores = store_analysis.filter((st) =>
+        st.targetSug > 0 ||
+        st.deadEstTotal > 0 ||
+        st.veredito === 'DOADORA_EXCESSO' ||
+        st.veredito === 'RUPTURA_REAL' ||
+        st.veredito === 'BLOQUEAR_COMPRA' ||
+        st.veredito === 'DEDUZIR_PARCIAL'
+      );
+      const neutralStores = store_analysis.filter((st) => !actionableStores.includes(st));
+
+      const isMulti = store_analysis.length > 1;
+
+      storeDiagContainer.innerHTML = `
+        <div style="background:#ffffff; border:1.5px solid #cbd5e1; border-radius:12px; padding:14px 16px; box-shadow:0 1px 4px rgba(0,0,0,0.02);">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px; border-bottom:1px solid #f1f5f9; padding-bottom:8px;">
+            <div>
+              <div style="font-size:13.5px; font-weight:800; color:#0f172a; display:flex; align-items:center; gap:8px;">
+                <span>🏢 ${isMulti ? 'Filiais que Requerem Ação Direta do Comprador' : 'Diagnóstico da Filial: Ação Recomendada'}</span>
+                <span class="badge badge-accent" style="font-size:10.5px;">${actionableStores.length} ${actionableStores.length > 1 ? 'Lojas com Ação' : 'Loja com Ação'}</span>
+              </div>
+              <div style="font-size:11.5px; color:#64748b; margin-top:2px;">
+                Mostrando apenas lojas com compras sugeridas, excedente ou itens parados. Você pode clicar no botão de cada card ou usar a ação master acima.
+              </div>
+            </div>
+            ${neutralStores.length > 0 ? `
+              <div style="font-size:11px; color:#64748b; background:#f8fafc; padding:4px 10px; border-radius:999px; border:1px solid #e2e8f0;">
+                ✓ ${neutralStores.length} ${neutralStores.length > 1 ? 'outras filiais estão equilibradas' : 'outra filial está equilibrada'} (${neutralStores.map(n => n.short || n.label).join(', ')})
+              </div>
+            ` : ''}
+          </div>
+
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(290px, 1fr)); gap:10px;">
+            ${actionableStores.map((st) => {
+              const isBlock = st.veredito === 'BLOQUEAR_COMPRA';
+              const isDeduct = st.veredito === 'DEDUZIR_PARCIAL';
+              const isDonor = st.veredito === 'DOADORA_EXCESSO';
+              const isDesova = st.veredito === 'DESOVAR_BALCAO';
+              const isRupture = st.veredito === 'RUPTURA_REAL';
+
+              const cardBg = isBlock ? '#fff5f5' : isDeduct ? '#fffbeb' : isDonor ? '#faf5ff' : isDesova ? '#fff7ed' : isRupture ? '#eff6ff' : '#f8fafc';
+              const cardBorder = isBlock ? '#fca5a5' : isDeduct ? '#fde68a' : isDonor ? '#c4b5fd' : isDesova ? '#fdba74' : isRupture ? '#93c5fd' : '#e2e8f0';
+              const badgeBg = isBlock ? '#dc2626' : isDeduct ? '#d97706' : isDonor ? '#7c3aed' : isDesova ? '#ea580c' : isRupture ? '#2563eb' : '#64748b';
+
+              return `
+                <div class="store-action-card" id="card-store-${st.filial_id}" style="background:${cardBg}; border:1.5px solid ${cardBorder}; border-radius:10px; padding:12px 14px; display:flex; flex-direction:column; justify-content:space-between; box-shadow:0 1px 3px rgba(0,0,0,0.02);">
+                  <div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                      <span style="font-weight:800; font-size:12.5px; color:#0f172a;">${esc(st.full_label || st.label)}</span>
+                      <span style="background:${badgeBg}; color:#ffffff; font-size:10px; font-weight:800; padding:2px 7px; border-radius:4px; text-transform:uppercase;">
+                        ${st.tituloVeredito}
+                      </span>
+                    </div>
+
+                    <div style="display:flex; justify-content:space-between; font-size:11px; background:rgba(255,255,255,0.7); padding:5px 8px; border-radius:6px; margin-bottom:6px;">
+                      <div>Sugestão: <strong style="color:${st.targetSug > 0 ? '#b91c1c' : '#334155'};">${st.targetSug} un</strong> ${st.sugRs > 0 ? `(${brl(st.sugRs)})` : ''}</div>
+                      <div>Alt. Estoque: <strong>${st.altEstTotal} un</strong> <span class="muted">(${st.cobAltMedia >= 999 ? '999+d' : st.cobAltMedia + 'd'})</span></div>
+                    </div>
+
+                    <div style="font-size:11.5px; line-height:1.4; color:#1e293b; margin-bottom:8px;">
+                      ${esc(st.orientacao)}
+                    </div>
+                  </div>
+
+                  <!-- BOTÃO DE AÇÃO DIRETA DENTRO DO CARD -->
+                  ${st.targetSug > 0 ? `
+                    <button class="btn btn-sm btn-cancel-card-purchase" data-filial-id="${st.filial_id}" data-pid="${targetSku.produto_id}" data-un="${st.targetSug}" data-rs="${st.sugRs}" style="width:100%; margin-top:4px; font-weight:700; font-size:11px; padding:6px 10px; background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; border-radius:6px; cursor:pointer;" type="button" title="Cancela a compra exclusivamente nesta loja">
+                      🚫 Cancelar Compra Desta Filial (-${st.targetSug} un &bull; Salvar ${brl(st.sugRs)})
+                    </button>
+                  ` : isDonor ? `
+                    <div style="padding:5px 8px; background:rgba(255,255,255,0.85); border-radius:6px; border:1px dashed #c4b5fd; font-size:11px; font-weight:700; color:#5b21b6; text-align:center;">
+                      🚚 Loja disponível para transferir até ${st.surplus || st.altEstTotal} un
+                    </div>
+                  ` : `
+                    <div style="padding:5px 8px; background:rgba(255,255,255,0.85); border-radius:6px; border:1px dashed ${cardBorder}; font-size:11px; font-weight:700; color:#334155; text-align:center;">
+                      💡 Priorizar venda das ${st.deadEstTotal} un no balcão
+                    </div>
+                  `}
+                </div>
+              `;
+            }).join('')}
+          </div>
         </div>
       `;
     }
 
-    // 3. Renderizar tabela comparativa de SKUs com Laboratório e Colunas por Loja (Visão Matricial Dinâmica)
+    // 4. Renderizar Sinergia com Remanejamento (Transfer-First) se houver
+    if (remanSynergyContainer && hasReman) {
+      remanSynergyContainer.style.display = 'flex';
+      const routes = remanejamento_sinergia.routes || [];
+
+      remanSynergyContainer.innerHTML = `
+        <div style="background:linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%); border:1.5px solid #a78bfa; border-radius:12px; padding:12px 16px; box-shadow:0 2px 5px rgba(124,58,237,0.05);">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
+            <div style="font-size:13.5px; font-weight:800; color:#5b21b6; display:flex; align-items:center; gap:8px;">
+              <span>🔄 Oportunidades de Remanejamento Interno: Transfer-First</span>
+              <span class="badge" style="background:#7c3aed; color:#fff; font-size:10px;">${routes.length} Rotas</span>
+            </div>
+            <span style="background:#15803d; color:#ffffff; font-size:11px; font-weight:800; padding:2px 10px; border-radius:999px;">
+              Economia: ${brl(remanejamento_sinergia.economiaRemanejamentoRs)}
+            </span>
+          </div>
+
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:8px;">
+            ${routes.map((r) => `
+              <div style="background:#ffffff; border:1px solid #c4b5fd; border-radius:8px; padding:8px 10px; font-size:11.5px; display:flex; justify-content:space-between; align-items:center;">
+                <div>
+                  <div style="font-weight:800; color:#4338ca;">🚚 ${esc(r.from_label)} ➔ ${esc(r.to_label)}</div>
+                  <div style="color:#0f172a; margin-top:2px;"><strong>${r.qty} un</strong> &bull; ${esc(r.produto_desc || r.labora)}</div>
+                  <div class="muted" style="font-size:10.5px;">${esc(r.motivo)}</div>
+                </div>
+                <div style="text-align:right;">
+                  <div style="font-weight:800; color:#15803d;">${brl(r.economia_rs)}</div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    // 5. Configurar Toggle da Matriz de Auditoria (Expansível / Accordion)
+    if (matrixHeader && matrixContainer) {
+      matrixHeader.onclick = () => {
+        const isHidden = matrixContainer.style.display === 'none';
+        matrixContainer.style.display = isHidden ? 'block' : 'none';
+        if (toggleIcon) toggleIcon.textContent = isHidden ? '▼' : '▶';
+        if (toggleText) toggleText.textContent = isHidden ? 'Ocultar Matriz' : 'Ver Matriz Completa';
+      };
+    }
+
+    // 6. Preencher a Matriz de Laboratórios (Tabela Completa de Auditoria)
     const activeFiliaisList = (res.filiais && res.filiais.length > 0)
       ? res.filiais
       : (state.overview?.filiaisPolicies || []).filter((p) => Number(p.filial_id) !== 1).map((p) => ({
@@ -2029,26 +2319,17 @@ async function openMoleculeSweep(molKey, skuId, filialId = null) {
           short: `L${String(p.filial_id).padStart(2, '0')} (${p.nome_reduz || `F${p.filial_id}`})`
         }));
 
-    if (activeFiliaisList.length === 0) {
-      const bId = Number(state.overview?.profile?.buyer_filial_id || 2);
-      activeFiliaisList.push({
-        filial_id: bId,
-        label: formatFilialTag(bId, state.overview?.profile?.name),
-        short: `L${String(bId).padStart(2, '0')}`
-      });
-    }
-
     const isMultiStore = activeFiliaisList.length > 1;
-
     const thead = document.getElementById('sweep-thead');
+
     if (thead) {
       let storeColsHeader = '';
       if (isMultiStore) {
         storeColsHeader = activeFiliaisList.map((f, i) => {
           const bg = i === 0 ? '#eff6ff' : i === 1 ? '#f5f3ff' : '#fefce8';
           const color = i === 0 ? '#1e40af' : i === 1 ? '#5b21b6' : '#854d0e';
-          return `<th class="num" style="background:${bg}; color:${color}; min-width:95px;">${esc(f.short || f.label)}</th>`;
-        }).join('') + `<th class="num" style="background:#f1f5f9; color:#0f172a; font-weight:700; border-right:1px solid #cbd5e1; min-width:110px;">TOTAL REDE</th>`;
+          return `<th class="num" style="background:${bg}; color:${color}; min-width:90px;">${esc(f.short || f.label)}</th>`;
+        }).join('') + `<th class="num" style="background:#f1f5f9; color:#0f172a; font-weight:700; border-right:1px solid #cbd5e1; min-width:100px;">TOTAL REDE</th>`;
       } else {
         const s = activeFiliaisList[0];
         storeColsHeader = `<th class="num" style="background:#eff6ff; color:#1e40af; min-width:115px;">Estoque (${esc(s.short || s.label)})</th>`;
@@ -2056,12 +2337,12 @@ async function openMoleculeSweep(molKey, skuId, filialId = null) {
 
       thead.innerHTML = `
         <tr style="background: var(--bg-subtle);">
-          <th style="min-width:140px;">Laboratório / Fabricante</th>
-          <th style="min-width:220px;">Apresentação &amp; Descrição</th>
-          <th style="min-width:110px;">Curva &amp; Giro</th>
+          <th style="min-width:140px;">Laboratório</th>
+          <th style="min-width:210px;">Apresentação</th>
+          <th style="min-width:105px;">Curva &amp; Giro</th>
           ${storeColsHeader}
-          <th class="num" style="min-width:90px;">Último Custo</th>
-          <th style="text-align:center; min-width:120px;">Ação Direta</th>
+          <th class="num" style="min-width:85px;">Último Custo</th>
+          <th style="text-align:center; min-width:110px;">Ação</th>
         </tr>
       `;
     }
@@ -2069,41 +2350,32 @@ async function openMoleculeSweep(molKey, skuId, filialId = null) {
     tbody.innerHTML = skus.map((s) => {
       const isTarget = targetSku && s.produto_id === targetSku.produto_id;
       const isCheapest = cheapestSku && s.produto_id === cheapestSku.produto_id;
-
       const isCurvaD = s.abc_class === 'D' || /D/i.test(s.curva_erp_classe || '');
       const isCurvaA = s.abc_class === 'A' || /A/i.test(s.curva_erp_classe || '');
       const isCurvaB = s.abc_class === 'B' || /B/i.test(s.curva_erp_classe || '');
-      const badgeStyle = isCurvaA
-        ? 'background:#dcfce7;color:#15803d;'
-        : isCurvaB
-        ? 'background:#e0f2fe;color:#0369a1;'
-        : isCurvaD
-        ? 'background:#fee2e2;color:#b91c1c;'
-        : 'background:#fef3c7;color:#92400e;';
+      const badgeStyle = isCurvaA ? 'background:#dcfce7;color:#15803d;' : isCurvaB ? 'background:#e0f2fe;color:#0369a1;' : isCurvaD ? 'background:#fee2e2;color:#b91c1c;' : 'background:#fef3c7;color:#92400e;';
       const badgeLabel = `Curva ${s.abc_class || 'D'}`;
       const giroLabel = Number(s.total_ddv) > 0 ? `${num(s.total_ddv, 2)}/d` : 'Sem Giro';
       const isDead = isCurvaD && Number(s.total_estoque) > 0;
-
       const cobStr = (d) => (Number(d) >= 999 ? '999+d' : `${num(d, 1)}d`);
 
-      // Células dinâmicas para cada filial operacional
       const storeCellsHtml = activeFiliaisList.map((f, i) => {
         const l = (s.lojas && s.lojas[f.filial_id]) || { estoque_atual: 0, cobertura_dias: 0, sugestao_compra_un: 0 };
         const bg = i === 0 ? 'rgba(239,246,255,0.4)' : i === 1 ? 'rgba(245,243,255,0.4)' : 'rgba(254,252,232,0.4)';
         return `
-          <td class="num" style="background:${bg};">
-            <div><strong>${num(l.estoque_atual)} un</strong> <span class="muted" style="font-size:10px;">(${cobStr(l.cobertura_dias)})</span></div>
-            ${l.sugestao_compra_un > 0 ? `<div style="color:var(--accent);font-weight:700;font-size:10px;margin-top:1px;">🛒 ${num(l.sugestao_compra_un)} un</div>` : ''}
+          <td class="num" style="background:${bg}; font-size:11px;">
+            <div><strong>${num(l.estoque_atual)} un</strong> <span class="muted" style="font-size:9.5px;">(${cobStr(l.cobertura_dias)})</span></div>
+            ${l.sugestao_compra_un > 0 ? `<div style="color:var(--accent);font-weight:700;font-size:9.5px;margin-top:1px;">🛒 ${num(l.sugestao_compra_un)} un</div>` : ''}
           </td>
         `;
       }).join('');
 
       const totalRedeCell = isMultiStore
         ? `
-          <td class="num" style="background:#f8fafc; font-weight:700; border-right:1px solid #cbd5e1;">
-            <div style="font-size:12px; color:#0f172a;">${num(s.total_estoque)} un</div>
-            <div class="muted" style="font-size:10px; font-weight:normal;">(${cobStr(s.cobertura_rede)})</div>
-            ${s.total_sugestao_un > 0 ? `<div style="color:var(--accent);font-weight:700;font-size:10.5px;">🛒 ${num(s.total_sugestao_un)} un</div>` : ''}
+          <td class="num" style="background:#f8fafc; font-weight:700; border-right:1px solid #cbd5e1; font-size:11.5px;">
+            <div>${num(s.total_estoque)} un</div>
+            <div class="muted" style="font-size:9.5px; font-weight:normal;">(${cobStr(s.cobertura_rede)})</div>
+            ${s.total_sugestao_un > 0 ? `<div style="color:var(--accent);font-weight:700;font-size:10px;">🛒 ${num(s.total_sugestao_un)} un</div>` : ''}
           </td>
         `
         : '';
@@ -2111,176 +2383,191 @@ async function openMoleculeSweep(molKey, skuId, filialId = null) {
       return `
         <tr class="sweep-sku-row ${isTarget ? 'is-target' : ''} ${isCheapest ? 'is-cheapest' : ''} ${isDead ? 'is-dead' : ''}">
           <td>
-            <div style="font-weight:700; color:#0f172a;">${esc(s.labora || 'Laboratório Não Informado')}</div>
-            <div style="margin-top:2px;">
-              ${isTarget ? ' <span class="badge badge-accent" style="font-size:9.5px;padding:1px 5px;">Item Sugerido</span>' : ''}
-              ${isCheapest ? ' <span class="badge badge-success" style="font-size:9.5px;padding:1px 5px;">Menor Custo</span>' : ''}
+            <div style="font-weight:700; color:#0f172a;">${esc(s.labora || 'Outro')}</div>
+            <div style="margin-top:1px;">
+              ${isTarget ? ' <span class="badge badge-accent" style="font-size:9px;padding:1px 4px;">Item Alvo</span>' : ''}
+              ${isCheapest ? ' <span class="badge badge-success" style="font-size:9px;padding:1px 4px;">Menor Custo</span>' : ''}
             </div>
           </td>
           <td>
-            <div style="font-weight:600; color:#1e293b;">${esc(s.descricao)}</div>
-            <div class="muted" style="font-size:11px;">Cód BIG: <strong>${s.produto_id}</strong> &bull; EAN ${esc(s.barras || '—')}</div>
+            <div style="font-weight:600; color:#1e293b; font-size:11.5px;">${esc(s.descricao)}</div>
+            <div class="muted" style="font-size:10px;">Cód BIG: ${s.produto_id} &bull; EAN ${esc(s.barras || '—')}</div>
           </td>
           <td>
             <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
-              <span class="badge" style="font-size:10px;font-weight:700;${badgeStyle}">${badgeLabel}</span>
-              ${isDead ? '<span class="badge" style="background:#fee2e2;color:#991b1b;font-size:9px;font-weight:700;">💤 Parado</span>' : ''}
-            </div>
-            <div class="muted" style="font-size:10.5px;margin-top:3px;">
-              Giro: <strong>${giroLabel}</strong>${s.curva_erp_ranking ? ` &bull; ${esc(s.curva_erp_ranking)}` : ''}
+              <span class="badge" style="font-size:9.5px;font-weight:700;${badgeStyle}">${badgeLabel}</span>
+              ${isDead ? '<span class="badge" style="background:#fee2e2;color:#991b1b;font-size:8.5px;font-weight:700;">💤 Parado</span>' : ''}
             </div>
           </td>
           ${storeCellsHtml}
           ${totalRedeCell}
           <td class="num">
-            <div style="font-weight:700; font-size:12px;">${brl(s.custo_unit)}</div>
+            <div style="font-weight:700; font-size:11.5px;">${brl(s.custo_unit)}</div>
           </td>
           <td style="text-align:center;">
-            ${!isTarget && s.custo_unit > 0 && targetSku && targetSku.total_sugestao_un > 0 ? `
-              <button class="btn btn-secondary btn-sm btn-action-switch" data-source-id="${targetSku.produto_id}" data-target-id="${s.produto_id}" data-qty="${targetSku.total_sugestao_un}" data-target-name="${esc(s.descricao)}" type="button" style="padding:4px 8px;font-size:11px;font-weight:600;">
-                Comprar Deste
+            ${!isTarget && s.custo_unit > 0 && targetSku && targetSugUn > 0 ? `
+              <button class="btn btn-secondary btn-sm btn-action-switch" data-source-id="${targetSku.produto_id}" data-target-id="${s.produto_id}" data-qty="${targetSugUn}" data-target-name="${esc(s.descricao)}" type="button" style="padding:3px 7px;font-size:10.5px;font-weight:600;">
+                Trocar p/ Este
               </button>
             ` : isDead ? `
-              <span class="badge" style="background:#fee2e2;color:#991b1b;font-size:9.5px;padding:3px 6px;">Desovar no Balcão</span>
+              <span class="badge" style="background:#fee2e2;color:#991b1b;font-size:9px;">Desovar Balcão</span>
             ` : isTarget ? `
-              <span class="badge badge-accent" style="font-size:9.5px;padding:3px 6px;">Item Alvo</span>
+              <span class="badge badge-accent" style="font-size:9px;">Item Demandado</span>
             ` : '—'}
           </td>
         </tr>
       `;
     }).join('');
 
-    // 4. Barra de Ações Práticas (com suspensão para desova de Curva D)
-    let actionsHtml = '';
-    const targetSugUn = Number(targetSku?.total_sugestao_un || targetSku?.sugestao_compra_un || 0);
-    const targetSugRs = Number(targetSku?.total_sugestao_rs || targetSku?.sugestao_compra_rs || 0);
-
-    if (targetSku && targetSugUn > 0) {
-      actionsHtml = `
+    // 7. Barra Inferior de Opções Adicionais
+    actionBar.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; width:100%;">
         <div style="display:flex; align-items:center; gap:8px;">
-          <span style="font-size:13px; font-weight:600; color:var(--text);">Ação para ${esc(targetSku.descricao)}:</span>
+          <span style="font-size:12px; font-weight:700; color:var(--text);">Opções Complementares:</span>
         </div>
         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-          ${ia_advice && ia_advice.canSuspend ? `
-            <button id="btn-sweep-suspend-dead" class="btn btn-warning btn-sm" type="button" style="font-weight:700; background:#d97706; color:#ffffff; border:none; padding:6px 12px;">
-              🚫 Suspender Compra (Priorizar Giro de Balcão)
+          ${(ia_advice && ia_advice.canDiscount && otherStockTotal > 0) ? `
+            <button id="btn-sweep-discount" class="btn btn-secondary btn-sm" type="button" style="font-weight:600; font-size:11.5px;" title="Abate as unidades existentes da sugestão do pedido">
+              📉 Abater Apenas Unidades Paradas
             </button>
           ` : ''}
-          ${otherStockTotal > 0 ? `
-            <button id="btn-sweep-discount" class="btn btn-danger btn-sm" type="button" style="font-weight:600;">
-              🔴 Descontar do Pedido (Economizar ${brl(targetSugRs)})
-            </button>
-          ` : ''}
-          ${cheapestSku && cheapestSku.produto_id !== targetSku.produto_id && targetSku.custo_unit > cheapestSku.custo_unit ? `
-            <button id="btn-sweep-switch-cheapest" class="btn btn-primary btn-sm" type="button" style="font-weight:600;">
-              🟢 Trocar para ${esc(cheapestSku.labora)} (${brl(cheapestSku.custo_unit)}/un)
-            </button>
-          ` : ''}
-          <button id="btn-sweep-keep" class="btn btn-ghost btn-sm" type="button">
-            ⚪ Manter Compra Atual
+          <button id="btn-sweep-keep" class="btn btn-ghost btn-sm" type="button" style="font-weight:600; font-size:11.5px; border:1px solid #cbd5e1; border-radius:6px;" title="Mantém a compra do produto original homologado e o libera para a Sugestão de Compra">
+            ⚪ Manter Compra Original
           </button>
-          <button id="btn-sweep-teach-ia" class="btn btn-secondary btn-sm" type="button" title="Corrigir apresentação farmacológica ou princípio ativo desta molécula">
+          <button id="btn-sweep-teach-ia" class="btn btn-secondary btn-sm" type="button" style="padding:6px 10px; font-size:11px;" title="Corrigir apresentação farmacológica ou princípio ativo desta molécula">
             🧠 Ensinar IA
           </button>
         </div>
-      `;
-    } else {
-      actionsHtml = `
-        <div class="muted" style="font-size:12px;">Produto com compra zerada ou já coberto pela molécula.</div>
-        <div style="display:flex; gap:8px;">
-          <button id="btn-sweep-teach-ia" class="btn btn-secondary btn-sm" type="button" title="Corrigir apresentação farmacológica ou princípio ativo desta molécula">
-            🧠 Ensinar IA
-          </button>
-          <button id="btn-sweep-keep" class="btn btn-ghost btn-sm" type="button">Fechar</button>
-        </div>
-      `;
-    }
-    actionBar.innerHTML = actionsHtml;
+      </div>
+    `;
 
-    // Vincular evento de suspensão preventiva para priorizar o balcão (REV-020)
-    const btnSuspendDead = document.getElementById('btn-sweep-suspend-dead');
-    if (btnSuspendDead && targetSku) {
-      btnSuspendDead.onclick = async () => {
-        btnSuspendDead.disabled = true;
+    // 8. Vincular Ação Master 1-Clique
+    const btnMaster1Click = document.getElementById('btn-master-ia-1click');
+    if (btnMaster1Click && targetSku) {
+      btnMaster1Click.onclick = async () => {
+        btnMaster1Click.disabled = true;
+        btnMaster1Click.innerHTML = '<span>⏳</span><span>Executando Solução da IA...</span>';
         try {
-          await apiPost('/api/skus/suspend-big', {
-            filialId: targetSku.filial_id || fId || 2,
-            produtoId: targetSku.produto_id,
-            days: 30,
-            motivo: 'IA Molécula: Priorizar desova de marcas/laboratórios de baixo giro (Curva D) existentes em estoque.',
-            target: 'motor'
+          const blockedStores = (store_analysis || []).filter((s) => s.veredito === 'BLOQUEAR_COMPRA' || s.veredito === 'DEDUZIR_PARCIAL');
+          const res = await apiPost('/api/curadoria/decision', {
+            action: 'EXECUTE_IA_1CLICK',
+            filial_id: 0,
+            produto_id: targetSku.produto_id,
+            molecule_key: molKey,
+            descricao: targetSku.descricao,
+            blockedStores,
+            routes: remanejamento_sinergia?.routes || [],
+            deductQty: ia_advice?.dedQty || 0,
+            target_sku_id: cheapestSku?.produto_id || null,
           });
-          showBanner(`✓ Compra de ${targetSku.descricao} suspensa no Motor por 30 dias para priorizar o balcão!`);
+          showBanner(`✓ ${res.message || 'Solução da IA executada com sucesso em 1 clique!'}`);
           closeMoleculeSweep();
-          await loadSkus();
+          if (state.tab === 'curadoria') await loadAndRenderCuradoria();
+          else await loadSkus();
+          if (typeof updateCockpitBudgetPillForFilial === 'function') {
+            updateCockpitBudgetPillForFilial(state.selectedFilial || 'all');
+          }
         } catch (err) {
-          showBanner(`Erro ao suspender compra: ${err.message}`, true);
-          btnSuspendDead.disabled = false;
+          showBanner(`Erro ao executar solução da IA: ${err.message}`, true);
+          btnMaster1Click.disabled = false;
         }
       };
     }
-    actionBar.innerHTML = actionsHtml;
 
-    // Vincular eventos dos botões de ação
+    // 9. Vincular Ações Diretas em Cada Card de Loja (REV-024)
+    document.querySelectorAll('.btn-cancel-card-purchase').forEach((btn) => {
+      btn.onclick = async (e) => {
+        e.stopPropagation();
+        const fIdTarget = Number(btn.dataset.filialId);
+        const pIdTarget = Number(btn.dataset.pid);
+        const un = btn.dataset.un;
+        const rs = btn.dataset.rs;
+        btn.disabled = true;
+        btn.textContent = 'Cancelando...';
+        try {
+          const res = await apiPost('/api/curadoria/decision', {
+            action: 'CANCEL_STORE_PURCHASE',
+            filial_id: fIdTarget,
+            produto_id: pIdTarget,
+            molecule_key: molKey,
+            descricao: targetSku?.descricao,
+            motivo: `Cancelada compra de ${un} un (R$ ${rs}) da filial ${fIdTarget} via card de curadoria`
+          });
+          showBanner(`✓ ${res.message || 'Compra da filial cancelada com sucesso!'}`);
+          const card = document.getElementById(`card-store-${fIdTarget}`);
+          if (card) {
+            card.style.background = '#f0fdf4';
+            card.style.borderColor = '#86efac';
+            card.innerHTML = `
+              <div style="font-weight:800; color:#15803d; font-size:12px; display:flex; align-items:center; gap:6px;">
+                <span>✓ Compra Cancelada com Sucesso</span>
+              </div>
+              <div style="font-size:11px; color:#166534; margin-top:4px;">
+                A compra de ${un} un desta filial foi zerada. Economia de R$ ${Number(rs).toFixed(2)} garantida no caixa!
+              </div>
+            `;
+          }
+          if (typeof updateCockpitBudgetPillForFilial === 'function') {
+            updateCockpitBudgetPillForFilial(state.selectedFilial || 'all');
+          }
+        } catch (err) {
+          showBanner(`Erro ao cancelar compra da filial: ${err.message}`, true);
+          btn.disabled = false;
+          btn.textContent = 'Tentar Novamente';
+        }
+      };
+    });
+
+    // 10. Vincular Botões Secundários
     const btnDiscount = document.getElementById('btn-sweep-discount');
     if (btnDiscount && targetSku) {
       btnDiscount.onclick = async () => {
         btnDiscount.disabled = true;
         try {
-          await apiPost('/api/molecules/action/discount', { skuId: targetSku.produto_id, filialId: fId || 2 });
-          showBanner(`✓ Compra de ${targetSku.descricao} cancelada! Economia de ${brl(targetSugRs)} confirmada aproveitando o estoque existente de outros laboratórios.`);
+          const dedQty = Math.min(otherStockTotal, targetSugUn);
+          const res = await apiPost('/api/curadoria/decision', {
+            action: 'DEDUCT',
+            filial_id: targetSku.filial_id || fId || 0,
+            produto_id: targetSku.produto_id,
+            molecule_key: molKey,
+            descricao: targetSku.descricao,
+            deduct_qty: dedQty,
+            motivo: `Abatidas ${dedQty} un considerando estoque alternativo da molécula na rede`
+          });
+          showBanner(`✓ ${res.message || 'Estoque alternativo abatido do pedido com sucesso!'}`);
           closeMoleculeSweep();
-          await loadSkus();
+          if (state.tab === 'curadoria') await loadAndRenderCuradoria();
+          else await loadSkus();
         } catch (err) {
-          showBanner(`Erro ao descontar produto: ${err.message}`, true);
+          showBanner(`Erro ao descontar: ${err.message}`, true);
+          btnDiscount.disabled = false;
         }
       };
     }
-
-    const btnSwitchCheapest = document.getElementById('btn-sweep-switch-cheapest');
-    if (btnSwitchCheapest && targetSku && cheapestSku) {
-      btnSwitchCheapest.onclick = async () => {
-        btnSwitchCheapest.disabled = true;
-        try {
-          await apiPost('/api/molecules/action/switch-lab', {
-            sourceSkuId: targetSku.produto_id,
-            targetSkuId: cheapestSku.produto_id,
-            qty: targetSugUn,
-            filialId: fId || 2,
-          });
-          showBanner(`✓ Compra transferida de ${targetSku.descricao} para ${cheapestSku.descricao} (${cheapestSku.labora}) pelo menor custo!`);
-          closeMoleculeSweep();
-          await loadSkus();
-        } catch (err) {
-          showBanner(`Erro ao transferir compra: ${err.message}`, true);
-        }
-      };
-    }
-
-    tbody.querySelectorAll('.btn-action-switch').forEach((btn) => {
-      btn.onclick = async () => {
-        const sourceId = Number(btn.dataset.sourceId);
-        const targetId = Number(btn.dataset.targetId);
-        const qty = Number(btn.dataset.qty);
-        const targetName = btn.dataset.targetName;
-        try {
-          await apiPost('/api/molecules/action/switch-lab', {
-            sourceSkuId: sourceId,
-            targetSkuId: targetId,
-            qty: qty || targetSugUn || 1,
-            filialId: fId || 2,
-          });
-          showBanner(`✓ Compra transferida para ${targetName}!`);
-          closeMoleculeSweep();
-          await loadSkus();
-        } catch (err) {
-          showBanner(`Erro ao transferir compra: ${err.message}`, true);
-        }
-      };
-    });
 
     const btnKeep = document.getElementById('btn-sweep-keep');
-    if (btnKeep) btnKeep.onclick = closeMoleculeSweep;
+    if (btnKeep && targetSku) {
+      btnKeep.onclick = async () => {
+        btnKeep.disabled = true;
+        try {
+          const res = await apiPost('/api/curadoria/decision', {
+            action: 'KEEP',
+            filial_id: targetSku.filial_id || fId || 0,
+            produto_id: targetSku.produto_id,
+            molecule_key: molKey,
+            descricao: targetSku.descricao,
+            motivo: 'Comprador manteve compra original homologada'
+          });
+          showBanner(`✓ ${res.message || 'Compra homologada e liberada para Sugestão de Compra!'}`);
+          closeMoleculeSweep();
+          if (state.tab === 'curadoria') await loadAndRenderCuradoria();
+          else await loadSkus();
+        } catch (err) {
+          showBanner(`Erro ao homologar: ${err.message}`, true);
+          btnKeep.disabled = false;
+        }
+      };
+    }
 
     const btnTeachIa = document.getElementById('btn-sweep-teach-ia');
     if (btnTeachIa) {
@@ -2296,9 +2583,40 @@ async function openMoleculeSweep(molKey, skuId, filialId = null) {
         });
       };
     }
+
+    tbody.querySelectorAll('.btn-action-switch').forEach((btn) => {
+      btn.onclick = async () => {
+        const sourceId = Number(btn.dataset.sourceId);
+        const targetId = Number(btn.dataset.targetId);
+        const qty = Number(btn.dataset.qty);
+        const targetName = btn.dataset.targetName;
+        try {
+          const res = await apiPost('/api/curadoria/decision', {
+            action: 'SWITCH',
+            filial_id: fId || 2,
+            produto_id: sourceId,
+            target_sku_id: targetId,
+            qty,
+            molecule_key: molKey,
+            descricao: targetSku?.descricao,
+            labora_origem: targetSku?.labora,
+            labora_proposto: targetName,
+            motivo: `Troca homologada para laboratório ${targetName}`
+          });
+          showBanner(`✓ ${res.message || 'Troca de laboratório realizada com sucesso!'}`);
+          closeMoleculeSweep();
+          if (state.tab === 'curadoria') await loadAndRenderCuradoria();
+          else await loadSkus();
+        } catch (err) {
+          showBanner(`Erro ao trocar laboratório: ${err.message}`, true);
+        }
+      };
+    });
+
   } catch (err) {
-    banner.className = 'sweep-banner warning';
-    banner.innerHTML = `Erro ao carregar varredura da molécula: ${esc(err.message)}`;
+    banner.className = 'sweep-banner error';
+    banner.innerHTML = `<strong>Erro ao carregar molécula:</strong> ${esc(err.message)}`;
+    tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;color:var(--danger);padding:24px;">${esc(err.message)}</td></tr>`;
   }
 }
 
@@ -2307,7 +2625,8 @@ function closeMoleculeSweep() {
 }
 
 async function loadBi() {
-  const data = await apiGet('/api/bi');
+  const fParam = state.selectedFilial && state.selectedFilial !== 'all' ? `?filial_id=${state.selectedFilial}` : '';
+  const data = await apiGet(`/api/bi${fParam}`);
   const container = document.getElementById('bi-content');
   if (data.empty) {
     container.innerHTML = '<div class="muted" style="padding:24px;text-align:center;">Execute o motor ao menos uma vez para gerar os dados de BI.</div>';
@@ -2957,15 +3276,124 @@ async function executeSyncBigApres() {
   }
 }
 
+
+let currentActiveTransfers = [];
+
+function openTransferItemsModal(transferId) {
+  const modalEl = document.getElementById('modal-transfer-items');
+  if (!modalEl) return;
+
+  const t = currentActiveTransfers.find(x => Number(x.id) === Number(transferId));
+  if (!t) {
+    showBanner('Guia de transferência não encontrada.', true);
+    return;
+  }
+
+  const titleEl = document.getElementById('modal-trf-title');
+  const subEl = document.getElementById('modal-trf-sub');
+  const metaEl = document.getElementById('modal-trf-meta');
+  const tbodyEl = document.getElementById('modal-trf-tbody');
+  const dlBtn = document.getElementById('btn-modal-trf-download');
+
+  if (titleEl) titleEl.textContent = `📦 Guia de Transferência ${t.codigo_transferencia || `TRF-${t.id}`}`;
+  if (subEl) subEl.textContent = `Origem: ${t.filial_origem_nome || `Loja ${t.filial_origem}`} ➔ Destino: ${t.filial_destino_nome || `Loja ${t.filial_destino}`}`;
+
+  if (dlBtn) dlBtn.href = `/api/remanejamento/export-excel?transferId=${t.id}`;
+
+  if (metaEl) {
+    metaEl.innerHTML = `
+      <div><strong>Emissão:</strong> ${t.data_emissao ? t.data_emissao.slice(0, 16) : '—'}</div>
+      <div><strong>Status:</strong> <span class="badge badge-accent">${t.status}</span></div>
+      <div><strong>Total:</strong> ${num(t.total_itens)} itens &bull; <strong>${num(t.total_unidades)} un</strong> &bull; <strong style="color:#047857;">${brl(t.valor_total_rs)}</strong></div>
+      ${t.observacao ? `<div style="width:100%;margin-top:4px;color:#6b21a8;font-weight:600;">${esc(t.observacao)}</div>` : ''}
+    `;
+  }
+
+  const items = t.itens || [];
+  if (tbodyEl) {
+    if (items.length === 0) {
+      tbodyEl.innerHTML = '<tr><td colspan="8" class="muted" style="text-align:center;padding:20px;">Nenhum item registrado nesta guia.</td></tr>';
+    } else {
+      tbodyEl.innerHTML = items.map(it => `
+        <tr>
+          <td><code>${it.produto_id}</code></td>
+          <td><code>${esc(it.barras || '—')}</code></td>
+          <td><strong>${esc(it.descricao)}</strong></td>
+          <td><span class="muted">${esc(it.labora || '—')}</span></td>
+          <td class="num"><strong>${num(it.qtd_solicitada)} un</strong></td>
+          <td class="num">${brl(it.custo_unit)}</td>
+          <td class="num"><strong style="color:#047857;">${brl(it.valor_total)}</strong></td>
+          <td style="font-size:11px;color:#475569;">${esc(it.motivo_decisao || it.motivo || '—')}</td>
+        </tr>
+      `).join('');
+    }
+  }
+
+  modalEl.style.display = 'flex';
+  modalEl.classList.remove('hidden');
+
+  const closeBtn = document.getElementById('btn-close-modal-trf');
+  const closeBtnBottom = document.getElementById('btn-close-modal-trf-bottom');
+  const closeModal = () => {
+    modalEl.style.display = 'none';
+    modalEl.classList.add('hidden');
+  };
+  if (closeBtn) closeBtn.onclick = closeModal;
+  if (closeBtnBottom) closeBtnBottom.onclick = closeModal;
+  modalEl.onclick = (e) => {
+    if (e.target === modalEl) closeModal();
+  };
+}
+
 async function loadTransfers() {
+  if (!state.remanFilters) {
+    state.remanFilters = { search: '', tipo: 'ALL', curva: 'ALL', origem: 'ALL', destino: 'ALL', minValor: 0 };
+  }
+
+  const rf = state.remanFilters;
+  const params = new URLSearchParams();
+  if (state.selectedFilial && state.selectedFilial !== 'all') params.append('filial_id', state.selectedFilial);
+  if (rf.origem && rf.origem !== 'ALL') params.append('origem', rf.origem);
+  if (rf.destino && rf.destino !== 'ALL') params.append('destino', rf.destino);
+  if (rf.tipo && rf.tipo !== 'ALL') params.append('tipo', rf.tipo);
+  if (rf.curva && rf.curva !== 'ALL') params.append('curva', rf.curva);
+  if (rf.minValor && Number(rf.minValor) > 0) params.append('min_valor', rf.minValor);
+  if (rf.search && rf.search.trim()) params.append('search', rf.search.trim());
+
+  const queryStr = params.toString() ? `?${params.toString()}` : '';
+
   const [routesData, remanData] = await Promise.all([
-    apiGet('/api/remanejamento/routes').catch(() => ({ routes: [], transfers: [], totalGeralRs: 0, totalGeralUnidades: 0 })),
-    apiGet('/api/remanejamento').catch(() => ({ transfers: [], expiringLots: [] })),
+    apiGet(`/api/remanejamento/routes${queryStr}`).catch(() => ({ routes: [], transfers: [], totalGeralRs: 0, totalGeralUnidades: 0, totalItens: 0, summary: {}, filiais: [] })),
+    apiGet(`/api/remanejamento${state.selectedFilial && state.selectedFilial !== 'all' ? `?filial_id=${state.selectedFilial}` : ''}`).catch(() => ({ transfers: [], expiringLots: [] })),
   ]);
 
   const routes = routesData.routes || [];
   const activeTransfers = routesData.transfers || [];
   const expiringLots = remanData.expiringLots || [];
+  const curadoriaDecisions = remanData.curadoriaDecisions || [];
+  currentActiveTransfers = activeTransfers;
+  const summary = routesData.summary || {};
+  const filiaisList = routesData.filiais || [];
+
+  // Popular dropdowns de filiais caso ainda não estejam populados
+  const selOrigem = document.getElementById('reman-filter-origem');
+  const selDestino = document.getElementById('reman-filter-destino');
+  if (selOrigem && selOrigem.options.length <= 1 && filiaisList.length > 0) {
+    selOrigem.innerHTML = '<option value="ALL">Loja Origem (Doadora): Todas</option>' + filiaisList.map((f) => `<option value="${f.filial_id}">${esc(f.label || f.short || `Loja ${f.filial_id}`)}</option>`).join('');
+    selOrigem.value = rf.origem || 'ALL';
+  }
+  if (selDestino && selDestino.options.length <= 1 && filiaisList.length > 0) {
+    selDestino.innerHTML = '<option value="ALL">Loja Destino (Receptora): Todas</option>' + filiaisList.map((f) => `<option value="${f.filial_id}">${esc(f.label || f.short || `Loja ${f.filial_id}`)}</option>`).join('');
+    selDestino.value = rf.destino || 'ALL';
+  }
+
+  // Atualizar resumo do filtro
+  const filterSummaryEl = document.getElementById('reman-filter-summary');
+  if (filterSummaryEl) {
+    filterSummaryEl.innerHTML = `
+      Exibindo <strong>${num(routesData.totalItens || 0)} produtos</strong> em <strong>${num(routes.length)} rotas</strong> &bull; Economia de Compras: <strong style="color:#047857;">${brl(routesData.totalGeralRs || 0)}</strong>
+    `;
+  }
 
   // KPI Strip
   const kpiEl = document.getElementById('transfers-kpi-strip');
@@ -2974,12 +3402,15 @@ async function loadTransfers() {
       <div class="kpi-cell">
         <div class="kpi-label">Rotas de Remanejamento</div>
         <div class="kpi-val kpi-accent">${num(routes.length)}</div>
-        <div class="kpi-sub">Origem ➔ Destino identificadas</div>
+        <div class="kpi-sub">${num(routesData.totalItens || 0)} produtos mapeados</div>
       </div>
       <div class="kpi-cell">
         <div class="kpi-label">Peças a Transferir</div>
         <div class="kpi-val kpi-accent">${num(routesData.totalGeralUnidades || 0)} un</div>
-        <div class="kpi-sub">Resgate de excessos e FEFO</div>
+        <div class="kpi-sub">
+          ${summary.curadoriaCount > 0 ? `<span style="color:#7c3aed;font-weight:700;">🧬 ${num(summary.curadoriaCount)} Curadoria IA</span> &bull; ` : ''}
+          ${num(summary.excessoCount || 0)} excessos &bull; ${num(summary.fefoCount || 0)} FEFO
+        </div>
       </div>
       <div class="kpi-cell">
         <div class="kpi-label">Economia Gerada em Compras</div>
@@ -2994,69 +3425,214 @@ async function loadTransfers() {
     `;
   }
 
-  // Rotas Container
+  
+  // Renderizar SEÇÃO 1: Decisões da Rodada do Comprador (Curadoria IA & Abatimentos)
+  const curadoriaTbody = document.getElementById('curadoria-decisions-tbody');
+  if (curadoriaTbody) {
+    if (curadoriaDecisions.length === 0) {
+      curadoriaTbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;padding:24px;">Nenhuma decisão de curadoria registrada nesta rodada. Ao analisar as moléculas na Pré-Tela e deduzir compras ou autorizar remanejamentos, elas aparecerão listadas aqui com prioridade máxima.</td></tr>';
+    } else {
+      curadoriaTbody.innerHTML = curadoriaDecisions.map(d => {
+        const lojasCancStr = d.lojas_canceladas && d.lojas_canceladas.length > 0
+          ? d.lojas_canceladas.map(l => `<span class="badge" style="background:#fee2e2;color:#991b1b;font-size:9.5px;font-weight:700;">${esc(l.nome)}</span>`).join(' ')
+          : '<span class="muted" style="font-size:11px;">Rede toda (rateio)</span>';
+
+        const lojasDoadStr = d.lojas_doadoras && d.lojas_doadoras.length > 0
+          ? d.lojas_doadoras.slice(0, 3).map(l => `<span class="badge" style="background:#ede9fe;color:#5b21b6;font-size:9.5px;font-weight:600;" title="${esc(l.descricao)}">${esc(l.nome)}: ${l.estoque_atual} un (${esc(l.labora)})</span>`).join(' ') + (d.lojas_doadoras.length > 3 ? `<span class="muted" style="font-size:10px;">+${d.lojas_doadoras.length - 3}</span>` : '')
+          : '<span class="muted" style="font-size:11px;">Sem doador externo</span>';
+
+        let actionCell = '';
+        if (d.transfer_emitted) {
+          actionCell = `
+            <span class="badge" style="background:#ede9fe;color:#5b21b6;font-weight:800;font-size:10px;">
+              ✓ Guia ${esc(d.transfer_emitted.codigo)}
+            </span>
+          `;
+        } else if (d.lojas_doadoras && d.lojas_doadoras.length > 0) {
+          actionCell = `
+            <button class="btn btn-primary btn-xs btn-emit-curadoria-single" data-pid="${d.produto_id}" style="background:#7c3aed;border-color:#6d28d9;font-weight:700;">
+              📄 Emitir Guia
+            </button>
+          `;
+        } else {
+          actionCell = '<span class="badge badge-success" style="font-size:10px;">✓ Abatimento no Balcão</span>';
+        }
+
+        return `
+          <tr>
+            <td>
+              <div style="font-weight:700;color:#0f172a;">${esc(d.descricao)}</div>
+              <div style="font-size:11px;color:#64748b;">Cód BIG: ${d.produto_id} ${d.barras ? `&bull; EAN: ${esc(d.barras)}` : ''} &bull; ${esc(d.labora || '—')}</div>
+            </td>
+            <td>
+              <span class="badge" style="background:#f1f5f9;color:#334155;font-weight:600;font-size:10px;">${esc(d.molecule_key || '—')}</span>
+            </td>
+            <td>${lojasCancStr}</td>
+            <td>${lojasDoadStr}</td>
+            <td class="num"><strong style="color:#4c1d95;font-size:13px;">${num(d.total_un_abatidas)} un</strong></td>
+            <td class="num"><strong style="color:#047857;font-size:13px;">${brl(d.economia_rs)}</strong></td>
+            <td style="text-align:center;">${actionCell}</td>
+          </tr>
+        `;
+      }).join('');
+
+      // Eventos dos botões de emitir guia da curadoria
+      curadoriaTbody.querySelectorAll('.btn-emit-curadoria-single').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const pId = Number(btn.dataset.pid);
+          btn.disabled = true;
+          btn.textContent = 'Emitindo...';
+          try {
+            const res = await apiPost('/api/curadoria/emit-transfer', { produto_id: pId });
+            showBanner(res.message || 'Guia de transferência emitida com sucesso!');
+            await loadTransfers();
+          } catch (err) {
+            showBanner(`Erro ao emitir guia: ${err.message}`, true);
+            btn.disabled = false;
+            btn.textContent = '📄 Emitir Guia';
+          }
+        });
+      });
+    }
+  }
+
+  // Botão Emitir Todas as Guias Pendentes
+  const btnEmitAll = document.getElementById('btn-emit-all-curadoria-transfers');
+  if (btnEmitAll) {
+    btnEmitAll.onclick = async () => {
+      btnEmitAll.disabled = true;
+      btnEmitAll.textContent = 'Emitindo guias...';
+      try {
+        const res = await apiPost('/api/curadoria/emit-transfer', { all: true });
+        showBanner(res.message || 'Guias emitidas com sucesso!');
+        await loadTransfers();
+      } catch (err) {
+        showBanner(`Erro ao emitir guias: ${err.message}`, true);
+        btnEmitAll.disabled = false;
+        btnEmitAll.textContent = '🚀 Emitir Guias das Decisões Pendentes';
+      }
+    };
+  }
+
+
+  // Rotas Container com Renderização Leve e Paginação por Rota (REV-025)
   const routesContainer = document.getElementById('transfer-routes-container');
   const routesCount = document.getElementById('transfer-routes-count');
-  if (routesCount) routesCount.textContent = `${routes.length} rotas identificadas`;
+  if (routesCount) routesCount.textContent = `${routes.length} rotas (${num(routesData.totalItens || 0)} itens)`;
 
   if (routesContainer) {
     if (routes.length === 0) {
-      routesContainer.innerHTML = '<div class="muted" style="text-align:center;padding:24px;">Nenhuma rota de remanejamento pendente na rodada atual.</div>';
-    } else {
-      routesContainer.innerHTML = routes.map((r, idx) => `
-        <div class="transfer-route-card" data-route-idx="${idx}">
-          <div class="transfer-route-header">
-            <div>
-              <div class="transfer-route-title">
-                <span>🚚 Rota ${idx + 1}: <strong>${esc(r.filialOrigemNome)}</strong></span>
-                <span style="color:#0f766e;font-size:16px;">➔</span>
-                <span><strong>${esc(r.filialDestinoNome)}</strong></span>
-              </div>
-              <div class="transfer-route-meta">
-                ${num(r.totalItens)} produtos &bull; <strong>${num(r.totalUnidades)} unidades a transferir</strong> &bull; Economia de Compra: <strong style="color:#047857;">${brl(r.valorTotalRs)}</strong>
-              </div>
-            </div>
-            <div class="transfer-route-actions" style="display:flex;gap:8px;align-items:center;">
-              <a href="/api/remanejamento/export-excel?origem=${r.filialOrigem}&destino=${r.filialDestino}" class="btn btn-secondary btn-sm" style="font-weight:600;" title="Baixar Guia de Separação em Excel desta rota">
-                📥 Baixar Guia (Excel)
-              </a>
-              <button class="btn btn-primary btn-sm btn-approve-route" data-route-idx="${idx}" type="button" style="background:#0f766e;border-color:#0f766e;font-weight:600;">
-                ✓ Aprovar Transferência
-              </button>
-            </div>
-          </div>
-          <div class="transfer-items-table">
-            <table class="data-table" style="font-size:12px;margin:0;">
-              <thead>
-                <tr>
-                  <th>Código</th>
-                  <th>Barras (EAN)</th>
-                  <th>Produto / Descrição</th>
-                  <th>Tipo</th>
-                  <th class="num">Qtd a Transferir</th>
-                  <th class="num">Custo Unit</th>
-                  <th class="num">Total R$</th>
-                  <th>Motivo</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${r.items.map(it => `
-                  <tr>
-                    <td><code>${it.produto_id}</code></td>
-                    <td><code>${esc(it.barras || '—')}</code></td>
-                    <td><div class="sku-title">${esc(it.descricao)}</div><div class="sku-sub">${esc(it.labora || '')}</div></td>
-                    <td>${badgeForException(it.tipo)}</td>
-                    <td class="num"><strong>${num(it.qtd_sugerida)} un</strong></td>
-                    <td class="num">${brl(it.custo_unit)}</td>
-                    <td class="num"><strong>${brl(it.valor_total)}</strong></td>
-                    <td class="sku-sub">${esc(it.motivo)}</td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          </div>
+      routesContainer.innerHTML = `
+        <div class="empty-state-box" style="padding:36px 20px; text-align:center; background:var(--card-bg); border:1px solid var(--border); border-radius:10px;">
+          <div style="font-size:32px; margin-bottom:8px;">🚚✨</div>
+          <div style="font-weight:700; font-size:14px; color:var(--text);">Nenhuma rota encontrada com os filtros selecionados</div>
+          <div class="muted" style="font-size:12px; margin-top:4px;">Tente alterar os filtros de filial, tipo de oportunidade ou zerar o valor mínimo.</div>
         </div>
-      `).join('');
+      `;
+    } else {
+      routesContainer.innerHTML = routes.map((r, idx) => {
+        // Exibir os primeiros 25 itens da rota para não travar o DOM
+        const displayLimit = 25;
+        const visibleItems = r.items.slice(0, displayLimit);
+        const hasMore = r.items.length > displayLimit;
+
+        return `
+          <div class="transfer-route-card" data-route-idx="${idx}" style="background:var(--card-bg); border:1.5px solid var(--border); border-radius:12px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.03);">
+            <div class="transfer-route-header" style="padding:14px 18px; background:var(--bg-subtle); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; border-bottom:1px solid var(--border);">
+              <div>
+                <div class="transfer-route-title" style="display:flex; align-items:center; gap:8px; font-size:14px; font-weight:800; color:#0f172a;">
+                  <span>🚚 Rota ${idx + 1}: <strong>${esc(r.filialOrigemNome)}</strong></span>
+                  <span style="color:#0f766e;font-size:16px;">➔</span>
+                  <span><strong>${esc(r.filialDestinoNome)}</strong></span>
+                </div>
+                <div class="transfer-route-meta" style="margin-top:4px; font-size:12px; color:#475569; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                  <span><strong>${num(r.totalItens)} produtos</strong></span> &bull;
+                  <span><strong>${num(r.totalUnidades)} un a transferir</strong></span> &bull;
+                  <span>Economia de Compra: <strong style="color:#047857;">${brl(r.valorTotalRs)}</strong></span>
+                  <div style="display:flex; gap:4px; margin-left:6px;">
+                    ${r.countCuradoria > 0 ? `<span class="badge" style="background:#ede9fe; color:#5b21b6; font-size:9.5px; font-weight:800;">🧬 ${r.countCuradoria} Curadoria IA</span>` : ''}
+                    ${r.countFefo > 0 ? `<span class="badge" style="background:#fee2e2; color:#991b1b; font-size:9.5px; font-weight:700;">⏳ ${r.countFefo} FEFO</span>` : ''}
+                    ${r.countExcesso > 0 ? `<span class="badge" style="background:#dbeafe; color:#1e40af; font-size:9.5px; font-weight:700;">📦 ${r.countExcesso} Excesso</span>` : ''}
+                  </div>
+                </div>
+              </div>
+              <div class="transfer-route-actions" style="display:flex; gap:8px; align-items:center;">
+                <a href="/api/remanejamento/export-excel?origem=${r.filialOrigem}&destino=${r.filialDestino}" class="btn btn-secondary btn-sm" style="font-weight:600; font-size:11.5px;" title="Baixar Guia de Separação em Excel desta rota">
+                  📥 Baixar Guia (Excel)
+                </a>
+                <button class="btn btn-primary btn-sm btn-approve-route" data-route-idx="${idx}" type="button" style="background:#0f766e; border-color:#0f766e; font-weight:700; font-size:11.5px;">
+                  ✓ Aprovar Transferência da Rota
+                </button>
+              </div>
+            </div>
+
+            <div class="transfer-items-table" style="overflow-x:auto;">
+              <table class="data-table" style="font-size:11.5px; margin:0; width:100%;">
+                <thead>
+                  <tr style="background:#f8fafc;">
+                    <th style="min-width:65px;">Código</th>
+                    <th style="min-width:95px;">Barras</th>
+                    <th style="min-width:220px;">Produto / Descrição</th>
+                    <th style="min-width:140px;">Tipo &amp; Origem</th>
+                    <th style="min-width:60px;">Curva</th>
+                    <th class="num" style="min-width:90px;">Qtd Transferir</th>
+                    <th class="num" style="min-width:85px;">Custo Unit</th>
+                    <th class="num" style="min-width:90px;">Total R$</th>
+                    <th style="min-width:200px;">Motivo Operacional</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${visibleItems.map((it) => {
+                    const isCuradoriaItem = it.isCuradoria || it.tipo === 'CURADORIA_IA' || (it.motivo && it.motivo.includes('Curadoria'));
+                    return `
+                      <tr class="${isCuradoriaItem ? 'reman-curadoria-row' : ''}">
+                        <td><code>${it.produto_id}</code></td>
+                        <td><code>${esc(it.barras || '—')}</code></td>
+                        <td>
+                          <div class="sku-title" style="font-weight:700; font-size:12px; color:#0f172a;">${esc(it.descricao)}</div>
+                          <div class="sku-sub" style="font-size:10.5px; color:#64748b;">${esc(it.labora || '')}</div>
+                        </td>
+                        <td>
+                          ${isCuradoriaItem ? `
+                            <span class="badge" style="background:#ede9fe; color:#5b21b6; border:1px solid #ddd6fe; font-weight:800; font-size:9.5px; padding:2px 6px;">
+                              🧬 CURADORIA IA &bull; TRANSFER-FIRST
+                            </span>
+                          ` : it.tipo === 'FEFO_VALIDADE' ? `
+                            <span class="badge" style="background:#fee2e2; color:#991b1b; border:1px solid #fecaca; font-weight:700; font-size:9.5px;">
+                              ⏳ FEFO (${it.validade_prioritaria || 'Curto'})
+                            </span>
+                          ` : it.tipo === 'EXCESSO' ? `
+                            <span class="badge" style="background:#dbeafe; color:#1e40af; border:1px solid #bfdbfe; font-weight:700; font-size:9.5px;">
+                              📦 Doação Excesso
+                            </span>
+                          ` : `
+                            <span class="badge" style="background:#fef3c7; color:#92400e; border:1px solid #fde68a; font-weight:700; font-size:9.5px;">
+                              💤 Estoque Parado
+                            </span>
+                          `}
+                        </td>
+                        <td>
+                          <span class="badge badge-neutral" style="font-size:9.5px; font-weight:700;">Curva ${it.abc_class || 'A'}</span>
+                        </td>
+                        <td class="num"><strong>${num(it.qtd_sugerida)} un</strong></td>
+                        <td class="num">${brl(it.custo_unit)}</td>
+                        <td class="num"><strong style="color:#047857;">${brl(it.valor_total)}</strong></td>
+                        <td class="sku-sub" style="font-size:11px; line-height:1.35; color:#334155;">${esc(it.motivo)}</td>
+                      </tr>
+                    `;
+                  }).join('')}
+                </tbody>
+              </table>
+
+              ${hasMore ? `
+                <div style="padding:10px 16px; background:#f8fafc; text-align:center; border-top:1px solid #e2e8f0; font-size:11.5px; color:#64748b;">
+                  Mostrando os 25 itens com maior impacto financeiro desta rota (Total de ${r.items.length} itens). Use os filtros acima para refinar por laboratório ou valor mínimo.
+                </div>
+              ` : ''}
+            </div>
+          </div>
+        `;
+      }).join('');
 
       routesContainer.querySelectorAll('.btn-approve-route').forEach(btn => {
         btn.addEventListener('click', async () => {
@@ -3080,14 +3656,14 @@ async function loadTransfers() {
           } catch (err) {
             showBanner(`Falha ao aprovar transferência: ${err.message}`, true);
             btn.disabled = false;
-            btn.textContent = '✓ Aprovar Transferência';
+            btn.textContent = '✓ Aprovar Transferência da Rota';
           }
         });
       });
     }
   }
 
-  // Tabela de Guias Emitidas
+  // Tabela de Guias Emitidas com Sinalização de Curadoria IA (REV-025)
   const activeCountEl = document.getElementById('active-transfers-count');
   if (activeCountEl) activeCountEl.textContent = `${activeTransfers.length} guias registradas`;
 
@@ -3096,11 +3672,13 @@ async function loadTransfers() {
     if (activeTransfers.length === 0) {
       motorTbody.innerHTML = '<tr><td colspan="8" class="muted" style="text-align:center;padding:20px;">Nenhuma transferência emitida ainda. Aprove uma das rotas acima para emitir a guia.</td></tr>';
     } else {
-      motorTbody.innerHTML = activeTransfers.map(t => {
+      motorTbody.innerHTML = activeTransfers.map((t) => {
         let statusBadge = `<span class="badge badge-warn">${t.status}</span>`;
         if (t.status === 'EM_TRANSITO') statusBadge = '<span class="badge badge-info">🚚 EM TRÂNSITO</span>';
         if (t.status === 'RECEBIDA') statusBadge = '<span class="badge badge-success">✅ RECEBIDA</span>';
         if (t.status === 'CANCELADA') statusBadge = '<span class="badge badge-neutral">✕ CANCELADA</span>';
+
+        const isCuradoriaTransfer = t.observacao && t.observacao.includes('Curadoria IA');
 
         let nextActionBtn = '';
         if (t.status === 'PENDENTE_SEPARACAO') {
@@ -3111,16 +3689,19 @@ async function loadTransfers() {
 
         return `
           <tr>
-            <td><code>${esc(t.codigo_transferencia)}</code></td>
-            <td><strong>${esc(t.filial_origem_nome || `F${t.filial_origem}`)}</strong> ➔ <strong>${esc(t.filial_destino_nome || `F${t.filial_destino}`)}</strong></td>
-            <td style="font-size:11.5px;">${esc(t.data_emissao)}</td>
+            <td>
+              <code>${esc(t.codigo_transferencia)}</code>
+              ${isCuradoriaTransfer ? `<span class="badge" style="background:#ede9fe; color:#5b21b6; font-size:9px; font-weight:800; display:block; margin-top:2px;">🧬 Curadoria IA</span>` : ''}
+            </td>
+            <td><strong>${esc(t.filial_origem_nome || `Loja ${t.filial_origem}`)}</strong> ➔ <strong>${esc(t.filial_destino_nome || `Loja ${t.filial_destino}`)}</strong></td>
+            <td><span class="muted" style="font-size:11px;">${esc(t.data_emissao ? t.data_emissao.slice(0, 16) : '—')}</span></td>
             <td class="num">${num(t.total_itens)}</td>
             <td class="num"><strong>${num(t.total_unidades)} un</strong></td>
-            <td class="num"><strong>${brl(t.valor_total_rs)}</strong></td>
+            <td class="num"><strong style="color:#047857;">${brl(t.valor_total_rs)}</strong></td>
             <td>${statusBadge}</td>
             <td style="display:flex;gap:6px;align-items:center;">
-              <a href="/api/remanejamento/export-excel?transferId=${t.id}" class="btn btn-secondary btn-xs" title="Baixar Guia de Separação em Excel">📥 Excel</a>
               ${nextActionBtn}
+              <button class="btn btn-ghost btn-xs btn-view-transfer-items" data-id="${t.id}" title="Ver itens desta guia">📦 Itens</button>
             </td>
           </tr>
         `;
@@ -3129,40 +3710,108 @@ async function loadTransfers() {
       motorTbody.querySelectorAll('.btn-change-status').forEach(btn => {
         btn.addEventListener('click', async () => {
           const tId = Number(btn.dataset.id);
-          const newStatus = btn.dataset.status;
+          const nextStatus = btn.dataset.status;
+          btn.disabled = true;
           try {
-            await apiPost('/api/remanejamento/transfer-status', { transferId: tId, status: newStatus });
-            showBanner(`Status da transferência atualizado para ${newStatus}!`, false);
+            await apiPost('/api/remanejamento/status', { id: tId, status: nextStatus });
+            showBanner(`Status da transferência atualizado para ${nextStatus}!`);
             await loadTransfers();
           } catch (err) {
-            showBanner(`Erro: ${err.message}`, true);
+            showBanner(`Erro ao atualizar status: ${err.message}`, true);
+            btn.disabled = false;
           }
+        });
+      });
+
+      motorTbody.querySelectorAll('.btn-view-transfer-items').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const tId = Number(btn.dataset.id);
+          openTransferItemsModal(tId);
         });
       });
     }
   }
 
   // Tabela FEFO
-  const eBody = document.getElementById('expiring-tbody');
-  const expCountEl = document.getElementById('expiring-count');
-  if (expCountEl) expCountEl.textContent = `${expiringLots.length} lotes em risco`;
-  if (eBody) {
-    eBody.innerHTML = expiringLots.length
-      ? expiringLots.map(x => {
-          const safeMaxDesc = Math.max(0, Math.round(x.margem_pct * 0.8));
-          return `
-            <tr>
-              <td><span class="badge badge-neutral">L0${x.filial_id}</span></td>
-              <td><div class="sku-title">${esc(x.descricao)}</div><div class="sku-sub">SKU ${x.produto_id} | Curva ${x.abc_class} | DDV ${num(x.ddv_projetada, 2)}</div></td>
-              <td class="num">${esc(x.lote_menor_validade || '—')}</td>
-              <td class="num">${num(x.lote_vencendo_90d_qtd)}</td>
-              <td class="num">${num(x.lote_vencido_qtd)}</td>
-              <td class="num"><strong class="kpi-warn">${brl(x.lote_vencendo_90d_rs)}</strong></td>
-              <td class="num">Mg ${num(x.margem_pct, 1)}% | Desc. até ${safeMaxDesc}%</td>
-            </tr>
-          `;
-        }).join('')
-      : '<tr><td colspan="7" class="muted" style="text-align:center;padding:20px;">Nenhum lote crítico encontrado.</td></tr>';
+  const expiringCountEl = document.getElementById('expiring-count');
+  if (expiringCountEl) expiringCountEl.textContent = `${expiringLots.length} lotes críticos mapeados`;
+
+  const expTbody = document.getElementById('expiring-tbody');
+  if (expTbody) {
+    if (expiringLots.length === 0) {
+      expTbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;padding:20px;">Nenhum lote crítico com vencimento próximo no momento.</td></tr>';
+    } else {
+      expTbody.innerHTML = expiringLots.map(l => `
+        <tr>
+          <td><span class="badge badge-neutral">Loja ${l.filial_id}</span></td>
+          <td>
+            <div class="sku-title" style="font-weight:600;">${esc(l.descricao || `Produto ${l.produto_id}`)}</div>
+            <div class="sku-sub">Cód BIG: ${l.produto_id}</div>
+          </td>
+          <td class="num"><code>${l.menor_validade || '—'}</code></td>
+          <td class="num">${num(l.qtd_vencendo_90d)} un</td>
+          <td class="num"><strong style="color:var(--danger);">${num(l.qtd_vencido)} un</strong></td>
+          <td class="num"><strong>${brl(l.valor_risco_rs)}</strong></td>
+          <td class="num">${badgeForException(l.acao_recomendada)}</td>
+        </tr>
+      `).join('');
+    }
+  }
+
+  // Vincular eventos dos filtros de remanejamento (apenas uma vez)
+  bindRemanFilterEvents();
+}
+
+let remanEventsBound = false;
+function bindRemanFilterEvents() {
+  if (remanEventsBound) return;
+  remanEventsBound = true;
+
+  const searchInput = document.getElementById('reman-search-input');
+  const selTipo = document.getElementById('reman-filter-tipo');
+  const selCurva = document.getElementById('reman-filter-curva');
+  const selOrigem = document.getElementById('reman-filter-origem');
+  const selDestino = document.getElementById('reman-filter-destino');
+  const selMinVal = document.getElementById('reman-filter-min-val');
+  const btnClear = document.getElementById('btn-reman-clear-filters');
+
+  let debounceTimer = null;
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        state.remanFilters.search = searchInput.value;
+        loadTransfers();
+      }, 350);
+    });
+  }
+
+  const triggerReload = () => {
+    if (selTipo) state.remanFilters.tipo = selTipo.value;
+    if (selCurva) state.remanFilters.curva = selCurva.value;
+    if (selOrigem) state.remanFilters.origem = selOrigem.value;
+    if (selDestino) state.remanFilters.destino = selDestino.value;
+    if (selMinVal) state.remanFilters.minValor = Number(selMinVal.value || 0);
+    loadTransfers();
+  };
+
+  if (selTipo) selTipo.addEventListener('change', triggerReload);
+  if (selCurva) selCurva.addEventListener('change', triggerReload);
+  if (selOrigem) selOrigem.addEventListener('change', triggerReload);
+  if (selDestino) selDestino.addEventListener('change', triggerReload);
+  if (selMinVal) selMinVal.addEventListener('change', triggerReload);
+
+  if (btnClear) {
+    btnClear.addEventListener('click', () => {
+      state.remanFilters = { search: '', tipo: 'ALL', curva: 'ALL', origem: 'ALL', destino: 'ALL', minValor: 0 };
+      if (searchInput) searchInput.value = '';
+      if (selTipo) selTipo.value = 'ALL';
+      if (selCurva) selCurva.value = 'ALL';
+      if (selOrigem) selOrigem.value = 'ALL';
+      if (selDestino) selDestino.value = 'ALL';
+      if (selMinVal) selMinVal.value = '0';
+      loadTransfers();
+    });
   }
 }
 
@@ -3767,6 +4416,433 @@ function closeCurveInfoModal() {
   document.getElementById('curve-info-modal')?.classList.add('hidden');
 }
 
+function switchSkuTab(targetTab) {
+  const tabs = document.querySelectorAll('#sku-tabs .tab');
+  tabs.forEach(t => {
+    t.classList.toggle('active', t.dataset.tab === targetTab);
+  });
+  state.tab = targetTab;
+  state.offset = 0;
+  state.page = 1;
+  loadSkus();
+}
+
+async function loadAndRenderCuradoria() {
+  const container = document.getElementById('view-curadoria-container');
+  if (!container) return;
+  container.innerHTML = '<div class="muted" style="text-align:center;padding:40px;"><div style="font-size:32px;margin-bottom:12px;">🧬</div>Carregando Lista Executiva de Curadoria IA &amp; Oportunidades...</div>';
+
+  try {
+    const fId = state.selectedFilial || 'all';
+    const res = await apiGet(`/api/curadoria/opportunities?filial_id=${fId}`);
+    const molecules = res.molecules || [];
+    const totalEco = res.totalEconomiaRs || 0;
+
+    const curBadge = document.getElementById('curadoria-tab-count');
+    if (curBadge) curBadge.textContent = molecules.length;
+
+    if (molecules.length === 0) {
+      container.innerHTML = `
+        <div class="empty-state-box" style="padding:48px 24px; text-align:center; background:var(--card-bg); border:1.5px solid var(--border); border-radius:14px; margin-top:12px;">
+          <div style="font-size:42px; margin-bottom:12px;">🧬✨</div>
+          <div style="font-size:18px; font-weight:800; color:var(--text-primary);">Nenhum produto pendente de curadoria de moléculas</div>
+          <div class="muted" style="font-size:13.5px; margin-top:6px; max-width:620px; margin-left:auto; margin-right:auto; line-height:1.5;">
+            Todos os produtos demandados com concorrência já foram homologados, ajustados pelo menor custo ou não possuem compras pendentes. Todos os itens validados já estão liberados para cotação na Sugestão de Compra!
+          </div>
+          <div style="display:flex; justify-content:center; gap:12px; margin-top:20px; flex-wrap:wrap;">
+            <button class="btn btn-primary" type="button" style="font-weight:700;" onclick="switchSkuTab('buy')">
+              🛒 Ir para Sugestão de Compra
+            </button>
+            <button class="btn btn-secondary" type="button" onclick="openDesovaItemsModal()">
+              📦 Ver Produtos em Desova no Balcão
+            </button>
+            <button class="btn btn-secondary" type="button" onclick="openCuradoriaLearningLogModal()">
+              📜 Ver Log de Aprendizado da IA
+            </button>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    container.innerHTML = `
+      <!-- BARRA DE CONTROLE EXECUTIVO DA CURADORIA -->
+      <div style="background:linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%); border:1.5px solid #86efac; border-radius:14px; padding:18px 24px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; box-shadow:0 2px 4px rgba(0,0,0,0.03);">
+        <div>
+          <div style="font-size:16px; font-weight:800; color:#166534; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <span>🧬 Pré-Tela de Curadoria IA • Oportunidades de Substituição &amp; Desova</span>
+            <span class="badge" style="background:#bbf7d0; color:#14532d; font-size:12px; font-weight:800;">${molecules.length} Produtos com Concorrência</span>
+            ${totalEco > 0 ? `<span class="badge badge-accent" style="font-size:12px; font-weight:800;">Economia Projetada: ${brl(totalEco)}</span>` : ''}
+          </div>
+          <div style="font-size:13px; color:#15803d; margin-top:4px; max-width:850px; line-height:1.4;">
+            Lista executiva dos produtos sugeridos para compra com concorrência ou estoque parado. <strong>Clique no produto</strong> ou no botão para abrir a tela com as moléculas por loja e definir a ação (suspender para balcão, deduzir estoque ou trocar fabricante) antes de liberar para a Sugestão de Compra.
+          </div>
+        </div>
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <button id="btn-approve-all-curadoria" class="btn btn-primary btn-sm" type="button" style="font-weight:700; box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+            ⚡ Homologar Todas as Trocas
+          </button>
+          <button id="btn-view-desova-items" class="btn btn-secondary btn-sm" type="button" style="font-weight:600;">
+            📦 Ver Itens em Desova
+          </button>
+          <button id="btn-view-learning-log" class="btn btn-secondary btn-sm" type="button" style="font-weight:600;">
+            📜 Log de Aprendizado da IA
+          </button>
+          <button class="btn btn-secondary btn-sm" type="button" style="font-weight:700; border-color:#86efac; color:#166534;" onclick="switchSkuTab('buy')">
+            🛒 Avançar p/ Sugestão de Compra ➔
+          </button>
+        </div>
+      </div>
+
+      <!-- BARRA DE FILTRO RÁPIDO -->
+      <div style="margin-bottom:14px; display:flex; align-items:center; gap:12px; background:var(--card-bg); padding:10px 16px; border:1px solid var(--border); border-radius:10px;">
+        <span style="font-size:16px;">🔍</span>
+        <input type="text" id="curadoria-filter-input" placeholder="Filtrar por produto, código BIG, EAN, princípio ativo ou fabricante..." style="border:none; outline:none; background:transparent; width:100%; font-size:13.5px; color:var(--text-primary);" />
+        <span id="curadoria-filter-count" class="muted" style="font-size:12px; white-space:nowrap;">Mostrando ${molecules.length} de ${molecules.length} produtos</span>
+      </div>
+
+      <!-- TABELA EXECUTIVA DE PRODUTOS DEMANDADOS (LISTA) -->
+      <div class="table-wrap" style="box-shadow:0 2px 6px rgba(0,0,0,0.03); border:1px solid var(--border); border-radius:12px; overflow-x:auto; -webkit-overflow-scrolling:touch;">
+        <table class="data-table" style="font-size:12.5px; margin:0;">
+          <thead>
+            <tr style="background:#f8fafc;">
+              <th style="min-width:260px;">Produto Demandado (Sugerido p/ Compra)</th>
+              <th style="min-width:210px;">Princípio Ativo &amp; Apresentação</th>
+              <th class="num" style="min-width:120px;">Último Custo</th>
+              <th class="num" style="min-width:125px;">Demanda Sugerida</th>
+              <th style="min-width:250px;">Diagnóstico IA (Motivo da Retenção)</th>
+              <th style="text-align:center; min-width:145px;">Ação</th>
+            </tr>
+          </thead>
+          <tbody id="curadoria-table-body">
+            ${molecules.map((mol) => {
+              const target = mol.targetSku || {};
+              const cheapest = mol.cheapestSku || {};
+              const adv = mol.iaAdvice || {};
+              const deadStocks = adv.deadStocks || [];
+              const deadTotalQty = adv.deadTotalQty || deadStocks.reduce((a, s) => a + (s.estoque || 0), 0);
+              const deadLabsList = adv.deadLabsList || Array.from(new Set(deadStocks.map(s => s.labora || 'Outro'))).join(', ');
+              const diffUnit = adv.diffUnit || (target.custo_unit && cheapest.custo_unit ? (target.custo_unit - cheapest.custo_unit).toFixed(2) : 0);
+              const economiaTotal = adv.economiaTotal || (Number(diffUnit) > 0 ? Math.round(Number(diffUnit) * (target.total_sugestao_un || 0) * 100) / 100 : 0);
+              const otherStockTotal = mol.otherStockTotal || 0;
+              const otherCoverageDays = mol.otherCoverageDays || 0;
+              const searchText = `${target.descricao || ''} ${target.produto_id || ''} ${target.barras || ''} ${target.labora || ''} ${mol.substancia || ''} ${mol.concentracao || ''} ${mol.forma || ''}`.toLowerCase();
+
+              return `
+                <tr class="curadoria-product-row" data-mol-key="${esc(mol.molecule_key)}" data-pid="${target.produto_id || 0}" data-search="${esc(searchText)}" title="Clique para abrir a visão matricial das lojas com todos os fabricantes desta molécula">
+                  <td>
+                    <div style="font-weight:700; color:#0f172a; font-size:13px;">${esc(target.descricao || 'Produto Sem Descrição')}</div>
+                    <div class="muted" style="font-size:11px; margin-top:2px;">
+                      Cód BIG: <strong>${target.produto_id || '—'}</strong> &bull; EAN ${esc(target.barras || '—')}
+                    </div>
+                    <div style="margin-top:3px; display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                      <span class="badge" style="background:#f1f5f9; color:#334155; font-size:10.5px; font-weight:700;">🏭 ${esc(target.labora || 'Fabricante')}</span>
+                      <span class="badge badge-neutral" style="font-size:10px;">Curva ${esc(target.abc_class || 'A')}</span>
+                    </div>
+                  </td>
+                  <td>
+                    <div style="font-weight:700; color:#1e293b; font-size:12.5px;">🔬 ${esc(toTitleCase(mol.substancia || ''))} ${esc(mol.concentracao || '')}</div>
+                    <div class="muted" style="font-size:11px; margin-top:2px;">${esc(mol.forma || '')} &bull; ${esc(mol.pack_bucket || '')}</div>
+                    <div style="margin-top:3px;">
+                      <span class="badge" style="background:#e0e7ff; color:#3730a3; font-weight:700; font-size:11px;">🏷️ ${mol.labs_count || 1} Labs Concorrentes</span>
+                    </div>
+                  </td>
+                  <td class="num">
+                    <div style="font-weight:700; font-size:13px; color:#0f172a;">${brl(target.custo_unit || 0)}</div>
+                    ${cheapest && cheapest.produto_id !== target.produto_id && cheapest.custo_unit < target.custo_unit && cheapest.custo_unit >= 0.50 && (cheapest.total_estoque > 0 || cheapest.total_sugestao_un > 0) ? `
+                      <div style="font-size:11px; color:#059669; font-weight:600; margin-top:2px;" title="Fabricante com menor custo nesta molécula">
+                        Menor Custo: <strong>${brl(cheapest.custo_unit)}</strong> <span class="muted">(${esc(cheapest.labora)})</span>
+                      </div>
+                    ` : ''}
+                  </td>
+                  <td class="num">
+                    <div style="font-weight:800; font-size:13.5px; color:#0f172a;">${num(target.total_sugestao_un || 0)} un</div>
+                    <div style="font-weight:700; font-size:12px; color:var(--accent);">${brl(target.total_sugestao_rs || 0)}</div>
+                  </td>
+                  <td>
+                    ${mol.remanejamento_sinergia && mol.remanejamento_sinergia.hasOpportunities ? `
+                      <span class="badge" style="background:#ede9fe; color:#5b21b6; border:1px solid #ddd6fe; font-weight:800; font-size:11px; display:inline-block; margin-bottom:3px;">
+                        🔄 ${mol.remanejamento_sinergia.routes.length} Rotas de Remanejamento (${brl(mol.remanejamento_sinergia.economiaRemanejamentoRs)})
+                      </span>
+                      <div style="font-size:11px; color:#5b21b6; font-weight:600; line-height:1.3;">
+                        Transfer-First disponível entre lojas. ${deadTotalQty > 0 ? `(${deadTotalQty} un Curva D paradas)` : ''}
+                      </div>
+                    ` : adv.type === 'DEAD_STOCK_WARNING' ? `
+                      <span class="badge" style="background:#fee2e2; color:#991b1b; border:1px solid #fecaca; font-weight:700; font-size:11px; display:inline-block; margin-bottom:3px;">
+                        ⚠️ ${deadTotalQty} un Curva D Parado
+                      </span>
+                      <div style="font-size:11px; color:#991b1b; line-height:1.3;">
+                        ${esc(deadLabsList)} sem giro. Priorizar desova no balcão antes de comprar!
+                      </div>
+                    ` : adv.type === 'MARGIN_OPPORTUNITY' ? `
+                      <span class="badge" style="background:#dbeafe; color:#1e40af; border:1px solid #bfdbfe; font-weight:700; font-size:11px; display:inline-block; margin-bottom:3px;">
+                        💡 Troca Menor Custo (${esc(cheapest.labora)})
+                      </span>
+                      <div style="font-size:11px; color:#047857; font-weight:600; line-height:1.3;">
+                        Economia de ${brl(diffUnit)}/un &bull; ${brl(economiaTotal)} no pedido!
+                      </div>
+                    ` : adv.type === 'ENOUGH_STOCK_WARNING' ? `
+                      <span class="badge" style="background:#fef3c7; color:#92400e; border:1px solid #fde68a; font-weight:700; font-size:11px; display:inline-block; margin-bottom:3px;">
+                        ⚠️ ${otherStockTotal} un de Outros Labs em Estoque
+                      </span>
+                      <div style="font-size:11px; color:#92400e; line-height:1.3;">
+                        ${otherCoverageDays}d de cobertura em marcas alternativas na rede.
+                      </div>
+                    ` : `
+                      <span class="badge" style="background:#dcfce7; color:#15803d; border:1px solid #bbf7d0; font-weight:700; font-size:11px; display:inline-block; margin-bottom:3px;">
+                        ✓ Validar Fornecedor
+                      </span>
+                      <div class="muted" style="font-size:11px;">Molécula equilibrada na rede.</div>
+                    `}
+                  </td>
+                  <td style="text-align:center;">
+                    <button class="btn btn-primary btn-sm btn-open-mol-modal" data-mol-key="${esc(mol.molecule_key)}" data-pid="${target.produto_id || 0}" type="button" style="font-weight:700; padding:6px 14px; white-space:nowrap; box-shadow:0 1px 3px rgba(0,0,0,0.1); display:inline-flex; align-items:center; gap:6px;">
+                      🔬 Analisar Molécula
+                    </button>
+                  </td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    bindCuradoriaActions();
+  } catch (err) {
+    container.innerHTML = `<div class="banner error">Erro ao carregar Pré-Tela de Curadoria: ${esc(err.message)}</div>`;
+  }
+}
+
+function bindCuradoriaActions() {
+  // Filtro Rápido em Tempo Real
+  const filterInput = document.getElementById('curadoria-filter-input');
+  if (filterInput) {
+    filterInput.addEventListener('input', () => {
+      const q = filterInput.value.toLowerCase().trim();
+      const rows = document.querySelectorAll('.curadoria-product-row');
+      let visible = 0;
+      rows.forEach(row => {
+        const text = row.dataset.search || '';
+        const match = !q || text.includes(q);
+        row.style.display = match ? '' : 'none';
+        if (match) visible++;
+      });
+      const countEl = document.getElementById('curadoria-filter-count');
+      if (countEl) countEl.textContent = `Mostrando ${visible} de ${rows.length} produtos`;
+    });
+  }
+
+  // Clique na Linha ou no Botão "🔬 Analisar Molécula" abre a Modal com a visão matricial das lojas
+  document.querySelectorAll('.curadoria-product-row').forEach(row => {
+    row.addEventListener('click', (e) => {
+      const molKey = row.dataset.molKey;
+      const pid = Number(row.dataset.pid || 0);
+      if (molKey) {
+        openMoleculeSweep(molKey, pid, state.selectedFilial !== 'all' ? state.selectedFilial : null);
+      }
+    });
+  });
+
+  document.querySelectorAll('.btn-open-mol-modal').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const molKey = btn.dataset.molKey;
+      const pid = Number(btn.dataset.pid || 0);
+      if (molKey) {
+        openMoleculeSweep(molKey, pid, state.selectedFilial !== 'all' ? state.selectedFilial : null);
+      }
+    });
+  });
+
+  // Homologar Todas as Trocas
+  const btnAll = document.getElementById('btn-approve-all-curadoria');
+  if (btnAll) {
+    btnAll.addEventListener('click', async () => {
+      if (!window.confirm('Deseja homologar em lote todas as moléculas pendentes? Os itens validados serão liberados imediatamente para a Sugestão de Compra.')) return;
+      btnAll.disabled = true;
+      btnAll.textContent = 'Homologando...';
+      try {
+        const res = await apiPost('/api/curadoria/decision', { action: 'APPROVE_ALL' });
+        showBanner(`✓ ${res.message || 'Todas as moléculas homologadas com sucesso!'}`);
+        await loadAndRenderCuradoria();
+      } catch (e) {
+        showBanner(`Erro na homologação em lote: ${e.message}`, true);
+        btnAll.disabled = false;
+        btnAll.textContent = '⚡ Homologar Todas as Trocas';
+      }
+    });
+  }
+
+  // Ver Itens em Desova
+  const btnDesova = document.getElementById('btn-view-desova-items');
+  if (btnDesova) {
+    btnDesova.addEventListener('click', openDesovaItemsModal);
+  }
+
+  // Ver Log de Aprendizado da IA
+  const btnLog = document.getElementById('btn-view-learning-log');
+  if (btnLog) {
+    btnLog.addEventListener('click', openCuradoriaLearningLogModal);
+  }
+}
+
+async function openDesovaItemsModal() {
+  try {
+    const res = await apiGet('/api/curadoria/desova-items');
+    const items = res.items || [];
+    
+    let html = `
+      <div id="modal-desova-backdrop" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(3px);">
+        <div style="background:var(--card-bg); width:90%; max-width:850px; max-height:85vh; border-radius:14px; box-shadow:0 20px 25px -5px rgba(0,0,0,0.2); display:flex; flex-direction:column; overflow:hidden;">
+          <div style="padding:18px 24px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; background:#f8fafc;">
+            <div>
+              <div style="font-size:16px; font-weight:800; color:#0f172a; display:flex; align-items:center; gap:8px;">
+                <span>📦 Produtos em Desova no Balcão</span>
+                <span class="badge" style="background:#fed7aa; color:#9a3412; font-weight:700;">${items.length} SKUs Suspensos</span>
+              </div>
+              <div style="font-size:12px; color:var(--muted); margin-top:2px;">
+                Monitorados automaticamente pela IA: quando o estoque das marcas alternativas cair para &le; 7 dias, a compra reativa sem intervenção.
+              </div>
+            </div>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="document.getElementById('modal-desova-backdrop').remove()">✕ Fechar</button>
+          </div>
+          <div style="padding:20px 24px; overflow-y:auto; flex:1;">
+            ${items.length === 0 ? '<div class="muted" style="text-align:center; padding:30px;">Nenhum produto em desova no momento.</div>' : `
+              <table class="data-table" style="font-size:12px;">
+                <thead>
+                  <tr>
+                    <th>Produto &amp; Fabricante</th>
+                    <th>Motivo da Suspensão</th>
+                    <th class="num">Estoque Atual</th>
+                    <th class="num">Giro Diário</th>
+                    <th class="num">Cobertura</th>
+                    <th style="text-align:center;">Ação Imediata</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${items.map(it => `
+                    <tr>
+                      <td>
+                        <strong>${esc(it.descricao || `SKU ${it.produto_id}`)}</strong>
+                        <div class="muted" style="font-size:11px;">Cód: ${it.produto_id} &bull; ${esc(it.labora || '')}</div>
+                      </td>
+                      <td>
+                        <span class="badge badge-neutral" style="font-size:11px;">${esc(it.motivo || 'Desova Curva D')}</span>
+                        <div class="muted" style="font-size:10px; margin-top:2px;">Desde ${it.created_at || '—'}</div>
+                      </td>
+                      <td class="num"><strong>${num(it.estoque_atual || 0)} un</strong></td>
+                      <td class="num">${num(it.ddv_projetada || 0, 2)}/d</td>
+                      <td class="num"><span class="badge" style="background:#fee2e2; color:#b91c1c; font-weight:700;">${num(it.cobertura_dias || 0, 1)}d</span></td>
+                      <td style="text-align:center;">
+                        <button class="btn btn-sm btn-primary btn-unsuspend-desova" data-pid="${it.produto_id}" data-filial="${it.filial_id || 0}" style="font-size:11px; font-weight:700;">
+                          🚀 Liberar Compra
+                        </button>
+                      </td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            `}
+          </div>
+        </div>
+      </div>
+    `;
+
+    const oldM = document.getElementById('modal-desova-backdrop');
+    if (oldM) oldM.remove();
+    document.body.insertAdjacentHTML('beforeend', html);
+
+    document.querySelectorAll('.btn-unsuspend-desova').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const pid = btn.dataset.pid;
+        const fId = btn.dataset.filial;
+        btn.disabled = true;
+        btn.textContent = 'Liberando...';
+        try {
+          await apiPost('/api/curadoria/desova-unsuspend', { produto_id: pid, filial_id: fId });
+          showBanner('✓ Produto liberado com sucesso para a esteira de compras!');
+          btn.closest('tr').remove();
+          await loadAndRenderCuradoria();
+        } catch (e) {
+          showBanner(`Erro ao liberar produto: ${e.message}`, true);
+          btn.disabled = false;
+          btn.textContent = '🚀 Liberar Compra';
+        }
+      });
+    });
+
+  } catch (err) {
+    showBanner(`Erro ao consultar itens em desova: ${err.message}`, true);
+  }
+}
+
+async function openCuradoriaLearningLogModal() {
+  try {
+    const res = await apiGet('/api/buyer/learning-log');
+    const logs = res.logs || [];
+
+    let html = `
+      <div id="modal-cur-log-backdrop" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(3px);">
+        <div style="background:var(--card-bg); width:90%; max-width:850px; max-height:85vh; border-radius:14px; box-shadow:0 20px 25px -5px rgba(0,0,0,0.2); display:flex; flex-direction:column; overflow:hidden;">
+          <div style="padding:18px 24px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; background:#f8fafc;">
+            <div>
+              <div style="font-size:16px; font-weight:800; color:#0f172a; display:flex; align-items:center; gap:8px;">
+                <span>🧠 Log de Aprendizado da IA (Decisões do Comprador)</span>
+                <span class="badge badge-accent">${logs.length} Regras Salvas</span>
+              </div>
+              <div style="font-size:12px; color:var(--muted); margin-top:2px;">
+                A IA utiliza este histórico para respeitar prescrições médicas, marcas cativas e preferências de laboratório.
+              </div>
+            </div>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="document.getElementById('modal-cur-log-backdrop').remove()">✕ Fechar</button>
+          </div>
+          <div style="padding:20px 24px; overflow-y:auto; flex:1;">
+            ${logs.length === 0 ? '<div class="muted" style="text-align:center; padding:30px;">Nenhuma regra customizada aprendida ainda.</div>' : `
+              <table class="data-table" style="font-size:12px;">
+                <thead>
+                  <tr>
+                    <th>Data &amp; Hora</th>
+                    <th>Evento IA</th>
+                    <th>Produto / Molécula</th>
+                    <th>Motivo do Comprador</th>
+                    <th>Ação Futura</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${logs.map(l => {
+                    const isApprove = l.tipo_evento?.includes('APROVOU') || l.tipo_evento?.includes('HOMOLOGOU') || l.tipo_evento?.includes('TROCOU');
+                    const isSuspend = l.tipo_evento?.includes('SUSPENSAO');
+                    const badgeClass = isApprove ? 'badge-accent' : (isSuspend ? 'badge-warn' : 'badge-danger');
+                    return `
+                      <tr>
+                        <td class="muted" style="font-size:11px; white-space:nowrap;">${l.created_at || '—'}</td>
+                        <td><span class="badge ${badgeClass}" style="font-size:10.5px;">${esc(l.tipo_evento || 'REGRA')}</span></td>
+                        <td>
+                          <strong>${esc(l.descricao || l.molecule_key || 'Molécula')}</strong>
+                          ${l.produto_id ? `<div class="muted" style="font-size:10.5px;">SKU: ${l.produto_id}</div>` : ''}
+                        </td>
+                        <td><em>${esc(l.motivo || 'Sem justificativa')}</em></td>
+                        <td><span class="badge badge-neutral" style="font-size:10.5px;">${esc(l.acao_futura || 'REGISTRADO')}</span></td>
+                      </tr>
+                    `;
+                  }).join('')}
+                </tbody>
+              </table>
+            `}
+          </div>
+        </div>
+      </div>
+    `;
+
+    const oldM = document.getElementById('modal-cur-log-backdrop');
+    if (oldM) oldM.remove();
+    document.body.insertAdjacentHTML('beforeend', html);
+  } catch (err) {
+    showBanner(`Erro ao carregar log de aprendizado: ${err.message}`, true);
+  }
+}
+
 function clearAllFilters() {
   state.q = '';
   state.abc = '';
@@ -3871,6 +4947,9 @@ function syncBodyModalState() {
 
 function closeAllModals() {
   document.querySelectorAll('.modal-backdrop, .modal-overlay').forEach((m) => {
+    if (m.id === 'modal-welcome-gate' && isLicenseExpired()) {
+      return; // Apenas a janela sobreposta deve permanecer até a ativação da chave!
+    }
     m.classList.add('hidden');
   });
   syncBodyModalState();
@@ -4903,9 +5982,711 @@ async function saveDirectToBigDb() {
   }
 }
 
+// ========================================================
+// CONTROLE ORÇAMENTÁRIO & OPEN-TO-BUY (GOVERNANÇA DE COMPRAS)
+// ========================================================
+
+async function loadBudget(forceRefresh = false) {
+  const tbody = document.getElementById('otb-dimensions-tbody');
+  if (tbody && forceRefresh) {
+    tbody.innerHTML = '<tr><td colspan="12" class="muted" style="text-align:center;padding:24px;">🔄 Recalculando dotação orçamentária no Linx BIG...</td></tr>';
+  }
+
+  const btnRefresh = document.getElementById('btn-refresh-budget');
+  if (btnRefresh && forceRefresh) btnRefresh.disabled = true;
+
+  try {
+    const fIdParam = state.selectedFilial && state.selectedFilial !== 'all' ? `?filial_id=${state.selectedFilial}` : '';
+    const endpoint = (forceRefresh ? '/api/budget/recalculate' : '/api/budget/overview') + fIdParam;
+    const method = forceRefresh ? apiPost : apiGet;
+    const res = await method(endpoint);
+    if (!res || (res.ok === false)) {
+      if (tbody) tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;color:#ef4444;padding:24px;">Erro ao carregar dotação: ${res?.error || 'Falha na resposta'}</td></tr>`;
+      return;
+    }
+
+    const d = res.data || res;
+    state.budgetSummary = d;
+
+    // Campos normalizados do resumo
+    const mesRef = d.reference_month || d.mes_referencia || '—';
+    const dataRef = d.reference_date || d.data_referencia || '';
+    const dotacaoAjustada = Number(d.dotacao_ajustada || 0);
+    const consumido = Number(d.consumido_compras_rs || d.consumido_total || 0);
+    const consumidoPct = dotacaoAjustada > 0 ? (consumido / dotacaoAjustada) * 100 : 0;
+    const saldoLivre = Math.max(0, dotacaoAjustada - consumido);
+    const faturamentoLiquido = Number(d.faturamento_liquido_mes || d.faturamento_liquido || 0);
+    const compraVendaPct = Number(d.compra_x_venda_pct || d.compra_venda_pct || 0);
+    const semDemanda = Number(d.compras_sem_demanda_rs || d.sem_demanda || 0);
+    const excesso = Number(d.compras_excesso_rs || d.excesso || 0);
+    const naoOtimizadas = Number(d.compras_nao_otimizadas_rs || d.compras_nao_otimizadas || (semDemanda + excesso));
+    const iec = Number(d.iec_eficiencia_pct !== undefined ? d.iec_eficiencia_pct : (d.iec !== undefined ? d.iec : 0));
+    const comprasCertas = Math.max(0, consumido - naoOtimizadas);
+    const sabPeso = Number(d.peso_sabado || d.sabado_peso || 1);
+    const domPeso = Number(d.peso_domingo || d.domingo_peso || 1);
+    const scoreAnt = Number(d.score_mes_anterior || d.score_mes_ant || 0);
+    const scoreAtual = Number(d.score_mes_atual || 0);
+    const varFat = Number(d.var_faturamento_pct !== undefined ? d.var_faturamento_pct : (d.var_fat_pct || 0));
+
+    // Atualiza badge de mês
+    const elMonth = document.getElementById('otb-month-badge');
+    if (elMonth) {
+      const dRef = dataRef ? dataRef.split('-').reverse().join('/') : '';
+      elMonth.textContent = `Mês: ${mesRef} (Ref: ${dRef})`;
+    }
+
+    // Card 1: Dotação Orçamentária
+    const elDotacao = document.getElementById('otb-kpi-dotacao');
+    if (elDotacao) elDotacao.textContent = brl(dotacaoAjustada);
+    const elConsumido = document.getElementById('otb-kpi-consumido');
+    if (elConsumido) elConsumido.textContent = brl(consumido);
+    const elConsumidoPct = document.getElementById('otb-kpi-consumido-pct');
+    if (elConsumidoPct) elConsumidoPct.textContent = `${num(consumidoPct, 1)}%`;
+    const elSaldoLivre = document.getElementById('otb-kpi-saldo-livre');
+    if (elSaldoLivre) {
+      elSaldoLivre.textContent = brl(saldoLivre);
+      elSaldoLivre.style.color = saldoLivre >= 0 ? '#059669' : '#dc2626';
+    }
+    const elBar = document.getElementById('otb-kpi-bar');
+    if (elBar) {
+      const pct = Math.min(100, Math.max(0, consumidoPct || 0));
+      elBar.style.width = `${pct}%`;
+      elBar.style.background = consumidoPct > 100 ? '#dc2626' : (consumidoPct > 80 ? '#d97706' : '#2563eb');
+    }
+
+    // Card 2: Compra x Venda
+    const elFat = document.getElementById('otb-kpi-fat');
+    if (elFat) elFat.textContent = brl(faturamentoLiquido);
+    const elComprado = document.getElementById('otb-kpi-comprado');
+    if (elComprado) elComprado.textContent = brl(consumido);
+    const elCompraVendaPct = document.getElementById('otb-kpi-compra-venda-pct');
+    if (elCompraVendaPct) elCompraVendaPct.textContent = `${num(compraVendaPct, 1)}%`;
+
+    // Card 3: Perdas & Alertas
+    const elNaoOtim = document.getElementById('otb-kpi-nao-otimizadas');
+    if (elNaoOtim) elNaoOtim.textContent = brl(naoOtimizadas);
+    const elSemDem = document.getElementById('otb-kpi-sem-demanda');
+    if (elSemDem) elSemDem.textContent = brl(semDemanda);
+    const elExcesso = document.getElementById('otb-kpi-excesso');
+    if (elExcesso) elExcesso.textContent = brl(excesso);
+
+    // Card 4: IEC
+    const elIec = document.getElementById('otb-kpi-iec');
+    if (elIec) elIec.textContent = `${num(iec, 1)}%`;
+    const elComprasCertas = document.getElementById('otb-kpi-compras-certas');
+    if (elComprasCertas) elComprasCertas.textContent = brl(comprasCertas);
+    const elIecBar = document.getElementById('otb-kpi-iec-bar');
+    if (elIecBar) {
+      elIecBar.style.width = `${Math.min(100, Math.max(0, iec || 0))}%`;
+    }
+
+    // Memória de cálculo
+    const elSab = document.getElementById('otb-mem-sab');
+    if (elSab) elSab.textContent = num(sabPeso, 3);
+    const elDom = document.getElementById('otb-mem-dom');
+    if (elDom) elDom.textContent = num(domPeso, 3);
+    const elScoreAnt = document.getElementById('otb-mem-score-ant');
+    if (elScoreAnt) elScoreAnt.textContent = num(scoreAnt, 3);
+    const elScoreAtual = document.getElementById('otb-mem-score-atual');
+    if (elScoreAtual) elScoreAtual.textContent = num(scoreAtual, 3);
+    const elVarFat = document.getElementById('otb-mem-var-fat');
+    if (elVarFat) {
+      const sign = varFat >= 0 ? '+' : '';
+      elVarFat.textContent = `${sign}${num(varFat, 2)}%`;
+      elVarFat.style.background = varFat >= 0 ? '#d1fae5' : '#fee2e2';
+      elVarFat.style.color = varFat >= 0 ? '#065f46' : '#991b1b';
+    }
+
+    // Tabela por dimensão
+    if (tbody) {
+      const dims = d.dimensions || d.dimensoes || [];
+      if (dims.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="12" class="muted" style="text-align:center;padding:16px;">Nenhuma dimensão retornada.</td></tr>';
+      } else {
+        tbody.innerHTML = dims.map(row => {
+          const saldo = Number(row.saldo_livre_rs !== undefined ? row.saldo_livre_rs : (row.saldo_livre || 0));
+          const saldoColor = saldo >= 0 ? '#059669' : '#dc2626';
+          const fator = Number(row.fator_tendencia_pct !== undefined ? row.fator_tendencia_pct : (row.fator_correcao_pct || 0));
+          const fatorSign = fator >= 0 ? '+' : '';
+          const consPct = Number(row.consumido_pct || 0);
+          const iecDim = Number(row.iec_pct !== undefined ? row.iec_pct : (row.iec || 0));
+          const semDem = Number(row.compras_sem_demanda_rs !== undefined ? row.compras_sem_demanda_rs : (row.sem_demanda || 0));
+          const exc = Number(row.compras_excesso_rs !== undefined ? row.compras_excesso_rs : (row.excesso || 0));
+
+          return `
+            <tr>
+              <td style="font-weight:700;color:var(--text-primary);display:flex;align-items:center;gap:6px;">
+                <span>${row.dimensao === 'Éticos' ? '💊' : (row.dimensao === 'Genéricos' ? '🟢' : (row.dimensao === 'Perfumaria' ? '🧴' : (row.dimensao === 'Similares' ? '🔵' : '📦')))}</span>
+                <span>${esc(row.dimensao)}</span>
+              </td>
+              <td class="num">${brl(row.cmv_mes_anterior || row.cmv_mes_ant)}</td>
+              <td class="num">${brl(row.dotacao_inicial)}</td>
+              <td class="num"><span class="badge badge-neutral" style="font-size:11px;">${fatorSign}${num(fator, 2)}%</span></td>
+              <td class="num" style="font-weight:700;color:#1e40af;">${brl(row.dotacao_ajustada)}</td>
+              <td class="num">${brl(row.consumido_rs)}</td>
+              <td class="num"><strong style="color:${consPct > 100 ? '#dc2626' : 'inherit'};">${num(consPct, 1)}%</strong></td>
+              <td class="num" style="font-weight:800;color:${saldoColor};">${brl(saldo)}</td>
+              <td class="num" style="color:#dc2626;">${brl(semDem)}</td>
+              <td class="num" style="color:#c2410c;">${brl(exc)}</td>
+              <td class="num" style="font-weight:700;color:#7c3aed;">${num(iecDim, 1)}%</td>
+              <td style="text-align:center;">
+                <button class="btn btn-secondary btn-sm btn-filter-dimension" data-dim="${esc(row.dimensao)}" style="padding:4px 8px;font-size:11px;" title="Filtrar e comprar ${esc(row.dimensao)} na Mesa">
+                  🛒 Comprar
+                </button>
+              </td>
+            </tr>
+          `;
+        }).join('');
+
+        // Eventos dos botões de filtrar por dimensão na Mesa
+        tbody.querySelectorAll('.btn-filter-dimension').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const dim = btn.dataset.dim;
+            goToCockpitWithDimension(dim);
+          });
+        });
+      }
+    }
+
+    // Atualiza também a pílula de saldo de dotação no cockpit
+    updateCockpitBudgetPill(d);
+
+    // Sinergia Transfer-First: Economia gerada por Remanejamento Interno
+    const elReman = document.getElementById('otb-remanejamento-economizado');
+    if (elReman) elReman.textContent = brl(d.remanejamento_economizado_rs || 0);
+
+    // Auditoria por Produto (Compras Não Otimizadas)
+    state.unoptimizedProducts = d.unoptimized_products || [];
+    renderUnoptimizedTable(state.unoptimizedProducts);
+
+    if (forceRefresh) {
+      showBanner(`✓ Dotação Orçamentária recalculada: Teto R$ ${brl(dotacaoAjustada)} • Saldo Livre R$ ${brl(saldoLivre)}.`);
+    }
+  } catch (err) {
+    showBanner(`Erro ao carregar dotação: ${err.message}`, true);
+    if (tbody) tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;color:#ef4444;padding:24px;">Erro ao carregar dotação: ${err.message}</td></tr>`;
+  } finally {
+    if (btnRefresh) btnRefresh.disabled = false;
+  }
+}
+
+
+async function updateCockpitBudgetPillForFilial(filialId = 'all') {
+  try {
+    const fIdParam = filialId && filialId !== 'all' ? `?filial_id=${filialId}` : '';
+    const res = await apiGet(`/api/budget/overview${fIdParam}`);
+    const d = res.data || res.budget || res;
+    updateCockpitBudgetPill(d);
+  } catch (err) {
+    console.warn('Erro ao atualizar pílula de saldo OTB:', err);
+  }
+}
+
+function updateCockpitBudgetPill(d) {
+  const pill = document.getElementById('btn-otb-cockpit-pill');
+  if (!pill) return;
+  if (!d) {
+    pill.textContent = '📊 Dotação OTB: Carregando...';
+    return;
+  }
+  const dotacao = Number(d.dotacao_ajustada || 0);
+  const consumido = Number(d.consumido_compras_rs || d.consumido_total || 0);
+  const saldo = Math.max(0, dotacao - consumido);
+  const pct = dotacao > 0 ? (consumido / dotacao) * 100 : 0;
+  const color = saldo >= 0 ? '#1e40af' : '#991b1b';
+  const bg = saldo >= 0 ? '#eff6ff' : '#fef2f2';
+  const border = saldo >= 0 ? '#bfdbfe' : '#fecaca';
+
+  pill.style.background = bg;
+  pill.style.color = color;
+  pill.style.borderColor = border;
+  pill.innerHTML = `📊 Saldo OTB: <strong>${brl(saldo)}</strong> (${num(pct, 1)}% consumido)`;
+}
+
+function goToCockpitWithDimension(dim) {
+  switchView('cockpit');
+
+  const selMacro = document.getElementById('filter-macro');
+  const inpQ = document.getElementById('filter-q');
+
+  if (dim === 'Éticos') {
+    if (selMacro) { selMacro.value = 'MEDICAMENTO'; state.macro = 'MEDICAMENTO'; }
+    if (inpQ) { inpQ.value = ''; state.q = ''; }
+  } else if (dim === 'Genéricos') {
+    if (selMacro) { selMacro.value = 'MEDICAMENTO'; state.macro = 'MEDICAMENTO'; }
+    if (inpQ) { inpQ.value = 'GENERICO'; state.q = 'GENERICO'; }
+  } else if (dim === 'Perfumaria') {
+    if (selMacro) { selMacro.value = 'PERFUMARIA_HPC'; state.macro = 'PERFUMARIA_HPC'; }
+    if (inpQ) { inpQ.value = ''; state.q = ''; }
+  } else if (dim === 'Similares') {
+    if (selMacro) { selMacro.value = 'MEDICAMENTO'; state.macro = 'MEDICAMENTO'; }
+    if (inpQ) { inpQ.value = 'SIMILAR'; state.q = 'SIMILAR'; }
+  } else if (dim === 'Não-Medicamentos') {
+    document.querySelectorAll('#sku-tabs .tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === 'non_med'));
+    state.tab = 'non_med';
+    if (selMacro) { selMacro.value = ''; state.macro = ''; }
+    if (inpQ) { inpQ.value = ''; state.q = ''; }
+  }
+
+  loadSkus();
+}
+
+function renderUnoptimizedTable(products) {
+  const tbody = document.getElementById('otb-unoptimized-tbody');
+  const badge = document.getElementById('unoptimized-count-badge');
+  if (badge) badge.textContent = `${products.length} SKUs`;
+  if (!tbody) return;
+
+  if (products.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="10" class="muted" style="text-align:center;padding:20px;">✓ Nenhuma compra não otimizada detectada nas entradas do mês!</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = products.slice(0, 100).map(p => {
+    const isExcesso = p.classificacao === 'Excesso';
+    const classBadge = isExcesso 
+      ? '<span class="badge" style="background:#ffedd5;color:#c2410c;font-weight:700;">⚠️ Excesso</span>'
+      : '<span class="badge" style="background:#fee2e2;color:#dc2626;font-weight:700;">🛑 Sem Demanda</span>';
+
+    return `
+      <tr>
+        <td style="font-weight:600;">${esc(p.loja)}</td>
+        <td style="font-family:monospace;font-size:11px;">${esc(p.cod_barras)}</td>
+        <td class="num" style="font-family:monospace;">${p.cod_interno}</td>
+        <td style="font-weight:600;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(p.produto)}">${esc(p.produto)}</td>
+        <td class="num" style="font-weight:700;">${num(p.entrada)}</td>
+        <td class="num">${num(p.saida)}</td>
+        <td class="num">${num(p.limite_excesso)}</td>
+        <td class="num"><span class="badge badge-neutral" style="font-size:11px;">${num(p.evolucao_pct)}%</span></td>
+        <td class="num" style="font-weight:800;color:#dc2626;">${brl(p.compras_nao_otimizadas_rs)}</td>
+        <td style="text-align:center;">${classBadge}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+// ========================================================
+// OPERAÇÃO LOGÍSTICA (OL) & IA CONSULTORA DE PEDIDOS MÍNIMOS
+// ========================================================
+
+async function loadOlsView() {
+  const tbody = document.getElementById('ol-master-tbody');
+  if (tbody) {
+    tbody.innerHTML = '<tr><td colspan="10" class="muted" style="text-align:center;padding:24px;">🔄 Carregando panorama de Operações Logísticas e indústrias...</td></tr>';
+  }
+
+  try {
+    const fParam = state.selectedFilial && state.selectedFilial !== 'all' ? `?filial_id=${state.selectedFilial}` : '';
+    const res = await apiGet(`/api/ol/dashboard${fParam}`);
+    if (!res || !res.ok) {
+      if (tbody) tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:#ef4444;padding:24px;">Erro ao carregar OLs: ${res?.error || 'Falha'}</td></tr>`;
+      return;
+    }
+
+    const { items, kpis } = res;
+    state.olItems = items || [];
+
+    // Preenche KPIs
+    const elAtivos = document.getElementById('ol-kpi-total-ativos');
+    if (elAtivos) elAtivos.textContent = `${kpis.totalAtivos || 0} Indústrias`;
+    const elProntos = document.getElementById('ol-kpi-prontos');
+    if (elProntos) elProntos.textContent = `${kpis.prontos || 0} Prontos`;
+    const elComp = document.getElementById('ol-kpi-complementaveis');
+    if (elComp) elComp.textContent = `${kpis.complementaveis || 0} Oportunidades`;
+    const elEco = document.getElementById('ol-kpi-economia');
+    if (elEco) elEco.textContent = brl(kpis.economiaTotalEstimada || 0);
+
+    renderOlTable(state.olItems);
+  } catch (err) {
+    if (tbody) tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:#ef4444;padding:24px;">Erro: ${err.message}</td></tr>`;
+  }
+}
+
+function renderOlTable(items) {
+  const tbody = document.getElementById('ol-master-tbody');
+  if (!tbody) return;
+
+  if (items.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="10" class="muted" style="text-align:center;padding:24px;">Nenhum fornecedor OL cadastrado. Clique em "Cadastrar Fornecedor" para começar.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = items.map(ol => {
+    let statusBadge = '';
+    if (ol.status === 'MINIMO_ATINGIDO') {
+      statusBadge = '<span class="badge badge-success" style="font-weight:700;">🟢 Mínimo Atingido (Pronto para OL)</span>';
+    } else if (ol.status === 'COMPLEMENTAVEL') {
+      statusBadge = `<span class="badge" style="background:#fef3c7;color:#92400e;font-weight:700;">🟡 Faltam ${brl(ol.faltam_rs)} (IA Sugere Complementar)</span>`;
+    } else {
+      statusBadge = '<span class="badge badge-neutral" style="color:#64748b;">⏳ Sem Demanda no Momento</span>';
+    }
+
+    return `
+      <tr>
+        <td style="font-weight:700;color:var(--text-primary);font-size:13px;">${esc(ol.fabricante)}</td>
+        <td><span class="badge badge-neutral" style="font-size:11px;">${esc(ol.categoria || ol.tipo_canal)}</span></td>
+        <td class="num" style="font-weight:700;">${brl(ol.pedido_minimo_rs)}</td>
+        <td class="num"><span class="badge badge-success" style="font-size:11px;">+${num(ol.desconto_extra_pct)}%</span></td>
+        <td>${esc(ol.prazo_medio_dias ? ol.prazo_medio_dias + ' d' : '30/60/90 d')}</td>
+        <td class="num">${num(ol.lead_time_dias || 7)} d</td>
+        <td class="num" style="font-weight:800;font-size:13px;color:${ol.total_sugerido_rs >= ol.pedido_minimo_rs ? '#059669' : '#1e40af'};">
+          ${brl(ol.total_sugerido_rs)}
+        </td>
+        <td class="num">${num(ol.skus_comprar)}</td>
+        <td>${statusBadge}</td>
+        <td style="text-align:center;white-space:nowrap;">
+          <div style="display:inline-flex;gap:4px;">
+            <button class="btn btn-primary btn-xs btn-buy-ol-cockpit" data-fab="${esc(ol.fabricante)}" title="Comprar este fabricante na Mesa com auxílio do Consultor IA" style="background:#0f766e;border-color:#0f766e;font-weight:600;padding:4px 8px;">
+              🛒 Mesa
+            </button>
+            <button class="btn btn-secondary btn-xs btn-edit-ol-rule" data-id="${ol.id}" data-fab="${esc(ol.fabricante)}" data-min="${ol.pedido_minimo_rs}" data-desc="${ol.desconto_extra_pct}" data-prazo="${ol.prazo_medio_dias}" data-lead="${ol.lead_time_dias}" data-cat="${esc(ol.categoria)}" title="Editar parâmetros comerciais desta OL" style="padding:4px 6px;">
+              ⚙️
+            </button>
+            <button class="btn btn-secondary btn-xs btn-export-ol-excel" data-fab="${esc(ol.fabricante)}" title="Baixar pedido OL formatado em Excel para o Representante Comercial" style="padding:4px 6px;">
+              📊
+            </button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  // Eventos nos botões da tabela OL
+  tbody.querySelectorAll('.btn-buy-ol-cockpit').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const fab = btn.dataset.fab;
+      goToCockpitWithManufacturer(fab);
+    });
+  });
+
+  tbody.querySelectorAll('.btn-edit-ol-rule').forEach(btn => {
+    btn.addEventListener('click', () => {
+      openModalOlSupplier({
+        fabricante: btn.dataset.fab,
+        minimo: btn.dataset.min,
+        desconto: btn.dataset.desc,
+        prazo: btn.dataset.prazo,
+        leadTime: btn.dataset.lead,
+        categoria: btn.dataset.cat
+      });
+    });
+  });
+
+  tbody.querySelectorAll('.btn-export-ol-excel').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const fab = btn.dataset.fab;
+      exportOlDirectFromDashboard(fab);
+    });
+  });
+}
+
+function goToCockpitWithManufacturer(fab) {
+  switchView('cockpit');
+  const selLab = document.getElementById('filter-lab');
+  if (selLab) {
+    // Adiciona opção se não existir
+    let opt = Array.from(selLab.options).find(o => o.value.toUpperCase() === fab.toUpperCase());
+    if (!opt) {
+      opt = new Option(fab, fab);
+      selLab.add(opt);
+    }
+    selLab.value = opt.value;
+    state.lab = opt.value;
+  }
+  loadSkus();
+}
+
+function openModalOlSupplier(data = null) {
+  const modal = document.getElementById('modal-ol-supplier');
+  if (!modal) return;
+  const title = document.getElementById('modal-ol-title');
+  const inpFab = document.getElementById('inp-ol-fabricante');
+  const selCanal = document.getElementById('sel-ol-canal');
+  const inpMin = document.getElementById('inp-ol-minimo');
+  const inpDesc = document.getElementById('inp-ol-desconto');
+  const inpPrazo = document.getElementById('inp-ol-prazo');
+  const inpLead = document.getElementById('inp-ol-leadtime');
+  const selStatus = document.getElementById('sel-ol-status');
+
+  if (data) {
+    if (title) title.textContent = `⚙️ Editar Política OL • ${data.fabricante}`;
+    if (inpFab) { inpFab.value = data.fabricante; inpFab.readOnly = true; }
+    if (inpMin) inpMin.value = data.minimo || 3000;
+    if (inpDesc) inpDesc.value = data.desconto || 10;
+    if (inpPrazo) inpPrazo.value = data.prazo || '45';
+    if (inpLead) inpLead.value = data.leadTime || 7;
+    if (selCanal && data.categoria) selCanal.value = data.categoria;
+    if (selStatus) selStatus.value = '1';
+  } else {
+    if (title) title.textContent = '➕ Cadastrar Fornecedor / Fabricante OL';
+    if (inpFab) { inpFab.value = ''; inpFab.readOnly = false; }
+    if (inpMin) inpMin.value = '3000.00';
+    if (inpDesc) inpDesc.value = '10.0';
+    if (inpPrazo) inpPrazo.value = '45';
+    if (inpLead) inpLead.value = '7';
+    if (selStatus) selStatus.value = '1';
+  }
+
+  modal.classList.remove('hidden');
+}
+
+function closeModalOlSupplier() {
+  const modal = document.getElementById('modal-ol-supplier');
+  if (modal) modal.classList.add('hidden');
+}
+
+async function saveModalOlSupplier(e) {
+  e.preventDefault();
+  const inpFab = document.getElementById('inp-ol-fabricante');
+  const selCanal = document.getElementById('sel-ol-canal');
+  const inpMin = document.getElementById('inp-ol-minimo');
+  const inpDesc = document.getElementById('inp-ol-desconto');
+  const inpPrazo = document.getElementById('inp-ol-prazo');
+  const inpLead = document.getElementById('inp-ol-leadtime');
+  const selStatus = document.getElementById('sel-ol-status');
+
+  const fab = (inpFab?.value || '').trim().toUpperCase();
+  if (!fab) {
+    showBanner('Informe o nome do fabricante / indústria.', true);
+    return;
+  }
+
+  const payload = {
+    fabricante_nome: fab,
+    tipo_canal: 'OL',
+    observacao: selCanal?.value || 'Medicamentos & Mix Farma',
+    pedido_minimo_rs: parseFloat(inpMin?.value || '3000'),
+    desconto_extra_pct: parseFloat(inpDesc?.value || '10'),
+    prazo_medio_dias: parseInt(inpPrazo?.value || '45', 10),
+    lead_time_dias: parseInt(inpLead?.value || '7', 10),
+    ativo: selStatus?.value === '1'
+  };
+
+  try {
+    const res = await apiPost('/api/ol/fabricante', payload);
+    if (res && res.ok) {
+      showBanner(`✓ Política comercial de OL para ${fab} salva com sucesso!`);
+      closeModalOlSupplier();
+      loadOlsView();
+    } else {
+      showBanner(`Erro ao salvar OL: ${res?.error || 'Falha'}`, true);
+    }
+  } catch (err) {
+    showBanner(`Erro ao salvar: ${err.message}`, true);
+  }
+}
+
+async function exportOlDirectFromDashboard(fab) {
+  try {
+    showBanner(`Gerando pedido em Excel para ${fab}...`);
+    // Busca oportunidade para montar lista
+    const opp = await apiGet(`/api/ol/opportunity?fabricante=${encodeURIComponent(fab)}`);
+    const items = opp?.itensComplemento || [];
+
+    const res = await fetch('/api/ol/export-excel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fabricante: fab,
+        items,
+        observacoes: 'Pedido gerado diretamente pela Central de Operações Logísticas (OL) da Mesa de Compras IA.'
+      })
+    });
+
+    if (!res.ok) throw new Error('Falha ao gerar arquivo Excel de OL');
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Pedido_OL_${fab.replace(/[^A-Za-z0-9]/g, '_')}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    showBanner(`✓ Planilha de Pedido OL (${fab}) baixada com sucesso!`);
+  } catch (err) {
+    showBanner(`Erro ao exportar pedido OL: ${err.message}`, true);
+  }
+}
+
+let currentOlAnalysis = null;
+
+async function checkOlOpportunityForManufacturer(lab) {
+  const card = document.getElementById('ol-consultant-card');
+  if (!card) return;
+
+  const cleanLab = String(lab || '').trim();
+  if (!cleanLab) {
+    card.classList.add('hidden');
+    currentOlAnalysis = null;
+    return;
+  }
+
+  try {
+    const res = await apiGet(`/api/ol/opportunity?fabricante=${encodeURIComponent(cleanLab)}`);
+    if (!res || !res.hasOl) {
+      card.classList.add('hidden');
+      currentOlAnalysis = null;
+      return;
+    }
+
+    currentOlAnalysis = res;
+    card.classList.remove('hidden');
+
+    const titleEl = document.getElementById('ol-card-title');
+    const badgeEl = document.getElementById('ol-card-badge');
+    const discEl = document.getElementById('ol-card-discount-badge');
+    const recEl = document.getElementById('ol-card-rec');
+    const btnComp = document.getElementById('btn-ol-apply-complement');
+
+    if (titleEl) {
+      titleEl.textContent = `Operação Logística (OL): ${res.olConfig.fabricante_nome} • Pedido Mínimo ${brl(res.pedidoMinimoRs)}`;
+    }
+    if (badgeEl) {
+      badgeEl.textContent = res.atingiuMinimo ? '✓ Mínimo Atingido' : '⚡ Oportunidade OL';
+      badgeEl.style.background = res.atingiuMinimo ? '#d1fae5' : '#fef3c7';
+      badgeEl.style.color = res.atingiuMinimo ? '#065f46' : '#92400e';
+    }
+    if (discEl) {
+      discEl.textContent = `+${res.olConfig.desconto_extra_pct}% Desconto vs Distribuidora`;
+    }
+    if (recEl) {
+      recEl.innerHTML = esc(res.recomendacaoIa);
+    }
+
+    if (btnComp) {
+      if (!res.atingiuMinimo && res.itensComplemento && res.itensComplemento.length > 0) {
+        btnComp.style.display = 'inline-flex';
+        btnComp.textContent = `🤖 Complementar Pedido Mínimo Cirurgicamente (+${res.itensComplemento.length} SKUs Curva A/B)`;
+      } else {
+        btnComp.style.display = 'none';
+      }
+    }
+  } catch (err) {
+    console.warn('[OL] Erro ao consultar oportunidade:', err.message);
+    card.classList.add('hidden');
+  }
+}
+
+function applyOlComplement() {
+  if (!currentOlAnalysis || !Array.isArray(currentOlAnalysis.itensComplemento) || currentOlAnalysis.itensComplemento.length === 0) {
+    showBanner('Nenhum item de complemento disponível para esta OL.', true);
+    return;
+  }
+
+  let addedCount = 0;
+  for (const item of currentOlAnalysis.itensComplemento) {
+    const key = `${item.filial_id}|${item.produto_id}`;
+    const totalQty = Number(item.unidades_total_ol || (item.unidades_original + item.unidades_complemento));
+    const totalRs = Number(item.valor_total_ol_rs || (totalQty * item.custo_unit));
+
+    state.selectedSkus.set(key, {
+      rs: totalRs,
+      desc: item.descricao,
+      qtd: totalQty,
+      complemento: item.unidades_complemento,
+      isOlComplement: true
+    });
+    addedCount++;
+  }
+
+  updateSelectionUi();
+  renderSkuTable(state.visibleSkus);
+
+  showBanner(`✓ Sucesso! ${addedCount} produtos de alta liquidez complementados cirurgicamente. Pedido Mínimo de ${brl(currentOlAnalysis.pedidoMinimoRs)} atingido sem gerar excesso de estoque!`);
+
+  const btnComp = document.getElementById('btn-ol-apply-complement');
+  if (btnComp) btnComp.style.display = 'none';
+
+  const badgeEl = document.getElementById('ol-card-badge');
+  if (badgeEl) {
+    badgeEl.textContent = '✓ Mínimo Atingido (Completado por IA)';
+    badgeEl.style.background = '#d1fae5';
+    badgeEl.style.color = '#065f46';
+  }
+  const recEl = document.getElementById('ol-card-rec');
+  if (recEl) {
+    recEl.innerHTML = `✓ Pedido Mínimo da OL atingido com sucesso! Total do Pedido: <strong>${brl(currentOlAnalysis.totalFinalOlRs)}</strong> (+${currentOlAnalysis.olConfig.desconto_extra_pct}% margem adicional). Pronto para exportar e enviar ao representante!`;
+  }
+}
+
+async function exportOlOrderExcel() {
+  if (!currentOlAnalysis) {
+    showBanner('Selecione primeiro um fabricante com Operação Logística (OL) para exportar.', true);
+    return;
+  }
+
+  const fab = currentOlAnalysis.olConfig.fabricante_nome;
+  showBanner(`Gerando planilha oficial de Pedido OL para o fabricante ${fab}...`);
+
+  try {
+    const itemsToExport = [];
+    if (state.selectedSkus.size > 0) {
+      for (const [key, val] of state.selectedSkus.entries()) {
+        const [filialId, prodId] = key.split('|');
+        const skuObj = state.visibleSkus.find(s => String(s.produto_id) === String(prodId) && String(s.filial_id) === String(filialId));
+        itemsToExport.push({
+          produto_id: prodId,
+          descricao: val.desc || skuObj?.descricao || 'PRODUTO',
+          barras: skuObj?.barras || '',
+          quantidade: val.qtd || 1,
+          custo_unit: skuObj?.custo_unit || (val.rs / (val.qtd || 1))
+        });
+      }
+    } else {
+      for (const s of state.visibleSkus) {
+        if (Number(s.sugestao_compra_un) > 0) {
+          itemsToExport.push({
+            produto_id: s.produto_id,
+            descricao: s.descricao,
+            barras: s.barras,
+            quantidade: s.sugestao_compra_un,
+            custo_unit: s.custo_unit
+          });
+        }
+      }
+    }
+
+    if (itemsToExport.length === 0) {
+      showBanner('Nenhum item com quantidade para exportar neste pedido OL.', true);
+      return;
+    }
+
+    const res = await fetch('/api/ol/export-excel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fabricante: fab,
+        items: itemsToExport,
+        observacoes: `Pedido gerado pela Mesa de Compras IA - FSConsultoria. Condição Comercial OL (+${currentOlAnalysis.olConfig.desconto_extra_pct}% desconto).`
+      })
+    });
+
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      throw new Error(errJson.error || 'Falha ao gerar planilha OL.');
+    }
+
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `PEDIDO_OL_${fab}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+
+    showBanner(`✓ Planilha do Pedido OL baixada com sucesso: PEDIDO_OL_${fab}.xlsx! Envie ao representante comercial.`);
+  } catch (err) {
+    showBanner(`Erro ao exportar pedido OL: ${err.message}`, true);
+  }
+}
+
 async function refreshActiveView() {
   try {
     if (state.view === 'cockpit') await loadSkus();
+    else if (state.view === 'budget') await loadBudget();
+    else if (state.view === 'ols') await loadOlsView();
     else if (state.view === 'bi') await loadBi();
     else if (state.view === 'molecules') await loadMolecules();
     else if (state.view === 'transfers') await loadTransfers();
@@ -4930,20 +6711,31 @@ function updateLicenseBadge(lic) {
   const gateMach = document.getElementById('gate-machine-id');
   const gateClient = document.getElementById('gate-client-name');
   const gateCnpj = document.getElementById('gate-client-cnpj');
+  const gateCloseBtn = document.getElementById('btn-close-welcome-gate');
+  const gateWaBtn = document.getElementById('gate-btn-whatsapp');
 
   if (!lic) return;
 
-  const isExpired = lic.isExpired || !lic.isValid;
+  const isExpired = Boolean(lic.isExpired || !lic.isValid || (lic.daysRemaining !== undefined && lic.daysRemaining <= 0));
   const days = lic.daysRemaining !== undefined ? lic.daysRemaining : 0;
   const validUntilFmt = lic.validUntil ? lic.validUntil.split('-').reverse().join('/') : '--/--/----';
+  const machId = lic.currentMachineId || lic.machineId || 'LNX-MAQUINA';
+  const rawCnpj = String(lic.cnpj || '').replace(/\D/g, '');
 
-  if (gateMach) gateMach.textContent = lic.currentMachineId || lic.machineId || 'LNX-UNKNOWN';
+  if (gateMach) gateMach.textContent = machId;
   if (gateClient && lic.clientName) gateClient.textContent = lic.clientName;
   if (gateCnpj && lic.cnpj) {
-    const rawCnpj = String(lic.cnpj).replace(/\D/g, '');
     gateCnpj.textContent = rawCnpj.length === 14
       ? `CNPJ: ${rawCnpj.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5')}`
       : `CNPJ: ${rawCnpj}`;
+  }
+
+  // Link do WhatsApp com mensagem contextual para suporte ou negociação de chaves
+  if (gateWaBtn) {
+    const waText = isExpired
+      ? `Olá FSConsultoria! Meu sistema Mesa de Compras IA está bloqueado. CNPJ: ${rawCnpj}, Máquina: ${machId}. Gostaria de negociar os valores das chaves para liberação imediata.`
+      : `Olá FSConsultoria! Gostaria de tirar dúvidas ou negociar renovação da Mesa de Compras IA (CNPJ: ${rawCnpj}, Máquina: ${machId}).`;
+    gateWaBtn.href = `https://wa.me/5517981205660?text=${encodeURIComponent(waText)}`;
   }
 
   if (dot && txt) {
@@ -4965,17 +6757,21 @@ function updateLicenseBadge(lic) {
       if (gateDot) gateDot.style.background = '#ef4444';
       gateTxt.textContent = 'Assinatura Expirada ou Bloqueada';
       gateTxt.style.color = '#991b1b';
-      gateSub.textContent = `Venceu em ${validUntilFmt}. Ative uma nova chave mensal para continuar utilizando o motor de compras.`;
+      gateSub.textContent = `Venceu em ${validUntilFmt}. Insira uma chave de licença válida ou fale com a FSConsultoria no WhatsApp para desbloquear.`;
       gateSub.style.color = '#7f1d1d';
       if (gateBadge) {
         gateBadge.className = 'badge badge-danger';
         gateBadge.textContent = 'EXPIRADO';
+      }
+      if (gateCloseBtn) {
+        gateCloseBtn.style.display = 'none'; // Não permite fechar no [X] se expirado
       }
       const btnEnter = document.getElementById('btn-enter-cockpit');
       if (btnEnter) {
         btnEnter.disabled = true;
         btnEnter.style.opacity = '0.5';
         btnEnter.style.cursor = 'not-allowed';
+        btnEnter.title = 'Acesso bloqueado: Ative sua chave mensal acima para liberar o sistema';
       }
     } else {
       gateBanner.className = 'gate-badge-active';
@@ -4988,40 +6784,60 @@ function updateLicenseBadge(lic) {
         gateBadge.className = 'badge badge-success';
         gateBadge.textContent = (lic.planType || 'mensal').toUpperCase();
       }
+      if (gateCloseBtn) {
+        gateCloseBtn.style.display = '';
+      }
       const btnEnter = document.getElementById('btn-enter-cockpit');
       if (btnEnter) {
         btnEnter.disabled = false;
         btnEnter.style.opacity = '1';
         btnEnter.style.cursor = 'pointer';
+        btnEnter.title = '';
       }
     }
   }
 }
 
-function openWelcomeGate(forceBlocking = false) {
+async function openWelcomeGate(forceBlocking = false) {
   const modal = document.getElementById('modal-welcome-gate');
   const closeBtn = document.getElementById('btn-close-welcome-gate');
   if (!modal) return;
+
+  const isExp = isLicenseExpired();
+  const isStrictBlock = forceBlocking || isExp;
+
   modal.classList.remove('hidden');
+  document.body.classList.add('modal-open');
+
+  if (closeBtn) {
+    closeBtn.style.display = isStrictBlock ? 'none' : '';
+  }
+
   if (state.licenseStatus) {
     updateLicenseBadge(state.licenseStatus);
   }
-  if (forceBlocking) {
-    if (closeBtn) closeBtn.style.display = 'none';
-  } else {
-    if (closeBtn) closeBtn.style.display = '';
-  }
+
+  try {
+    const res = await apiGet('/api/license/status');
+    if (res && res.ok) {
+      state.licenseStatus = res;
+      updateLicenseBadge(res);
+      const updatedExp = isLicenseExpired();
+      if (closeBtn) closeBtn.style.display = (forceBlocking || updatedExp) ? 'none' : '';
+    }
+  } catch {}
 }
 
 function closeWelcomeGate() {
-  const lic = state.licenseStatus;
-  if (lic && (lic.isExpired || !lic.isValid)) {
-    alert('Assinatura expirada! É necessário informar uma nova chave mensal válida para utilizar o sistema.');
+  if (isLicenseExpired()) {
+    showBanner('🚨 Acesso Bloqueado! O sistema só é liberado após a inserção e ativação de uma chave mensal válida.', true);
     return;
   }
   sessionStorage.setItem('big_welcome_seen', 'true');
+  sessionStorage.removeItem('big_welcome_open_manual');
   const modal = document.getElementById('modal-welcome-gate');
   if (modal) modal.classList.add('hidden');
+  syncBodyModalState();
 }
 
 let _masterAuthCallback = null;
@@ -5173,7 +6989,7 @@ async function activateLicenseKeyAction() {
 
   if (!key) {
     if (feedback) {
-      feedback.textContent = 'Por favor, digite ou cole a chave de licença.';
+      feedback.textContent = 'Por favor, digite ou cole a chave de licença fornecida.';
       feedback.style.color = '#dc2626';
       feedback.style.background = '#fee2e2';
       feedback.style.display = 'block';
@@ -5183,7 +6999,7 @@ async function activateLicenseKeyAction() {
 
   try {
     if (feedback) {
-      feedback.textContent = 'Validando chave e assinatura criptográfica...';
+      feedback.textContent = 'Validando chave e blindagem de hardware...';
       feedback.style.color = '#0369a1';
       feedback.style.background = '#e0f2fe';
       feedback.style.display = 'block';
@@ -5197,9 +7013,28 @@ async function activateLicenseKeyAction() {
         feedback.style.background = '#dcfce7';
         feedback.style.display = 'block';
       }
-      showBanner('✓ Licença ativada com sucesso! Atualizando cockpit...');
+
+      // Atualiza o status da licença imediatamente
+      const licRes = await apiGet('/api/license/status');
+      if (licRes && licRes.ok) {
+        state.licenseStatus = licRes;
+        updateLicenseBadge(licRes);
+      }
+
       if (input) input.value = '';
-      await loadOverview();
+
+      // Fecha o modal de bloqueio imediatamente com feedback instantâneo ao usuário
+      const modal = document.getElementById('modal-welcome-gate');
+      if (modal) modal.classList.add('hidden');
+      syncBodyModalState();
+
+      if (state.view === 'home' || !state.view) {
+        renderHomeScreen();
+      }
+
+      showBanner('✓ Licença ativada com sucesso! Acesso 100% liberado à Mesa de Compras IA.');
+      // Executa o carregamento em background sem travar o fechamento do modal
+      loadOverview().catch((e) => console.warn('Erro ao atualizar overview pós-ativação:', e));
     } else {
       throw new Error(res?.error || 'Chave de licença inválida.');
     }
@@ -5498,15 +7333,133 @@ function bindEvents() {
     });
   }
 
+  // BIND: DOTAÇÃO ORÇAMENTÁRIA & OPEN-TO-BUY (GOVERNANÇA)
+  const btnRefreshBudget = document.getElementById('btn-refresh-budget');
+  if (btnRefreshBudget) {
+    btnRefreshBudget.addEventListener('click', () => loadBudget(true));
+  }
+  const btnGotoCockpit = document.getElementById('btn-goto-cockpit-from-budget');
+  if (btnGotoCockpit) {
+    btnGotoCockpit.addEventListener('click', () => switchView('cockpit'));
+  }
+  const btnGotoTransfers = document.getElementById('btn-goto-transfers-from-budget');
+  if (btnGotoTransfers) {
+    btnGotoTransfers.addEventListener('click', () => switchView('transfers'));
+  }
+  const btnOtbPill = document.getElementById('btn-otb-cockpit-pill');
+  if (btnOtbPill) {
+    btnOtbPill.addEventListener('click', () => switchView('budget'));
+  }
+  const inpUnoptFilter = document.getElementById('otb-unoptimized-filter');
+  if (inpUnoptFilter) {
+    inpUnoptFilter.addEventListener('input', (e) => {
+      const q = (e.target.value || '').trim().toLowerCase();
+      if (!state.unoptimizedProducts) return;
+      if (!q) {
+        renderUnoptimizedTable(state.unoptimizedProducts);
+      } else {
+        const filtered = state.unoptimizedProducts.filter(p => 
+          (p.produto || '').toLowerCase().includes(q) ||
+          (p.cod_barras || '').toLowerCase().includes(q) ||
+          (p.loja || '').toLowerCase().includes(q)
+        );
+        renderUnoptimizedTable(filtered);
+      }
+    });
+  }
+
+  // BIND: CENTRAL DE OPERAÇÕES LOGÍSTICAS (OL) DEDICADA
+  const btnOpenAddOl = document.getElementById('btn-open-modal-add-ol');
+  if (btnOpenAddOl) {
+    btnOpenAddOl.addEventListener('click', () => openModalOlSupplier());
+  }
+  const btnCloseModalOl = document.getElementById('btn-close-modal-ol');
+  if (btnCloseModalOl) {
+    btnCloseModalOl.addEventListener('click', closeModalOlSupplier);
+  }
+  const btnCancelModalOl = document.getElementById('btn-cancel-modal-ol');
+  if (btnCancelModalOl) {
+    btnCancelModalOl.addEventListener('click', closeModalOlSupplier);
+  }
+  const formOl = document.getElementById('form-ol-supplier');
+  if (formOl) {
+    formOl.addEventListener('submit', saveModalOlSupplier);
+  }
+  const btnRefreshOls = document.getElementById('btn-refresh-ols');
+  if (btnRefreshOls) {
+    btnRefreshOls.addEventListener('click', loadOlsView);
+  }
+  const inpOlFilter = document.getElementById('ol-table-filter');
+  if (inpOlFilter) {
+    inpOlFilter.addEventListener('input', (e) => {
+      const q = (e.target.value || '').trim().toLowerCase();
+      if (!state.olItems) return;
+      if (!q) {
+        renderOlTable(state.olItems);
+      } else {
+        const filtered = state.olItems.filter(o =>
+          (o.fabricante || '').toLowerCase().includes(q) ||
+          (o.categoria || '').toLowerCase().includes(q)
+        );
+        renderOlTable(filtered);
+      }
+    });
+  }
+
+  // BIND: CONSULTOR IA DE OL (COMPLEMENTAÇÃO CIRÚRGICA & EXPORTAÇÃO EXCEL)
+  const btnOlComp = document.getElementById('btn-ol-apply-complement');
+  if (btnOlComp) {
+    btnOlComp.addEventListener('click', applyOlComplement);
+  }
+  const btnOlExp = document.getElementById('btn-ol-export-excel');
+  if (btnOlExp) {
+    btnOlExp.addEventListener('click', exportOlOrderExcel);
+  }
+
+  // BIND: HORIZONTE DE COBERTURA (BOTÕES RÁPIDOS & SIMULADOR LIVRE [ X ] DIAS)
   document.querySelectorAll('.btn-horizon').forEach((btn) => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.btn-horizon').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
+      const customInp = document.getElementById('input-custom-horizon');
+      if (customInp) customInp.value = '';
       const days = btn.dataset.days;
       state.coverageHorizonDays = days === 'padrao' ? null : Number(days);
+      state.offset = 0;
+      state.page = 1;
       loadSkus();
     });
   });
+
+  const applyCustomHorizon = () => {
+    const customInp = document.getElementById('input-custom-horizon');
+    if (!customInp) return;
+    const val = parseInt(customInp.value, 10);
+    if (!isNaN(val) && val >= 1 && val <= 180) {
+      document.querySelectorAll('.btn-horizon').forEach((b) => b.classList.remove('active'));
+      state.coverageHorizonDays = val;
+      state.offset = 0;
+      state.page = 1;
+      showBanner(`Horizonte de cobertura simulado: ${val} dias.`);
+      loadSkus();
+    } else {
+      showBanner('Por favor, informe um número de dias válido entre 1 e 180.', true);
+    }
+  };
+
+  const btnApplyCustomHorizon = document.getElementById('btn-apply-custom-horizon');
+  if (btnApplyCustomHorizon) {
+    btnApplyCustomHorizon.addEventListener('click', applyCustomHorizon);
+  }
+  const inputCustomHorizon = document.getElementById('input-custom-horizon');
+  if (inputCustomHorizon) {
+    inputCustomHorizon.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        applyCustomHorizon();
+      }
+    });
+  }
 
   document.querySelectorAll('.th-sortable').forEach((th) => {
     th.addEventListener('click', () => {
@@ -6289,6 +8242,9 @@ function bindEvents() {
   document.querySelectorAll('.modal-backdrop, .modal-overlay').forEach((backdrop) => {
     backdrop.addEventListener('click', (e) => {
       if (e.target === backdrop) {
+        if (backdrop.id === 'modal-welcome-gate' && isLicenseExpired()) {
+          return; // Apenas a janela sobreposta deve permanecer até a ativação da chave!
+        }
         backdrop.classList.add('hidden');
         syncBodyModalState();
       }
@@ -6302,6 +8258,54 @@ function bindEvents() {
 
 (async function init() {
   bindEvents();
-  await Promise.all([loadGlossary(), loadOverview()]);
-  switchView('home');
+
+  // Pré-carrega o status da licença com prioridade máxima antes de renderizar a home
+  // Evita qualquer falso positivo de expirado por renderização assíncrona
+  try {
+    const licRes = await apiGet('/api/license/status');
+    if (licRes && licRes.ok) {
+      state.licenseStatus = licRes;
+      updateLicenseBadge(licRes);
+    }
+  } catch (err) {
+    console.warn('Licença status prefetch:', err);
+  }
+
+  const urlParams = new URLSearchParams(window.location.search);
+  const targetView = urlParams.get('view') || 'home';
+  const targetTab = urlParams.get('tab');
+  const openSweep = urlParams.get('openSweep');
+  const targetFilial = urlParams.get('filial');
+
+  if (targetFilial) {
+    state.selectedFilial = targetFilial;
+    renderMultilojaBar();
+    renderKpiStrip(state.selectedFilial);
+    if (typeof updateCockpitBudgetPillForFilial === 'function') {
+      updateCockpitBudgetPillForFilial(state.selectedFilial);
+    }
+  }
+
+  switchView(targetView);
+
+  await Promise.all([loadGlossary(), loadOverview(), loadBudget().catch(() => {})]);
+  try {
+    const res = await apiGet('/api/curadoria/opportunities');
+    const el = document.getElementById('curadoria-tab-count');
+    if (el && res && res.count !== undefined) el.textContent = res.count;
+  } catch {}
+  if (targetTab && targetView === 'cockpit') {
+    switchSkuTab(targetTab);
+  }
+
+  if (openSweep && targetTab === 'curadoria') {
+    const delay = openSweep === 'now' ? 0 : 500;
+    setTimeout(async () => {
+      const res = await apiGet('/api/curadoria/opportunities');
+      if (res.molecules && res.molecules.length > 0) {
+        const first = res.molecules[0];
+        openMoleculeSweep(first.molecule_key, first.targetSku?.produto_id || 0, state.selectedFilial !== 'all' ? state.selectedFilial : null);
+      }
+    }, delay);
+  }
 })();

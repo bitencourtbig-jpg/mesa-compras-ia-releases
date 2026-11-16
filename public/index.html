@@ -24,6 +24,14 @@
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
           <span>🏠 Início &amp; Apresentação</span>
         </button>
+        <button class="nav-item" data-view="budget" title="Controle Orçamentário &amp; Open-to-Buy (OTB)">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+          <span>📊 Dotação &amp; OTB</span>
+        </button>
+        <button class="nav-item" data-view="ols" title="Operações Logísticas (OL) • Fabricantes &amp; Indústria Direta">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13" rx="1"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+          <span>📦 Operações Logísticas (OL)</span>
+        </button>
         <button class="nav-item" data-view="cockpit">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
           <span>Mesa de Compras &amp; IA</span>
@@ -58,7 +66,7 @@
         <div id="cmed-status" class="meta-block">CMED: —</div>
         <div id="run-meta" class="meta-block">Ref: —</div>
         <div id="app-version-block" class="meta-block" style="border-top: 1px dashed var(--border); padding-top: 6px; margin-top: 4px; display:flex; justify-content:space-between; align-items:center;">
-          <span id="app-version-badge" style="font-weight:600; color: #10b981; font-size:11px;">🚀 Versão: v1.1.6</span>
+          <span id="app-version-badge" style="font-weight:600; color: #10b981; font-size:11px;">🚀 Versão: v1.2.0</span>
           <button id="btn-check-updates" class="btn btn-xs" style="background:rgba(16,185,129,0.15); color:#10b981; border:1px solid rgba(16,185,129,0.3); border-radius:4px; padding:2px 6px; font-size:10px; cursor:pointer;" title="Verificar atualizações do sistema">🔄 Atualizar</button>
         </div>
       </div>
@@ -168,7 +176,7 @@
               <div class="home-badge-tag">
                 <span class="pulse-dot"></span>
                 <span>FSCONSULTORIA FARMACÊUTICA • MESA DE COMPRAS IA</span>
-                <span id="home-version-pill" class="badge" style="background:#047857; color:#fff; font-size:10.5px; font-weight:700; margin-left:6px; padding: 2px 7px; border-radius: 4px;">v1.1.6</span>
+                <span id="home-version-pill" class="badge" style="background:#047857; color:#fff; font-size:10.5px; font-weight:700; margin-left:6px; padding: 2px 7px; border-radius: 4px;">v1.2.0</span>
               </div>
               <h1 class="home-hero-title">Maximização de Caixa, Ruptura Zero e Compras de Alta Margem</h1>
               <p class="home-hero-desc">
@@ -240,11 +248,316 @@
       </section>
 
       <!-- VIEW 1: COCKPIT SKUS -->
+      <section id="view-budget" class="view-section hidden">
+        <div class="transfers-header-strip" style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:16px;">
+          <div>
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+              <span style="font-size:22px;">📊</span>
+              <h2 style="font-size:18px;font-weight:700;color:var(--text-primary);margin:0;">Dotação Orçamentária &amp; Open-to-Buy (OTB)</h2>
+              <span id="otb-month-badge" class="badge badge-accent" style="font-size:11px;font-weight:700;padding:3px 8px;">Mês: —</span>
+            </div>
+            <p style="font-size:12.5px;color:var(--muted);margin:0;max-width:850px;">
+              Controle estrito de teto mensal de compras por CMV e score de dias úteis e finais de semana (Metodologia de Governança Orçamentária).
+              O teto protege o caixa da rede, define o limite seguro para cada grupo e baliza os pedidos de Operação Logística (OL).
+            </p>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button id="btn-refresh-budget" class="btn btn-secondary btn-sm" type="button" title="Recalcular dotação orçamentária diretamente do Linx BIG">
+              🔄 Recalcular Dotação
+            </button>
+            <button id="btn-goto-cockpit-from-budget" class="btn btn-primary btn-sm" type="button" style="background:#047857;" title="Ir para a Mesa de Compras">
+              🛒 Ir para a Mesa de Compras
+            </button>
+          </div>
+        </div>
+
+        <!-- 4 CARDS SUPERIORES DE GESTÃO ORÇAMENTÁRIA -->
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));gap:14px;margin-bottom:16px;">
+          
+          <!-- CARD 1: DOTAÇÃO ORÇAMENTÁRIA -->
+          <div class="kpi-card" style="border-left:4px solid #2563eb;padding:14px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+              <span style="font-size:11px;font-weight:700;color:#1e40af;text-transform:uppercase;letter-spacing:0.5px;">Dotação Orçamentária</span>
+              <span id="otb-status-pill" class="badge" style="background:#dbeafe;color:#1e40af;font-size:10px;font-weight:700;">Consumido</span>
+            </div>
+            <div id="otb-kpi-dotacao" style="font-size:20px;font-weight:800;color:#0f172a;line-height:1.2;">R$ 0,00</div>
+            <div style="font-size:11.5px;color:#475569;margin-top:4px;">
+              Consumido (R$): <strong id="otb-kpi-consumido">R$ 0,00</strong>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;font-size:11px;">
+              <span>Consumido (%): <strong id="otb-kpi-consumido-pct">0,0%</strong></span>
+              <span style="color:#059669;font-weight:700;">Saldo: <span id="otb-kpi-saldo-livre">R$ 0,00</span></span>
+            </div>
+            <div style="background:#e2e8f0;border-radius:4px;height:6px;margin-top:6px;overflow:hidden;">
+              <div id="otb-kpi-bar" style="background:#2563eb;height:100%;width:0%;"></div>
+            </div>
+          </div>
+
+          <!-- CARD 2: COMPRA X VENDA -->
+          <div class="kpi-card" style="border-left:4px solid #059669;padding:14px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+              <span style="font-size:11px;font-weight:700;color:#065f46;text-transform:uppercase;letter-spacing:0.5px;">Compra x Venda</span>
+              <span class="badge" style="background:#d1fae5;color:#065f46;font-size:10px;font-weight:700;">Equilíbrio</span>
+            </div>
+            <div style="font-size:11.5px;color:#475569;">Faturamento Líquido (Mês):</div>
+            <div id="otb-kpi-fat" style="font-size:20px;font-weight:800;color:#0f172a;line-height:1.2;">R$ 0,00</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;font-size:11.5px;">
+              <span>Comprado: <strong id="otb-kpi-comprado">R$ 0,00</strong></span>
+              <span class="badge badge-accent" style="font-size:10.5px;font-weight:700;" id="otb-kpi-compra-venda-pct">0,0%</span>
+            </div>
+            <div style="font-size:10.5px;color:var(--muted);margin-top:4px;">Comprometimento de vendas em estoque</div>
+          </div>
+
+          <!-- CARD 3: ALERTAS DE PERDA -->
+          <div class="kpi-card" style="border-left:4px solid #dc2626;padding:14px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+              <span style="font-size:11px;font-weight:700;color:#991b1b;text-transform:uppercase;letter-spacing:0.5px;">Alerta de Perdas</span>
+              <span class="badge" style="background:#fee2e2;color:#991b1b;font-size:10px;font-weight:700;">Alerta de Perdas</span>
+            </div>
+            <div style="font-size:11.5px;color:#475569;">Compras Não Otimizadas:</div>
+            <div id="otb-kpi-nao-otimizadas" style="font-size:20px;font-weight:800;color:#dc2626;line-height:1.2;">R$ 0,00</div>
+            <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:11px;color:#64748b;">
+              <span>Sem demanda: <strong id="otb-kpi-sem-demanda" style="color:#b91c1c;">R$ 0,00</strong></span>
+              <span>Em excesso: <strong id="otb-kpi-excesso" style="color:#c2410c;">R$ 0,00</strong></span>
+            </div>
+            <div style="font-size:10px;color:var(--muted);margin-top:4px;">Capital imobilizado sem demanda imediata</div>
+          </div>
+
+          <!-- CARD 4: IEC (ÍNDICE DE EFICIÊNCIA EM COMPRAS) -->
+          <div class="kpi-card" style="border-left:4px solid #7c3aed;padding:14px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+              <span style="font-size:11px;font-weight:700;color:#5b21b6;text-transform:uppercase;letter-spacing:0.5px;">IEC • Eficiência</span>
+              <span class="badge" style="background:#ede9fe;color:#5b21b6;font-size:10px;font-weight:700;">Assertividade</span>
+            </div>
+            <div id="otb-kpi-iec" style="font-size:20px;font-weight:800;color:#7c3aed;line-height:1.2;">0,0%</div>
+            <div style="font-size:11px;color:#475569;margin-top:4px;">Compras Otimizadas: <strong id="otb-kpi-compras-certas">R$ 0,00</strong></div>
+            <div style="background:#e2e8f0;border-radius:4px;height:6px;margin-top:6px;overflow:hidden;">
+              <div id="otb-kpi-iec-bar" style="background:#7c3aed;height:100%;width:0%;"></div>
+            </div>
+            <div style="font-size:10px;color:var(--muted);margin-top:4px;">Percentual de compras certeiras na rede</div>
+          </div>
+
+        </div>
+
+        <!-- MEMÓRIA DE CÁLCULO E SCORE DE DIAS (TRANSPARÊNCIA TOTAL) -->
+        <div class="panel" style="margin-bottom:16px;background:#f8fafc;border:1px solid #e2e8f0;padding:12px 16px;border-radius:8px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;font-size:12px;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="font-size:14px;">⚖️</span>
+              <span style="font-weight:700;color:#334155;">Ponderação de Dias:</span>
+              <span class="badge badge-neutral" style="font-size:11px;">Dias de Semana: 1.0</span>
+              <span class="badge badge-neutral" style="font-size:11px;">Sábados: <strong id="otb-mem-sab">1.0</strong></span>
+              <span class="badge badge-neutral" style="font-size:11px;">Domingos: <strong id="otb-mem-dom">1.0</strong></span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="font-weight:700;color:#334155;">Score:</span>
+              <span>Mês Ant: <strong id="otb-mem-score-ant">0.0</strong></span>
+              <span>&bull;</span>
+              <span>Mês Atual: <strong id="otb-mem-score-atual">0.0</strong></span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="font-weight:700;color:#334155;">Ajuste de Vendas (D8..Hoje):</span>
+              <span id="otb-mem-var-fat" class="badge" style="font-weight:700;font-size:11px;">0,0%</span>
+              <span style="font-size:10.5px;color:var(--muted);">(Ajuste dinâmico de tendência)</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- TABELA ANÁLISE POR DIMENSÃO (5 CATEGORIAS DE MIX) -->
+        <div class="panel" style="margin-bottom:16px;">
+          <div class="panel-head" style="display:flex;justify-content:space-between;align-items:center;">
+            <div>
+              <h3 style="font-size:14px;font-weight:700;margin:0;display:flex;align-items:center;gap:8px;">
+                <span>📁 Análise por Dimensão &amp; Limites de Compra</span>
+                <span class="badge badge-neutral" style="font-size:11px;">5 Dimensões Oficiais</span>
+              </h3>
+              <p class="muted" style="margin:2px 0 0 0;font-size:11.5px;">Valores detalhados por categoria com saldo livre e índice de eficiência individual</p>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table" style="font-size:12px;">
+              <thead>
+                <tr>
+                  <th>Dimensão</th>
+                  <th class="num">CMV Mês Ant.</th>
+                  <th class="num">Dotação Inicial</th>
+                  <th class="num">Fator (%)</th>
+                  <th class="num" style="color:#1e40af;">Dotação Ajustada</th>
+                  <th class="num">Consumido (R$)</th>
+                  <th class="num">Consumido (%)</th>
+                  <th class="num" style="color:#059669;font-weight:700;">Saldo Livre</th>
+                  <th class="num" style="color:#dc2626;">Sem Demanda</th>
+                  <th class="num" style="color:#c2410c;">Excesso</th>
+                  <th class="num" style="color:#7c3aed;">IEC</th>
+                  <th style="text-align:center;">Ação na Mesa</th>
+                </tr>
+              </thead>
+              <tbody id="otb-dimensions-tbody">
+                <tr><td colspan="12" class="muted" style="text-align:center;padding:24px;">Carregando análise orçamentária...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- HIGHLIGHT: ECONOMIA POR REMANEJAMENTO MULTI-LOJA -->
+        <div class="panel" style="background:rgba(5,150,105,0.05);border:1px solid rgba(5,150,105,0.25);border-radius:8px;padding:12px 18px;margin-bottom:18px;display:flex;justify-content:space-between;align-items:center;">
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div style="font-size:24px;">🚚</div>
+            <div>
+              <div style="font-weight:700;font-size:13.5px;color:#047857;">Sinergia Transfer-First &bull; Economia de Compras Gerada por Remanejamento</div>
+              <div class="muted" style="font-size:12px;">Transferências internas evitam compras em distribuidoras e preservam a sua dotação orçamentária.</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:14px;">
+            <div style="text-align:right;">
+              <div style="font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:600;">Economizado sem Consumir Dotação</div>
+              <div id="otb-remanejamento-economizado" style="font-size:18px;font-weight:800;color:#047857;">R$ 0,00</div>
+            </div>
+            <button id="btn-goto-transfers-from-budget" class="btn btn-secondary btn-sm" type="button" style="font-weight:600;">Ver Remanejamentos ➔</button>
+          </div>
+        </div>
+
+        <!-- TABELA DE ANÁLISE POR PRODUTO (COMPRAS NÃO OTIMIZADAS) -->
+        <div class="panel" style="margin-bottom:20px;">
+          <div class="panel-head" style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);">
+            <div>
+              <h3 style="font-size:14px;font-weight:700;margin:0;display:flex;align-items:center;gap:8px;">
+                <span>🔍 Análise por Produto &bull; Compras Não Otimizadas (Auditoria de Entradas Recentes)</span>
+                <span id="unoptimized-count-badge" class="badge badge-danger" style="font-size:11px;">0 SKUs</span>
+              </h3>
+              <p class="muted" style="margin:2px 0 0 0;font-size:11.5px;">Auditoria cirúrgica das notas fiscais de entrada do mês atual identificando itens comprados sem demanda ou acima do limite de excesso</p>
+            </div>
+            <div>
+              <input type="text" id="otb-unoptimized-filter" placeholder="🔍 Filtrar produto, EAN ou loja..." style="font-size:11.5px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;" />
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table" style="font-size:12px;">
+              <thead>
+                <tr>
+                  <th>Loja</th>
+                  <th>Cód. Barras</th>
+                  <th class="num">Cód. Interno</th>
+                  <th>Produto</th>
+                  <th class="num">Entrada</th>
+                  <th class="num">Saída (Est. Mês)</th>
+                  <th class="num">Limite Excesso</th>
+                  <th class="num">Evolução (%)</th>
+                  <th class="num" style="color:#dc2626;font-weight:700;">Compras Não Otimizadas (R$)</th>
+                  <th style="text-align:center;">Classificação</th>
+                </tr>
+              </thead>
+              <tbody id="otb-unoptimized-tbody">
+                <tr><td colspan="10" class="muted" style="text-align:center;padding:24px;">Carregando auditoria por produto...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- VIEW: OPERAÇÕES LOGÍSTICAS (OL) & INDÚSTRIAS DIRETAS -->
+      <section id="view-ols" class="view-section hidden">
+        <div class="ols-header-strip" style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:16px;">
+          <div>
+            <h2 style="font-size:18px;font-weight:700;display:flex;align-items:center;gap:8px;margin:0 0 4px 0;">
+              <span>📦 Central de Operações Logísticas (OL) &amp; Compras da Indústria</span>
+              <span class="badge badge-accent">IA Consultor de Canal</span>
+            </h2>
+            <div class="muted" style="font-size:12.5px;">
+              A IA monitora os fabricantes e indústrias que operam via OL (Medicamentos, Leites, Fraldas e Perfumaria). Ao invés de pulverizar compras fracionadas em distribuidores, o motor consolida a demanda natural e sugere complementação cirúrgica até o pedido mínimo com desconto extra (+8% a +15%) e prazo estendido.
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;">
+            <button id="btn-open-modal-add-ol" class="btn btn-primary btn-sm" type="button" style="background:#0f766e;border-color:#0f766e;font-weight:600;">
+              ➕ Cadastrar Fornecedor / Fabricante OL
+            </button>
+            <button id="btn-refresh-ols" class="btn btn-secondary btn-sm" type="button">🔄 Atualizar Oportunidades</button>
+          </div>
+        </div>
+
+        <!-- 4 KPI CARDS OL -->
+        <div class="kpi-strip" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;">
+          <div class="kpi-cell" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:14px 16px;">
+            <div class="kpi-label" style="font-size:11.5px;color:var(--muted);text-transform:uppercase;font-weight:600;">Indústrias Cadastradas</div>
+            <div id="ol-kpi-total-ativos" class="kpi-val kpi-accent" style="font-size:24px;font-weight:800;color:#0f766e;margin:4px 0;">—</div>
+            <div class="kpi-sub" style="font-size:11.5px;color:var(--muted);">Fabricantes com canal OL ativo</div>
+          </div>
+          <div class="kpi-cell" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:14px 16px;">
+            <div class="kpi-label" style="font-size:11.5px;color:var(--muted);text-transform:uppercase;font-weight:600;">Pedidos Prontos (Mínimo Atingido)</div>
+            <div id="ol-kpi-prontos" class="kpi-val" style="font-size:24px;font-weight:800;color:#059669;margin:4px 0;">—</div>
+            <div class="kpi-sub" style="font-size:11.5px;color:var(--muted);">Demanda orgânica cobre o pedido mínimo</div>
+          </div>
+          <div class="kpi-cell" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:14px 16px;">
+            <div class="kpi-label" style="font-size:11.5px;color:var(--muted);text-transform:uppercase;font-weight:600;">Oportunidades com IA (Complementáveis)</div>
+            <div id="ol-kpi-complementaveis" class="kpi-val" style="font-size:24px;font-weight:800;color:#d97706;margin:4px 0;">—</div>
+            <div class="kpi-sub" style="font-size:11.5px;color:var(--muted);">Curva A/B com giro imediato para atingir mínimo</div>
+          </div>
+          <div class="kpi-cell" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:14px 16px;">
+            <div class="kpi-label" style="font-size:11.5px;color:var(--muted);text-transform:uppercase;font-weight:600;">Ganho Estimado de Margem</div>
+            <div id="ol-kpi-economia" class="kpi-val" style="font-size:24px;font-weight:800;color:#059669;margin:4px 0;">—</div>
+            <div class="kpi-sub" style="font-size:11.5px;color:var(--muted);">Desconto extra negociado vs distribuidora</div>
+          </div>
+        </div>
+
+        <!-- BOX EXPLICATIVO DO CONSULTOR IA -->
+        <div class="panel" style="background:rgba(15,118,110,0.04);border:1px solid rgba(15,118,110,0.25);border-radius:8px;padding:14px 18px;margin-bottom:18px;">
+          <h4 style="margin:0 0 6px 0;font-size:13px;font-weight:700;color:#0f766e;display:flex;align-items:center;gap:6px;">
+            <span>🤖 Como a IA Atua como Consultora de Melhores Práticas de Compras:</span>
+          </h4>
+          <div style="font-size:12px;color:var(--text);line-height:1.55;display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+            <div>
+              <strong>1. Auditoria de Canal:</strong> Sempre que um produto tiver necessidade de compra, a IA verifica se a indústria possui canal OL homologado ao invés de repor direto na distribuidora.<br/>
+              <strong>2. Projeção de Giro vs Pedido Mínimo:</strong> Se a compra necessária for menor que o pedido mínimo da OL (ex: mínimo R$ 3.500, demanda R$ 900), a IA avalia o histórico de vendas.
+            </div>
+            <div>
+              <strong>3. Complementação Cirúrgica:</strong> A IA seleciona apenas itens Curva A/B de altíssimo giro e baixo estoque daquele fabricante, complementando a verba necessária SEM gerar excesso ou sobre-estoque.<br/>
+              <strong>4. Respeito ao Fluxo de Caixa:</strong> Se o fabricante não atingir o mínimo com segurança ou o OTB estiver consumido, a IA orienta comprar na distribuidora para proteger o caixa.
+            </div>
+          </div>
+        </div>
+
+        <!-- TABELA MESTRE DE FORNECEDORES OL -->
+        <div class="panel">
+          <div class="panel-head" style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);">
+            <div>
+              <h3 style="font-size:14px;font-weight:700;margin:0;">📋 Fornecedores &amp; Fabricantes Homologados em OL</h3>
+              <p class="muted" style="margin:2px 0 0 0;font-size:11.5px;">Monitoramento contínuo de pedidos mínimos, descontos adicionais e condições comerciais</p>
+            </div>
+            <div style="display:flex;gap:8px;">
+              <input type="text" id="ol-table-filter" placeholder="🔍 Filtrar fabricante ou categoria..." style="font-size:11.5px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;" />
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table" style="font-size:12px;">
+              <thead>
+                <tr>
+                  <th>Fabricante / Indústria</th>
+                  <th>Canal &amp; Categoria</th>
+                  <th class="num">Pedido Mínimo (R$)</th>
+                  <th class="num">Desconto Extra</th>
+                  <th>Prazo Pagamento</th>
+                  <th class="num">Lead Time</th>
+                  <th class="num" style="color:#1e40af;font-weight:700;">Demanda Atual (R$)</th>
+                  <th class="num">SKUs c/ Demanda</th>
+                  <th>Status &amp; Consultoria IA</th>
+                  <th style="text-align:center;">Ações Estratégicas</th>
+                </tr>
+              </thead>
+              <tbody id="ol-master-tbody">
+                <tr><td colspan="10" class="muted" style="text-align:center;padding:24px;">Carregando panorama de Operações Logísticas...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
       <section id="view-cockpit" class="view-section hidden">
         <div class="toolbar">
           <div class="tabs" id="sku-tabs">
-            <button class="tab active" data-tab="exceptions">Exceções IA</button>
-            <button class="tab" data-tab="buy">Sugestão de Compra</button>
+            <button class="tab" data-tab="curadoria" style="border-left: 3px solid #10b981; font-weight:700;">🧬 Curadoria IA • Troca de Moléculas (<span id="curadoria-tab-count">0</span>)</button>
+            <button class="tab active" data-tab="buy" style="font-weight:700;">🛒 Sugestão de Compra</button>
+            <button class="tab" data-tab="exceptions">⚠️ Exceções IA</button>
             <button class="tab" data-tab="selected">⭐ Meus Selecionados (<span id="selected-tab-count">0</span>)</button>
             <button class="tab" data-tab="pbm_replenish">💊 Reposição PBM (<span id="pbm-tab-count">0</span>)</button>
             <button class="tab" data-tab="groups_summary">🌳 Resumo por Grupo &amp; Árvore ERP</button>
@@ -299,7 +612,12 @@
               <button type="button" class="btn-horizon" data-days="5">5d</button>
               <button type="button" class="btn-horizon" data-days="7">7d</button>
               <button type="button" class="btn-horizon" data-days="15">15d</button>
+              <button type="button" class="btn-horizon" data-days="21" title="Horizonte de 21 dias específico para Operações Logísticas (OL) / Fabricante">21d (OL)</button>
               <button type="button" class="btn-horizon active" data-days="padrao">Padrão Sugerido (30d)</button>
+              <div style="display:inline-flex;align-items:center;gap:3px;margin-left:4px;">
+                <input id="input-custom-horizon" type="number" min="1" max="90" placeholder="dias" style="width:50px;height:24px;font-size:11px;padding:1px 4px;border:1px solid #cbd5e1;border-radius:4px;text-align:center;" title="Digite quantos dias de horizonte desejar (ex: 10, 21, 45)" />
+                <button id="btn-apply-custom-horizon" class="btn btn-secondary btn-sm" type="button" style="padding:1px 6px;font-size:10.5px;height:24px;" title="Aplicar horizonte livre">OK</button>
+              </div>
             </div>
             <select id="filter-sort">
               <option value="impact">Ordenar: Maior Compra R$</option>
@@ -332,8 +650,36 @@
             </div>
           </div>
 
+          <!-- CARD CONSULTOR IA DE OL (OPERAÇÃO LOGÍSTICA & PEDIDO MÍNIMO) -->
+          <div id="ol-consultant-card" class="panel hidden" style="margin:10px 0 14px 0;background:#f0fdfa;border:1.5px solid #14b8a6;padding:12px 18px;border-radius:10px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+              <div style="display:flex;align-items:flex-start;gap:12px;">
+                <div style="font-size:24px;line-height:1;">📦</div>
+                <div>
+                  <div style="display:flex;align-items:center;gap:8px;">
+                    <strong id="ol-card-title" style="font-size:13.5px;color:#0f766e;">Operação Logística (OL): —</strong>
+                    <span id="ol-card-badge" class="badge" style="background:#ccfbf1;color:#0f766e;font-size:10px;font-weight:700;">Canal OL</span>
+                    <span id="ol-card-discount-badge" class="badge" style="background:#fef3c7;color:#92400e;font-size:10px;font-weight:700;">+10% Desconto</span>
+                  </div>
+                  <div id="ol-card-rec" style="font-size:12px;color:#134e4a;margin-top:4px;line-height:1.4;">Carregando análise estratégica da OL...</div>
+                </div>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <button id="btn-ol-apply-complement" class="btn btn-primary btn-sm" type="button" style="background:#0d9488;border-color:#0f766e;font-weight:700;display:none;">
+                  🤖 Complementar Mínimo Cirurgicamente
+                </button>
+                <button id="btn-ol-export-excel" class="btn btn-secondary btn-sm" type="button" style="border-color:#14b8a6;color:#0f766e;font-weight:700;" title="Exportar planilha formatada do pedido para enviar ao representante comercial da OL">
+                  📊 Exportar Pedido OL (.xlsx)
+                </button>
+              </div>
+            </div>
+          </div>
+
           <div class="selection-bar">
             <div class="selection-left">
+              <span id="btn-otb-cockpit-pill" class="badge" style="cursor:pointer;background:#eff6ff;color:#1e40af;border:1px solid #bfdbfe;font-size:11.5px;display:inline-flex;align-items:center;gap:5px;padding:4px 9px;font-weight:700;" title="Abrir painel de Dotação Orçamentária & Open-to-Buy">
+                📊 Dotação OTB: Carregando...
+              </span>
               <span id="selection-status" class="selection-pill">Nenhum item marcado (exportará o filtro atual)</span>
               <button id="btn-select-recommended" class="btn btn-secondary btn-sm">Marcar Recomendados desta Lista</button>
               <button id="btn-clear-selection" class="btn btn-ghost btn-sm hidden">Limpar Seleção</button>
@@ -353,6 +699,9 @@
 
         <!-- CONTAINER DA ÁRVORE DE GRUPOS DO BIG (EXIBIDO NA ABA groups_summary) -->
         <div id="view-groups-summary" class="group-tree-container hidden"></div>
+
+        <!-- CONTAINER DA PRÉ-TELA DE CURADORIA IA DE MOLÉCULAS (EXIBIDO NA ABA curadoria) -->
+        <div id="view-curadoria-container" class="curadoria-container hidden"></div>
 
         <div id="table-wrap-skus" class="table-wrap">
           <table class="data-table">
@@ -428,11 +777,11 @@
               <span class="badge badge-accent">Transfer-First Inteligente</span>
             </h2>
             <div class="muted" style="font-size:12.5px;">
-              O motor resgata excessos e lotes curtos (FEFO) entre filiais maduras, protegendo lojas recém-inauguradas e reduzindo compras desnecessárias em distribuidores.
+              Prioridade máxima para decisões do comprador na Curadoria IA (cancelamento de compras externas), seguida pelo fluxo mensal de remanejamento logístico e controle FEFO.
             </div>
           </div>
           <div style="display:flex;gap:10px;align-items:center;">
-            <button id="btn-refresh-transfers" class="btn btn-secondary btn-sm" type="button">🔄 Atualizar Rotas</button>
+            <button id="btn-refresh-transfers" class="btn btn-secondary btn-sm" type="button">🔄 Atualizar Central</button>
           </div>
         </div>
 
@@ -440,21 +789,59 @@
           <!-- Preenchido via JS: Rotas, Unidades, Economia, Guias Emitidas -->
         </div>
 
-        <!-- ROTAS SUGERIDAS (AGRUPADAS) -->
-        <div class="panel" style="margin-bottom:24px;">
-          <div class="panel-head">
-            <h3 style="margin:0;font-size:14px;font-weight:700;">🚚 Rotas de Transferência Sugeridas para a Rodada</h3>
-            <span id="transfer-routes-count" class="muted" style="font-size:12px;"></span>
+        <!-- ========================================================================= -->
+        <!-- SEÇÃO 1 (TOPO - PRIORIDADE MÁXIMA): DECISÕES DA RODADA DO COMPRADOR       -->
+        <!-- ========================================================================= -->
+        <div id="curadoria-priority-panel" class="panel" style="background:linear-gradient(180deg, #fbfaff 0%, #ffffff 100%); border:2px solid #a78bfa; border-radius:12px; padding:16px 20px; margin-bottom:24px; box-shadow:0 4px 14px rgba(124, 58, 237, 0.08);">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:12px; border-bottom:1.5px solid #ede9fe; padding-bottom:10px;">
+            <div>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <span style="font-size:18px;">🎯</span>
+                <h3 style="margin:0; font-size:15px; font-weight:800; color:#4c1d95;">
+                  Decisões da Rodada do Comprador • Curadoria IA &amp; Abatimentos Imediatos
+                </h3>
+                <span class="badge" style="background:#7c3aed; color:#fff; font-weight:800; font-size:10px; padding:2px 8px; border-radius:12px;">PRIORIDADE MÁXIMA DA COMPRA</span>
+              </div>
+              <div style="font-size:12px; color:#6d28d9; margin-top:3px;">
+                Produtos que você homologou na Curadoria cancelando compras externas para desovar estoques da rede ou abater do pedido.
+              </div>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <button id="btn-emit-all-curadoria-transfers" class="btn btn-primary btn-sm" type="button" style="background:#7c3aed; border-color:#6d28d9; font-weight:700; display:flex; align-items:center; gap:6px;">
+                <span>🚀 Emitir Guias das Decisões Pendentes</span>
+              </button>
+            </div>
           </div>
-          <div id="transfer-routes-container" class="transfer-routes-container" style="padding:16px;display:flex;flex-direction:column;gap:16px;">
-            <!-- Preenchido via JS com cards de rotas -->
+
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr style="background:#f5f3ff;">
+                  <th style="color:#5b21b6;">Produto Demandado (Compra Cancelada)</th>
+                  <th style="color:#5b21b6;">Molécula Ativa</th>
+                  <th style="color:#5b21b6;">Lojas Onde a Compra Foi Cancelada</th>
+                  <th style="color:#5b21b6;">Lojas com Estoque Concorrente (Doadoras)</th>
+                  <th class="num" style="color:#5b21b6;">Qtd Abatida</th>
+                  <th class="num" style="color:#5b21b6;">Economia Caixa</th>
+                  <th style="color:#5b21b6; text-align:center;">Ação Imediata</th>
+                </tr>
+              </thead>
+              <tbody id="curadoria-decisions-tbody">
+                <!-- Preenchido via JS com decisões da Curadoria -->
+              </tbody>
+            </table>
           </div>
         </div>
 
-        <!-- ORDENS DE TRANSFERÊNCIA ATIVAS NO MOTOR -->
+        <!-- ========================================================================= -->
+        <!-- SEÇÃO 2: GUIAS DE TRANSFERÊNCIA & ROMANEIOS EMITIDOS (TRÂNSITO NO MOTOR)  -->
+        <!-- ========================================================================= -->
         <div class="panel" style="margin-bottom:24px;">
-          <div class="panel-head">
-            <h3 style="margin:0;font-size:14px;font-weight:700;">📋 Guias de Transferência Emitidas (Trânsito Interno no Motor)</h3>
+          <div class="panel-head" style="display:flex; justify-content:space-between; align-items:center;">
+            <h3 style="margin:0;font-size:14px;font-weight:700;display:flex;align-items:center;gap:6px;">
+              <span>📋 Guias de Transferência &amp; Romaneios Emitidos</span>
+              <span class="badge badge-accent">Trânsito Interno</span>
+            </h3>
             <span id="active-transfers-count" class="muted" style="font-size:12px;"></span>
           </div>
           <div class="table-wrap">
@@ -468,7 +855,7 @@
                   <th class="num">Qtd (un)</th>
                   <th class="num">Valor (R$)</th>
                   <th>Status</th>
-                  <th>Ações Operacionais</th>
+                  <th style="text-align:center;">Ações Operacionais &amp; Romaneio</th>
                 </tr>
               </thead>
               <tbody id="motor-transfers-tbody">
@@ -478,10 +865,103 @@
           </div>
         </div>
 
-        <!-- PAINEL FEFO / LOTES CRÍTICOS -->
+        <!-- ========================================================================= -->
+        <!-- SEÇÃO 3: REMANEJAMENTO ESTRATÉGICO MENSAL DA REDE (ROTAS ENTRE FILIAIS)   -->
+        <!-- ========================================================================= -->
+        <div class="panel" style="margin-bottom:24px;">
+          <div style="padding:14px 18px; background:var(--bg-subtle); border-bottom:1px solid var(--border); border-radius:12px 12px 0 0;">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+              <div>
+                <h3 style="margin:0;font-size:14px;font-weight:700;display:flex;align-items:center;gap:6px;">
+                  <span>⚖️ Remanejamento Estratégico da Rede</span>
+                  <span class="badge" style="background:#e0f2fe;color:#0369a1;font-weight:700;font-size:10px;">Planejamento Periódico (1x a 2x ao Mês)</span>
+                </h3>
+                <div class="muted" style="font-size:11.5px; margin-top:2px;">
+                  Otimização de carga e equipe de transporte. Use o corte de valor mínimo para focar apenas em cargas consolidadas que compensem o custo de combustível/frete.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- PAINEL DE FILTROS & CONTROLE OPERACIONAL -->
+          <div style="padding:14px 18px; border-bottom:1px solid var(--border); background:var(--card-bg);">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:10px;">
+              <div style="font-size:12.5px; font-weight:700; color:var(--text);">
+                <span>🔍 Filtros de Rota &amp; Doação de Excesso</span>
+              </div>
+              <div id="reman-filter-summary" style="font-size:11.5px; color:var(--muted); font-weight:600;">
+                Carregando filtros...
+              </div>
+            </div>
+
+            <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center;">
+              <!-- Busca por texto -->
+              <div style="flex:1; min-width:220px; display:flex; align-items:center; gap:6px; background:var(--bg-subtle); padding:6px 12px; border-radius:8px; border:1px solid var(--border);">
+                <span>🔍</span>
+                <input type="text" id="reman-search-input" placeholder="Buscar produto, código BIG, EAN, laboratório..." style="border:none; outline:none; background:transparent; width:100%; font-size:12px; color:var(--text);" />
+              </div>
+
+              <!-- Filtro de Tipo / Motivo -->
+              <select id="reman-filter-tipo" class="select-sm" style="font-size:12px; font-weight:700; min-width:180px;">
+                <option value="ALL">📦 Todos os Tipos de Oportunidade</option>
+                <option value="CURADORIA_IA">🧬 Curadoria IA • Transfer-First</option>
+                <option value="FEFO_VALIDADE">⏳ FEFO / Validade Curta (&le; 90d)</option>
+                <option value="EXCESSO">📦 Doação de Excesso (Acima do Teto)</option>
+                <option value="PARADO">💤 Estoque Parado sem Giro</option>
+              </select>
+
+              <!-- Filtro de Curva ABC -->
+              <select id="reman-filter-curva" class="select-sm" style="font-size:12px; font-weight:600;">
+                <option value="ALL">Curva ABC: Todas</option>
+                <option value="A">Curva A (Alto Giro)</option>
+                <option value="B">Curva B (Médio Giro)</option>
+                <option value="C">Curva C (Baixo Giro)</option>
+                <option value="D">Curva D (Giro Crítico)</option>
+              </select>
+
+              <!-- Filtro de Filial Origem (Doadora) -->
+              <select id="reman-filter-origem" class="select-sm" style="font-size:12px; font-weight:600; min-width:150px;">
+                <option value="ALL">Loja Origem: Todas</option>
+              </select>
+
+              <!-- Filtro de Filial Destino (Receptora) -->
+              <select id="reman-filter-destino" class="select-sm" style="font-size:12px; font-weight:600; min-width:150px;">
+                <option value="ALL">Loja Destino: Todas</option>
+              </select>
+
+              <!-- Filtro de Impacto Financeiro Mínimo -->
+              <select id="reman-filter-min-val" class="select-sm" style="font-size:12px; font-weight:600;">
+                <option value="0">Qualquer Valor</option>
+                <option value="20">&ge; R$ 20,00 por item</option>
+                <option value="50">&ge; R$ 50,00 (Alto Impacto)</option>
+                <option value="100">&ge; R$ 100,00 (Prioridade Carga)</option>
+              </select>
+
+              <!-- Botão Limpar Filtros -->
+              <button id="btn-reman-clear-filters" class="btn btn-ghost btn-sm" type="button" style="font-size:11.5px; font-weight:600;">
+                ✕ Limpar
+              </button>
+            </div>
+          </div>
+
+          <div class="panel-head" style="border:none; padding:12px 18px 4px 18px;">
+            <h4 style="margin:0;font-size:13px;font-weight:700;color:var(--text);">🚚 Rotas de Transferência Sugeridas para a Carga</h4>
+            <span id="transfer-routes-count" class="muted" style="font-size:12px;"></span>
+          </div>
+          <div id="transfer-routes-container" class="transfer-routes-container" style="padding:16px;display:flex;flex-direction:column;gap:16px;">
+            <!-- Preenchido via JS com cards de rotas -->
+          </div>
+        </div>
+
+        <!-- ========================================================================= -->
+        <!-- SEÇÃO 4: PREVENÇÃO DE PERDAS • LOTES CRÍTICOS & FEFO                      -->
+        <!-- ========================================================================= -->
         <div class="panel">
           <div class="panel-head">
-            <h3 style="margin:0;font-size:14px;font-weight:700;">⏳ Lotes Críticos / FEFO (&le; 90d) ou Vencidos em `lote_novo`</h3>
+            <h3 style="margin:0;font-size:14px;font-weight:700;display:flex;align-items:center;gap:6px;">
+              <span>⏳ Prevenção de Perdas • Lotes Críticos / FEFO (&le; 90d) ou Vencidos em `lote_novo`</span>
+              <span class="badge badge-danger">Ação Imediata</span>
+            </h3>
             <span id="expiring-count" class="muted" style="font-size:12px;"></span>
           </div>
           <div class="table-wrap">
@@ -494,11 +974,48 @@
                   <th class="num">Vencendo 90d</th>
                   <th class="num">Vencido</th>
                   <th class="num">Risco (R$)</th>
-                  <th class="num">Margem / Ação Recomendada</th>
+                  <th style="text-align:center;">Ações Operacionais Recomendadas</th>
                 </tr>
               </thead>
               <tbody id="expiring-tbody"></tbody>
             </table>
+          </div>
+        </div>
+
+        <!-- MODAL: DETALHES DOS ITENS DA GUIA DE TRANSFERÊNCIA -->
+        <div id="modal-transfer-items" class="modal-backdrop hidden" style="position:fixed;inset:0;background:rgba(15,23,42,0.6);backdrop-filter:blur(3px);z-index:9999;display:none;align-items:center;justify-content:center;padding:20px;">
+          <div class="modal-card" style="background:var(--card-bg);width:100%;max-width:850px;max-height:88vh;border-radius:14px;box-shadow:0 20px 40px rgba(0,0,0,0.25);border:1.5px solid var(--border);display:flex;flex-direction:column;overflow:hidden;">
+            <div style="padding:16px 20px;background:var(--bg-subtle);border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <h3 id="modal-trf-title" style="margin:0;font-size:15px;font-weight:800;color:var(--text);">📦 Guia de Transferência TRF-XXXX</h3>
+                <div id="modal-trf-sub" class="muted" style="font-size:12px;margin-top:2px;">Origem ➔ Destino</div>
+              </div>
+              <button id="btn-close-modal-trf" class="btn btn-ghost btn-sm" type="button" style="font-size:16px;">✕</button>
+            </div>
+            <div style="padding:16px 20px;overflow-y:auto;flex:1;">
+              <div id="modal-trf-meta" style="margin-bottom:14px;padding:10px 14px;background:#f8fafc;border-radius:8px;font-size:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;"></div>
+              <div class="table-wrap">
+                <table class="data-table" style="font-size:12px;">
+                  <thead>
+                    <tr>
+                      <th>Cód BIG</th>
+                      <th>EAN</th>
+                      <th>Descrição</th>
+                      <th>Laboratório</th>
+                      <th class="num">Qtd (un)</th>
+                      <th class="num">Custo Unit</th>
+                      <th class="num">Total (R$)</th>
+                      <th>Motivo da Decisão</th>
+                    </tr>
+                  </thead>
+                  <tbody id="modal-trf-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+            <div style="padding:12px 20px;background:var(--bg-subtle);border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+              <a id="btn-modal-trf-download" href="#" class="btn btn-secondary btn-sm" style="font-weight:700;">📥 Baixar Romaneio Excel</a>
+              <button id="btn-close-modal-trf-bottom" class="btn btn-primary btn-sm" type="button">Fechar</button>
+            </div>
           </div>
         </div>
       </section>
@@ -557,7 +1074,8 @@
           <div class="muted" style="padding:24px;text-align:center;">Carregando painel de BI...</div>
         </div>
       </section>
-    </main>
+
+      </main>
   </div>
 
   <!-- MODAL LEGENDA E GLOSSARIO -->
@@ -637,8 +1155,13 @@
             <input id="cfg-db-password" type="password" placeholder="Senha de acesso" />
           </div>
           <div class="form-group">
-            <label for="cfg-db-name">Nome do Banco (Database)</label>
-            <input id="cfg-db-name" type="text" placeholder="gerente" />
+            <label for="cfg-db-name">Nome do Banco (Database / Cenário)</label>
+            <div style="display:flex; gap:8px;">
+              <input id="cfg-db-name" type="text" placeholder="gerente" style="flex:1;" list="cfg-db-datalist" />
+              <select id="cfg-db-select" class="form-select hidden" style="flex:1; font-weight:500; font-size:13px;" title="Escolha uma base encontrada"></select>
+            </div>
+            <datalist id="cfg-db-datalist"></datalist>
+            <div id="cfg-db-chips" style="margin-top:4px; display:flex; flex-wrap:wrap; gap:4px;"></div>
           </div>
           <div class="form-group">
             <label for="cfg-buyer-filial">Filial Compradora (ID Loja)</label>
@@ -726,16 +1249,35 @@
           <!-- Preenchido via JS com recomendação e análise de estoque -->
         </div>
 
-        <!-- Tabela comparativa dos Laboratórios da Molécula com coluna por filial -->
-        <div style="border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; max-height: 420px; background: var(--bg-card);">
-          <table class="table" style="font-size: 11.5px; margin: 0; min-width: 980px;">
-            <thead id="sweep-thead">
-              <!-- Gerado dinamicamente com as lojas reais do cliente conectado -->
-            </thead>
-            <tbody id="sweep-tbody">
-              <!-- Linhas de SKUs preenchidas dinamicamente -->
-            </tbody>
-          </table>
+        <!-- Diagnóstico Filial a Filial: Onde NÃO Comprar e Onde Comprar (REV-023) -->
+        <div id="sweep-store-diagnostic" style="display:none; flex-direction:column; gap:10px;"></div>
+
+        <!-- Sinergia com Remanejamento Inteligente: Transfer-First (REV-023) -->
+        <div id="sweep-reman-synergy" style="display:none; flex-direction:column; gap:10px;"></div>
+
+        <!-- Seção de Auditoria & Matriz Comparativa (Opcional - Expansível) (REV-024) -->
+        <div style="border: 1.5px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--bg-card); box-shadow: 0 1px 3px rgba(0,0,0,0.02);">
+          <div id="sweep-matrix-header" style="background: var(--bg-subtle); padding: 10px 16px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; border-bottom: 1px solid var(--border);">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-weight: 800; font-size: 12.5px; color: var(--text);">📊 Auditoria Detalhada: Matriz de Fabricantes por Loja</span>
+              <span id="sweep-matrix-count-badge" class="badge badge-neutral" style="font-size: 10px;">0 marcas</span>
+              <span class="muted" style="font-size: 11px;">(Use para auditar estoque de cada fabricante ou trocar laboratório)</span>
+            </div>
+            <button id="btn-toggle-matrix" class="btn btn-ghost btn-sm" type="button" style="font-weight: 700; font-size: 11.5px; color: var(--accent); display: flex; align-items: center; gap: 4px;">
+              <span id="btn-toggle-matrix-icon">▶</span>
+              <span id="btn-toggle-matrix-text">Ver Matriz Completa</span>
+            </button>
+          </div>
+          <div id="sweep-matrix-container" style="display: none; overflow-x: auto; max-height: 380px;">
+            <table class="table" style="font-size: 11.5px; margin: 0; min-width: 980px;">
+              <thead id="sweep-thead">
+                <!-- Gerado dinamicamente com as lojas reais do cliente conectado -->
+              </thead>
+              <tbody id="sweep-tbody">
+                <!-- Linhas de SKUs preenchidas dinamicamente -->
+              </tbody>
+            </table>
+          </div>
         </div>
 
         <!-- Barra inferior de Decisão Rápida do Comprador -->
@@ -1280,7 +1822,7 @@
   </div>
 
   <!-- MODAL CAPA DE ABERTURA & CONTROLE DE LICENÇA (SAAS GATE) -->
-  <div id="modal-welcome-gate" class="modal-backdrop hidden" style="z-index: 12000;" role="dialog" aria-modal="true" aria-labelledby="welcome-gate-title">
+  <div id="modal-welcome-gate" class="modal-backdrop hidden" style="z-index: 99999;" role="dialog" aria-modal="true" aria-labelledby="welcome-gate-title">
     <div class="modal-card" style="width: min(840px, 96vw); max-height: 94vh; overflow-y: auto;">
       <div class="modal-head" style="background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); color: #fff; padding: 20px 24px;">
         <div style="display:flex; align-items:center; gap: 14px;">
@@ -1324,6 +1866,21 @@
             <div id="gate-license-sub" style="font-size: 12.5px; margin-top: 4px; color: #047857;">Válida até --/--/---- • 30 dias restantes</div>
           </div>
           <div id="gate-license-plan-badge" class="badge badge-success" style="font-size: 12px; padding: 4px 10px; font-weight: 700; text-transform: uppercase;">MENSAL</div>
+        </div>
+
+        <!-- Negociação de Chaves & Valores via WhatsApp (Destaque quando expirado/bloqueado) -->
+        <div id="gate-whatsapp-box" style="background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%); border: 1.5px solid #86efac; border-radius: 8px; padding: 16px; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;">
+          <div style="flex: 1; min-width: 250px;">
+            <div style="font-weight: 700; font-size: 14px; color: #166534; display: flex; align-items: center; gap: 8px;">
+              <span>📲 Negociação de Chaves &amp; Valores no WhatsApp</span>
+            </div>
+            <div style="font-size: 12.5px; color: #15803d; margin-top: 4px; line-height: 1.4;">
+              Fale diretamente com os consultores da <strong>FSConsultoria</strong> para adquirir ou negociar pacotes de chaves de liberação para sua drogaria.
+            </div>
+          </div>
+          <a id="gate-btn-whatsapp" href="https://wa.me/5517981205660" target="_blank" rel="noopener noreferrer" class="btn" style="background: #25d366; border: 1px solid #16a34a; color: #fff; font-weight: 700; padding: 11px 20px; font-size: 13.5px; text-decoration: none; display: inline-flex; align-items: center; gap: 8px; border-radius: 8px; box-shadow: 0 4px 12px rgba(37,211,102,0.3); white-space: nowrap;">
+            <span>💬 Negociar no WhatsApp: (17) 98120-5660</span>
+          </a>
         </div>
 
         <!-- Inserir Nova Chave Mensal (Ativação) -->
@@ -1476,12 +2033,79 @@
         <div id="update-modal-notes" style="display:none; background:var(--bg-subtle); border:1px solid var(--border); border-radius:8px; padding:12px; font-size:12px; max-height:160px; overflow-y:auto; line-height:1.4;"></div>
       </div>
       <div class="modal-footer" style="display:flex; justify-content:space-between; align-items:center; padding:14px 20px; background:var(--bg-subtle);">
-        <span id="update-modal-curr-ver" class="muted" style="font-size:11.5px;">Versão atual: v1.1.6</span>
+        <span id="update-modal-curr-ver" class="muted" style="font-size:11.5px;">Versão atual: v1.2.0</span>
         <div style="display:flex; gap:10px;">
           <button id="btn-cancel-update" class="btn btn-secondary" type="button">Fechar</button>
           <button id="btn-apply-update" class="btn btn-primary" type="button" style="display:none; background:#047857;">⚡ Atualizar Agora</button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- MODAL: CADASTRAR / EDITAR FORNECEDOR OL -->
+  <div id="modal-ol-supplier" class="modal-backdrop hidden" role="dialog" aria-modal="true" style="z-index:9999;">
+    <div class="modal-card" style="width: min(540px, 94vw); background:var(--card-bg, #fff);">
+      <div class="modal-head" style="background:#0f766e; color:#fff; padding:16px 20px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="font-size:22px;">📦</span>
+          <div>
+            <h2 id="modal-ol-title" style="margin:0; font-size:16px; font-weight:700; color:#fff;">Cadastrar Fornecedor / Fabricante OL</h2>
+            <div class="muted" style="color:#ccfbf1; font-size:12px;">Definição de parâmetros comerciais para pedidos diretos da indústria</div>
+          </div>
+        </div>
+        <button id="btn-close-modal-ol" class="btn btn-ghost" style="color:#ccfbf1;" type="button">✕</button>
+      </div>
+      <form id="form-ol-supplier">
+        <div class="modal-body" style="padding:20px; gap:12px; font-size:12.5px;">
+          <label>
+            <span style="font-weight:600;display:block;margin-bottom:4px;">Nome do Fabricante / Indústria:</span>
+            <input type="text" id="inp-ol-fabricante" required placeholder="Ex: EMS, EUROFARMA, PAMPERS, NESTLE, JOHNSON..." style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:4px;text-transform:uppercase;" />
+          </label>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <label>
+              <span style="font-weight:600;display:block;margin-bottom:4px;">Canal / Mix Principal:</span>
+              <select id="sel-ol-canal" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:4px;">
+                <option value="Medicamentos &amp; Mix Farma">Medicamentos (Éticos/Genéricos)</option>
+                <option value="Leites &amp; Nutrição Infantil">Leites &amp; Nutrição Infantil</option>
+                <option value="Fraldas &amp; Higiene Infantil">Fraldas &amp; Higiene Infantil</option>
+                <option value="Higiene &amp; Perfumaria">Higiene &amp; Perfumaria</option>
+                <option value="Suplementos &amp; OTC">Suplementos &amp; OTC</option>
+              </select>
+            </label>
+            <label>
+              <span style="font-weight:600;display:block;margin-bottom:4px;">Pedido Mínimo (R$):</span>
+              <input type="number" id="inp-ol-minimo" required step="50" min="0" placeholder="Ex: 3000.00" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:4px;" />
+            </label>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <label>
+              <span style="font-weight:600;display:block;margin-bottom:4px;">Desconto Adicional OL (%):</span>
+              <input type="number" id="inp-ol-desconto" step="0.5" min="0" max="50" placeholder="Ex: 10.0" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:4px;" />
+            </label>
+            <label>
+              <span style="font-weight:600;display:block;margin-bottom:4px;">Prazo Médio Pagamento:</span>
+              <input type="text" id="inp-ol-prazo" placeholder="Ex: 30/60/90 d ou 45 d" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:4px;" />
+            </label>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <label>
+              <span style="font-weight:600;display:block;margin-bottom:4px;">Lead Time Entrega (dias):</span>
+              <input type="number" id="inp-ol-leadtime" step="1" min="1" placeholder="Ex: 7" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:4px;" />
+            </label>
+            <label>
+              <span style="font-weight:600;display:block;margin-bottom:4px;">Status da Regra:</span>
+              <select id="sel-ol-status" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:4px;">
+                <option value="1">Ativo (IA Monitora e Sugere)</option>
+                <option value="0">Inativo (Pausar canal OL)</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:10px;padding:14px 20px;border-top:1px solid var(--border);background:var(--bg-subtle);">
+          <button type="button" id="btn-cancel-modal-ol" class="btn btn-secondary">Cancelar</button>
+          <button type="submit" class="btn btn-primary" style="background:#0f766e;border-color:#0f766e;font-weight:600;">💾 Salvar Política OL</button>
+        </div>
+      </form>
     </div>
   </div>
 

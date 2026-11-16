@@ -50,6 +50,18 @@ function initSchema(db) {
         db.exec("DROP TABLE IF EXISTS engine_runs;");
       }
     }
+    const bmsCols = db.prepare("PRAGMA table_info(budget_monthly_summary)").all();
+    if (bmsCols && bmsCols.length > 0) {
+      const colNames = new Set(bmsCols.map(c => c.name));
+      if (!colNames.has('remanejamento_economizado_rs')) db.exec("ALTER TABLE budget_monthly_summary ADD COLUMN remanejamento_economizado_rs REAL DEFAULT 0;");
+      if (!colNames.has('unoptimized_products_json')) db.exec("ALTER TABLE budget_monthly_summary ADD COLUMN unoptimized_products_json TEXT;");
+    }
+    const suspCols = db.prepare("PRAGMA table_info(client_sku_suspensions)").all();
+    if (suspCols && suspCols.length > 0) {
+      const colNames = new Set(suspCols.map(c => c.name));
+      if (!colNames.has('molecule_key')) db.exec("ALTER TABLE client_sku_suspensions ADD COLUMN molecule_key TEXT;");
+      if (!colNames.has('gatilho_cobertura_limite')) db.exec("ALTER TABLE client_sku_suspensions ADD COLUMN gatilho_cobertura_limite REAL DEFAULT 7.0;");
+    }
   } catch {}
 
   db.exec(`
@@ -309,6 +321,7 @@ function initSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_esr_run_filial ON engine_sku_results(run_id, filial_id);
     CREATE INDEX IF NOT EXISTS idx_esr_run_abc ON engine_sku_results(run_id, abc_class);
     CREATE INDEX IF NOT EXISTS idx_esr_run_mol ON engine_sku_results(run_id, molecule_key);
+    CREATE INDEX IF NOT EXISTS idx_esr_run_mol_prod ON engine_sku_results(run_id, molecule_key, produto_id, filial_id);
     CREATE INDEX IF NOT EXISTS idx_esr_run_prod ON engine_sku_results(run_id, produto_id);
     CREATE INDEX IF NOT EXISTS idx_esr_prod ON engine_sku_results(produto_id);
 
@@ -410,6 +423,52 @@ function initSchema(db) {
       PRIMARY KEY (client_code, filial_id)
     );
 
+    CREATE TABLE IF NOT EXISTS budget_monthly_summary (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_code TEXT NOT NULL,
+      reference_month TEXT NOT NULL,
+      reference_date TEXT NOT NULL,
+      cmv_mes_anterior REAL NOT NULL DEFAULT 0,
+      score_mes_anterior REAL NOT NULL DEFAULT 0,
+      score_mes_atual REAL NOT NULL DEFAULT 0,
+      peso_sabado REAL NOT NULL DEFAULT 1,
+      peso_domingo REAL NOT NULL DEFAULT 1,
+      dotacao_inicial REAL NOT NULL DEFAULT 0,
+      var_faturamento_pct REAL NOT NULL DEFAULT 0,
+      dotacao_ajustada REAL NOT NULL DEFAULT 0,
+      consumido_compras_rs REAL NOT NULL DEFAULT 0,
+      faturamento_liquido_mes REAL NOT NULL DEFAULT 0,
+      compra_x_venda_pct REAL NOT NULL DEFAULT 0,
+      compras_sem_demanda_rs REAL NOT NULL DEFAULT 0,
+      compras_sem_demanda_pct REAL NOT NULL DEFAULT 0,
+      compras_excesso_rs REAL NOT NULL DEFAULT 0,
+      compras_excesso_pct REAL NOT NULL DEFAULT 0,
+      compras_nao_otimizadas_rs REAL NOT NULL DEFAULT 0,
+      compras_nao_otimizadas_pct REAL NOT NULL DEFAULT 0,
+      iec_eficiencia_pct REAL NOT NULL DEFAULT 0,
+      dimensions_json TEXT,
+      filiais_json TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+      UNIQUE(client_code, reference_month)
+    );
+
+    CREATE TABLE IF NOT EXISTS ol_fabricantes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_code TEXT NOT NULL,
+      fabricante_nome TEXT NOT NULL,
+      tipo_canal TEXT NOT NULL DEFAULT 'OL', -- 'OL' | 'FABRICANTE_DIRETO'
+      pedido_minimo_rs REAL NOT NULL DEFAULT 3000.00,
+      desconto_extra_pct REAL NOT NULL DEFAULT 10.00,
+      prazo_medio_dias INTEGER NOT NULL DEFAULT 45,
+      lead_time_dias INTEGER NOT NULL DEFAULT 14,
+      horizonte_cobertura_dias INTEGER NOT NULL DEFAULT 21,
+      ativo INTEGER NOT NULL DEFAULT 1,
+      observacao TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+      UNIQUE(client_code, fabricante_nome)
+    );
+
     CREATE TABLE IF NOT EXISTS motor_transferencias (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       client_code TEXT NOT NULL,
@@ -442,6 +501,25 @@ function initSchema(db) {
       motivo_decisao TEXT NOT NULL,
       FOREIGN KEY (transferencia_id) REFERENCES motor_transferencias(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS buyer_learning_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_code TEXT NOT NULL,
+      filial_id INTEGER NOT NULL DEFAULT 0,
+      produto_id INTEGER NOT NULL,
+      principio_ativo_id INTEGER DEFAULT 0,
+      molecule_key TEXT,
+      descricao TEXT,
+      fabricante_origem TEXT,
+      fabricante_proposto TEXT,
+      tipo_evento TEXT NOT NULL,
+      motivo TEXT,
+      acao_futura TEXT DEFAULT 'LEMBRAR_PREFERENCIA',
+      usuario TEXT DEFAULT 'comprador',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_buyer_learning_prod ON buyer_learning_log(client_code, filial_id, produto_id);
+    CREATE INDEX IF NOT EXISTS idx_buyer_learning_mol ON buyer_learning_log(client_code, filial_id, molecule_key);
   `);
 
   // Migracoes defensivas para bancos SQLite ja existentes
@@ -884,20 +962,22 @@ export function getGroupsTree(runId, filialId = null) {
  * Registra suspensão de compras exclusiva no Motor Inteligente (REV-011)
  * ou sincronizada com Linx BIG.
  */
-export function recordSkuSuspension(clientCode, filialId, produtoId, { descricao = '', motivo = '', days = 30, origem = 'MOTOR_ONLY' } = {}) {
+export function recordSkuSuspension(clientCode, filialId, produtoId, { descricao = '', motivo = '', days = 30, origem = 'MOTOR_ONLY', moleculeKey = null, gatilhoCobertura = 7.0 } = {}) {
   const db = getAnalyticsDb();
   const endDate = new Date(Date.now() + Number(days) * 86400000).toISOString().split('T')[0];
   db.prepare(`
-    INSERT INTO client_sku_suspensions (client_code, filial_id, produto_id, descricao, motivo, dias_bloqueio, data_fim_bloqueio, origem, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+    INSERT INTO client_sku_suspensions (client_code, filial_id, produto_id, descricao, motivo, dias_bloqueio, data_fim_bloqueio, origem, molecule_key, gatilho_cobertura_limite, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
     ON CONFLICT(client_code, filial_id, produto_id) DO UPDATE SET
       descricao = excluded.descricao,
       motivo = excluded.motivo,
       dias_bloqueio = excluded.dias_bloqueio,
       data_fim_bloqueio = excluded.data_fim_bloqueio,
       origem = excluded.origem,
+      molecule_key = COALESCE(excluded.molecule_key, client_sku_suspensions.molecule_key),
+      gatilho_cobertura_limite = excluded.gatilho_cobertura_limite,
       created_at = datetime('now', 'localtime')
-  `).run(clientCode, filialId, produtoId, descricao, motivo, days, endDate, origem);
+  `).run(clientCode, filialId, produtoId, descricao, motivo, days, endDate, origem, moleculeKey, gatilhoCobertura);
 
   dismissSku(clientCode, filialId, produtoId, 1);
   return { ok: true, endDate };
@@ -931,9 +1011,9 @@ export function getActiveSkuSuspensions(clientCode, filialId = null) {
 /**
  * Retorna políticas configuradas para as filiais do cliente
  */
-export function getFilialPolicies(clientCode) {
+export function getFilialPolicies(clientCode = 'bandeirante') {
   const db = getAnalyticsDb();
-  return db.prepare('SELECT * FROM client_filial_policies WHERE client_code = ? ORDER BY filial_id').all(clientCode);
+  return db.prepare('SELECT * FROM client_filial_policies WHERE client_code = ? ORDER BY filial_id').all(clientCode || 'bandeirante');
 }
 
 /**
@@ -1114,5 +1194,250 @@ export function getPendingTransfersItemsMap(clientCode) {
   }
   return { incomingMap, outgoingMap };
 }
+
+/**
+ * Salva ou atualiza o resumo mensal da dotação orçamentária e governança de compras.
+ */
+export function upsertBudgetSummary(clientCode, summary) {
+  const db = getAnalyticsDb();
+  db.prepare(`
+    INSERT INTO budget_monthly_summary (
+      client_code, reference_month, reference_date,
+      cmv_mes_anterior, score_mes_anterior, score_mes_atual, peso_sabado, peso_domingo,
+      dotacao_inicial, var_faturamento_pct, dotacao_ajustada, consumido_compras_rs,
+      faturamento_liquido_mes, compra_x_venda_pct,
+      compras_sem_demanda_rs, compras_sem_demanda_pct,
+      compras_excesso_rs, compras_excesso_pct,
+      compras_nao_otimizadas_rs, compras_nao_otimizadas_pct,
+      iec_eficiencia_pct, remanejamento_economizado_rs, unoptimized_products_json, dimensions_json, filiais_json
+    ) VALUES (
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    )
+    ON CONFLICT(client_code, reference_month) DO UPDATE SET
+      reference_date = excluded.reference_date,
+      cmv_mes_anterior = excluded.cmv_mes_anterior,
+      score_mes_anterior = excluded.score_mes_anterior,
+      score_mes_atual = excluded.score_mes_atual,
+      peso_sabado = excluded.peso_sabado,
+      peso_domingo = excluded.peso_domingo,
+      dotacao_inicial = excluded.dotacao_inicial,
+      var_faturamento_pct = excluded.var_faturamento_pct,
+      dotacao_ajustada = excluded.dotacao_ajustada,
+      consumido_compras_rs = excluded.consumido_compras_rs,
+      faturamento_liquido_mes = excluded.faturamento_liquido_mes,
+      compra_x_venda_pct = excluded.compra_x_venda_pct,
+      compras_sem_demanda_rs = excluded.compras_sem_demanda_rs,
+      compras_sem_demanda_pct = excluded.compras_sem_demanda_pct,
+      compras_excesso_rs = excluded.compras_excesso_rs,
+      compras_excesso_pct = excluded.compras_excesso_pct,
+      compras_nao_otimizadas_rs = excluded.compras_nao_otimizadas_rs,
+      compras_nao_otimizadas_pct = excluded.compras_nao_otimizadas_pct,
+      iec_eficiencia_pct = excluded.iec_eficiencia_pct,
+      remanejamento_economizado_rs = excluded.remanejamento_economizado_rs,
+      unoptimized_products_json = excluded.unoptimized_products_json,
+      dimensions_json = excluded.dimensions_json,
+      filiais_json = excluded.filiais_json,
+      created_at = datetime('now', 'localtime')
+  `).run(
+    clientCode,
+    summary.reference_month,
+    summary.reference_date,
+    Number(summary.cmv_mes_anterior || 0),
+    Number(summary.score_mes_anterior || 0),
+    Number(summary.score_mes_atual || 0),
+    Number(summary.peso_sabado || 1),
+    Number(summary.peso_domingo || 1),
+    Number(summary.dotacao_inicial || 0),
+    Number(summary.var_faturamento_pct || 0),
+    Number(summary.dotacao_ajustada || 0),
+    Number(summary.consumido_compras_rs || 0),
+    Number(summary.faturamento_liquido_mes || 0),
+    Number(summary.compra_x_venda_pct || 0),
+    Number(summary.compras_sem_demanda_rs || 0),
+    Number(summary.compras_sem_demanda_pct || 0),
+    Number(summary.compras_excesso_rs || 0),
+    Number(summary.compras_excesso_pct || 0),
+    Number(summary.compras_nao_otimizadas_rs || 0),
+    Number(summary.compras_nao_otimizadas_pct || 0),
+    Number(summary.iec_eficiencia_pct || 0),
+    Number(summary.remanejamento_economizado_rs || 0),
+    typeof summary.unoptimized_products_json === 'string' ? summary.unoptimized_products_json : JSON.stringify(summary.unoptimized_products || []),
+    typeof summary.dimensions_json === 'string' ? summary.dimensions_json : JSON.stringify(summary.dimensions || []),
+    typeof summary.filiais_json === 'string' ? summary.filiais_json : JSON.stringify(summary.filiais || [])
+  );
+  return { ok: true, referenceMonth: summary.reference_month };
+}
+
+/**
+ * Recupera o resumo mensal mais recente da dotação orçamentária do cliente.
+ */
+export function getLatestBudgetSummary(clientCode) {
+  const db = getAnalyticsDb();
+  let row = db.prepare(`
+    SELECT * FROM budget_monthly_summary
+    WHERE client_code = ? AND dotacao_ajustada > 0
+    ORDER BY reference_month DESC, id DESC
+    LIMIT 1
+  `).get(clientCode);
+
+  if (!row) {
+    row = db.prepare(`
+      SELECT * FROM budget_monthly_summary
+      WHERE client_code = ?
+      ORDER BY reference_month DESC, id DESC
+      LIMIT 1
+    `).get(clientCode);
+  }
+
+  if (!row) return null;
+  const dotacao = Number(row.dotacao_ajustada || 0);
+  const consumido = Number(row.consumido_compras_rs || 0);
+  const consumidoPct = dotacao > 0 ? Number(((consumido / dotacao) * 100).toFixed(2)) : 0;
+  const saldoLivre = Math.max(0, Number((dotacao - consumido).toFixed(2)));
+  return {
+    ...row,
+    consumido_pct: consumidoPct,
+    saldo_livre_rs: saldoLivre,
+    remanejamento_economizado_rs: Number(row.remanejamento_economizado_rs || 0),
+    unoptimized_products: row.unoptimized_products_json ? JSON.parse(row.unoptimized_products_json) : [],
+    dimensions: row.dimensions_json ? JSON.parse(row.dimensions_json) : [],
+    filiais: row.filiais_json ? JSON.parse(row.filiais_json) : []
+  };
+}
+
+// ========================================================
+// OPERAÇÃO LOGÍSTICA (OL) & FABRICANTES COM PEDIDO MÍNIMO
+// ========================================================
+
+const DEFAULT_OL_FABRICANTES = [
+  { fabricante_nome: 'EMS', pedido_minimo_rs: 3000, desconto_extra_pct: 12, prazo_medio_dias: 45, lead_time_dias: 14, horizonte_cobertura_dias: 21, observacao: 'Operação Logística EMS (Genéricos e Similares)' },
+  { fabricante_nome: 'EUROFARMA', pedido_minimo_rs: 3500, desconto_extra_pct: 10, prazo_medio_dias: 45, lead_time_dias: 14, horizonte_cobertura_dias: 21, observacao: 'Operação Logística Eurofarma' },
+  { fabricante_nome: 'NEO QUIMICA', pedido_minimo_rs: 2500, desconto_extra_pct: 12, prazo_medio_dias: 45, lead_time_dias: 14, horizonte_cobertura_dias: 21, observacao: 'Operação Logística Neo Química' },
+  { fabricante_nome: 'HYPERA', pedido_minimo_rs: 4000, desconto_extra_pct: 10, prazo_medio_dias: 45, lead_time_dias: 14, horizonte_cobertura_dias: 21, observacao: 'Operação Logística Hypera Pharma' },
+  { fabricante_nome: 'CIMED', pedido_minimo_rs: 2000, desconto_extra_pct: 15, prazo_medio_dias: 45, lead_time_dias: 10, horizonte_cobertura_dias: 21, observacao: 'Operação Logística Cimed' },
+  { fabricante_nome: 'ACHE', pedido_minimo_rs: 3500, desconto_extra_pct: 10, prazo_medio_dias: 45, lead_time_dias: 14, horizonte_cobertura_dias: 21, observacao: 'Operação Logística Aché Laboratórios' },
+  { fabricante_nome: 'SANOFI', pedido_minimo_rs: 5000, desconto_extra_pct: 8, prazo_medio_dias: 45, lead_time_dias: 14, horizonte_cobertura_dias: 21, observacao: 'Operação Logística Sanofi Medley' },
+  { fabricante_nome: 'NOVARTIS', pedido_minimo_rs: 5000, desconto_extra_pct: 8, prazo_medio_dias: 45, lead_time_dias: 14, horizonte_cobertura_dias: 21, observacao: 'Operação Logística Novartis / Sandoz' },
+  { fabricante_nome: 'NESTLE', pedido_minimo_rs: 2500, desconto_extra_pct: 7, prazo_medio_dias: 30, lead_time_dias: 10, horizonte_cobertura_dias: 15, observacao: 'Nutrição infantil e leites especiais' },
+  { fabricante_nome: 'DANONE', pedido_minimo_rs: 2000, desconto_extra_pct: 7, prazo_medio_dias: 30, lead_time_dias: 10, horizonte_cobertura_dias: 15, observacao: 'Nutrição médica e infantil (Aptamil/Milnutri)' },
+  { fabricante_nome: 'PROCTER & GAMBLE', pedido_minimo_rs: 3000, desconto_extra_pct: 9, prazo_medio_dias: 30, lead_time_dias: 12, horizonte_cobertura_dias: 21, observacao: 'Higiene e cuidados pessoais (Pampers/Gillette/Oral-B)' },
+  { fabricante_nome: 'JOHNSON & JOHNSON', pedido_minimo_rs: 3000, desconto_extra_pct: 8, prazo_medio_dias: 30, lead_time_dias: 12, horizonte_cobertura_dias: 21, observacao: 'Linha Baby e HPC' },
+];
+
+export function getOlFabricantes(clientCode) {
+  const db = getAnalyticsDb();
+  let rows = db.prepare('SELECT * FROM ol_fabricantes WHERE client_code = ? ORDER BY fabricante_nome ASC').all(clientCode);
+  if (rows.length === 0) {
+    seedDefaultOlFabricantes(clientCode);
+    rows = db.prepare('SELECT * FROM ol_fabricantes WHERE client_code = ? ORDER BY fabricante_nome ASC').all(clientCode);
+  }
+  return rows;
+}
+
+export function seedDefaultOlFabricantes(clientCode) {
+  const db = getAnalyticsDb();
+  const ins = db.prepare(`
+    INSERT OR IGNORE INTO ol_fabricantes (
+      client_code, fabricante_nome, tipo_canal, pedido_minimo_rs,
+      desconto_extra_pct, prazo_medio_dias, lead_time_dias, horizonte_cobertura_dias,
+      ativo, observacao
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+  `);
+  for (const fab of DEFAULT_OL_FABRICANTES) {
+    ins.run(
+      clientCode,
+      fab.fabricante_nome,
+      fab.tipo_canal || 'OL',
+      fab.pedido_minimo_rs,
+      fab.desconto_extra_pct,
+      fab.prazo_medio_dias,
+      fab.lead_time_dias,
+      fab.horizonte_cobertura_dias,
+      fab.observacao
+    );
+  }
+}
+
+export function upsertOlFabricante(clientCode, data) {
+  const db = getAnalyticsDb();
+  const stmt = db.prepare(`
+    INSERT INTO ol_fabricantes (
+      client_code, fabricante_nome, tipo_canal, pedido_minimo_rs,
+      desconto_extra_pct, prazo_medio_dias, lead_time_dias, horizonte_cobertura_dias,
+      ativo, observacao, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+    ON CONFLICT(client_code, fabricante_nome) DO UPDATE SET
+      tipo_canal = excluded.tipo_canal,
+      pedido_minimo_rs = excluded.pedido_minimo_rs,
+      desconto_extra_pct = excluded.desconto_extra_pct,
+      prazo_medio_dias = excluded.prazo_medio_dias,
+      lead_time_dias = excluded.lead_time_dias,
+      horizonte_cobertura_dias = excluded.horizonte_cobertura_dias,
+      ativo = excluded.ativo,
+      observacao = excluded.observacao,
+      updated_at = datetime('now', 'localtime')
+  `);
+  stmt.run(
+    clientCode,
+    String(data.fabricante_nome || '').trim().toUpperCase(),
+    data.tipo_canal || 'OL',
+    Number(data.pedido_minimo_rs || 3000),
+    Number(data.desconto_extra_pct || 10),
+    Number(data.prazo_medio_dias || 45),
+    Number(data.lead_time_dias || 14),
+    Number(data.horizonte_cobertura_dias || 21),
+    data.ativo !== undefined ? (data.ativo ? 1 : 0) : 1,
+    data.observacao || null
+  );
+  return { ok: true };
+}
+
+export function recordBuyerLearning(clientCode, record) {
+  const db = getAnalyticsDb();
+  const stmt = db.prepare(`
+    INSERT INTO buyer_learning_log (
+      client_code, filial_id, produto_id, principio_ativo_id, molecule_key,
+      descricao, fabricante_origem, fabricante_proposto, tipo_evento,
+      motivo, acao_futura, usuario, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+  `);
+  stmt.run(
+    clientCode,
+    Number(record.filial_id || 0),
+    Number(record.produto_id),
+    Number(record.principio_ativo_id || 0),
+    record.molecule_key || null,
+    record.descricao || '',
+    record.fabricante_origem || null,
+    record.fabricante_proposto || null,
+    record.tipo_evento,
+    record.motivo || null,
+    record.acao_futura || 'LEMBRAR_PREFERENCIA',
+    record.usuario || 'comprador'
+  );
+  return { ok: true };
+}
+
+export function getBuyerLearningLog(clientCode, limit = 100) {
+  const db = getAnalyticsDb();
+  return db
+    .prepare('SELECT * FROM buyer_learning_log WHERE client_code = ? ORDER BY id DESC LIMIT ?')
+    .all(clientCode, limit);
+}
+
+export function getBuyerActivePreferences(clientCode, filialId = null) {
+  const db = getAnalyticsDb();
+  let sql = 'SELECT * FROM buyer_learning_log WHERE client_code = ?';
+  const params = [clientCode];
+  if (filialId !== null && filialId !== undefined && filialId !== 'all') {
+    sql += ' AND (filial_id = ? OR filial_id = 0)';
+    params.push(Number(filialId));
+  }
+  sql += ' ORDER BY id DESC';
+  return db.prepare(sql).all(...params);
+}
+
+
+
 
 

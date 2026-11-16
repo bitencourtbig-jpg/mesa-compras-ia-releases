@@ -21,16 +21,21 @@ import {
   getMotorTransfers,
   updateMotorTransferStatus,
   getPendingTransfersItemsMap,
+  recordBuyerLearning,
+  getBuyerLearningLog,
+  getBuyerActivePreferences,
 } from './store/analyticsDb.mjs';
 import { getCachedCmedMaps, importOfficialCmedToSqlite } from './services/cmedService.mjs';
 import { syncBigClientData } from './engine/syncClientData.mjs';
 import { runPurchasingEngine } from './engine/purchasingEngine.mjs';
 import { GLOSSARY_SECTIONS, GLOSSARY_TERM_HINTS } from './services/glossaryData.mjs';
 import { buildBuyerDecisionAnalysis } from './services/buyerInterpreter.mjs';
+import { calculateBudgetOverview } from './services/budgetService.mjs';
+import { listOlFabricantes, saveOlFabricante, analyzeOlOpportunity, getOlDashboardOverview } from './services/olService.mjs';
 import { buildExecutiveBi } from './services/biAnalyticsService.mjs';
 import { generateQuotationWorkbook, buildTransferPickListExcel } from './services/excelExportService.mjs';
 import { testBigConnection, lookupBigSupplier, createWriteConnection } from '../db/client.mjs';
-import { generateCotefacilTxt, generateBigNativeImportXlsx, sanitizeCnpj } from './services/exportFormatsService.mjs';
+import { generateCotefacilTxt, generateBigNativeImportXlsx, generateOlOrderExcel, sanitizeCnpj } from './services/exportFormatsService.mjs';
 import { insertBigPedidos } from './services/bigOrderWriter.mjs';
 import { buildPresentationSyncPreview, executePresentationSync, cleanupBigPresentations } from './services/bigPresentationWriter.mjs';
 import { isInspectorEnabled, getInspectorStatus, readBacklog, saveReview, updateReviewStatus } from './services/devInspectorService.mjs';
@@ -59,10 +64,10 @@ const PROJECT_ROOT = path.resolve(__dirname, '..');
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
 const PORT = Number(process.env.PORT || 3456);
 
-let APP_VERSION = '1.1.6';
+let APP_VERSION = '1.2.0';
 try {
   const pkgData = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
-  APP_VERSION = pkgData.version || '1.1.6';
+  APP_VERSION = pkgData.version || '1.2.0';
 } catch {}
 
 // Blindagem de seguranca: remove senhas expostas do .env na inicializacao
@@ -98,7 +103,113 @@ function getLatestRun(clientCode) {
   return { ...row, summary: JSON.parse(row.summary_json) };
 }
 
-function buildSkuFilterSql(paramsObj, runId) {
+function getCuradoriaDecisions(clientCode, runId) {
+  const db = getAnalyticsDb();
+  const filiais = getFilialPolicies(clientCode);
+  const filMap = new Map(filiais.map(f => [Number(f.filial_id), f]));
+  const transfers = getMotorTransfers(clientCode);
+
+  const logs = db.prepare(`
+    SELECT id, filial_id, produto_id, molecule_key, descricao, tipo_evento, motivo, acao_futura, created_at
+    FROM buyer_learning_log
+    WHERE client_code = ? AND tipo_evento IN ('DEDUZIU_ESTOQUE_MOLECULA', 'REMANEJOU_E_CANCELOU_COMPRA_EXTERNA', 'CANCELOU_COMPRA_FILIAL_INDIVIDUAL')
+    ORDER BY id DESC
+  `).all(clientCode);
+
+  if (!logs || logs.length === 0) return [];
+
+  const grouped = new Map();
+  for (const l of logs) {
+    if (!grouped.has(l.produto_id)) {
+      grouped.set(l.produto_id, {
+        produto_id: l.produto_id,
+        descricao: l.descricao,
+        molecule_key: l.molecule_key,
+        actions: [],
+        total_un_abatidas: 0,
+        lojas_canceladas: new Set(),
+        created_at: l.created_at,
+      });
+    }
+    const g = grouped.get(l.produto_id);
+    g.actions.push(l);
+    if (l.filial_id > 0) g.lojas_canceladas.add(l.filial_id);
+    
+    const match = (l.motivo || '').match(/(\d+)\s*un/i);
+    if (match) {
+      const un = Number(match[1]);
+      if (l.tipo_evento === 'DEDUZIU_ESTOQUE_MOLECULA') {
+        g.total_un_abatidas = Math.max(g.total_un_abatidas, un);
+      } else if (l.tipo_evento === 'CANCELOU_COMPRA_FILIAL_INDIVIDUAL') {
+        if (!g.actions.some(a => a.tipo_evento === 'DEDUZIU_ESTOQUE_MOLECULA')) {
+          g.total_un_abatidas += un;
+        }
+      }
+    }
+  }
+
+  const result = [];
+  for (const [pId, g] of grouped.entries()) {
+    const skuInfo = db.prepare(`
+      SELECT produto_id, barras, descricao, labora, custo_unit, preco_venda, abc_class
+      FROM engine_sku_results
+      WHERE run_id = ? AND produto_id = ?
+      LIMIT 1
+    `).get(runId, pId);
+
+    let altStockStores = [];
+    if (g.molecule_key) {
+      altStockStores = db.prepare(`
+        SELECT filial_id, produto_id, descricao, labora, estoque_atual, abc_class
+        FROM engine_sku_results
+        WHERE run_id = ? AND molecule_key = ? AND produto_id <> ? AND estoque_atual > 0
+        ORDER BY estoque_atual DESC
+      `).all(runId, g.molecule_key, pId);
+    }
+
+    const existingTransfer = transfers.find(t => 
+      (t.itens && t.itens.some(it => it.produto_id === pId)) || 
+      (t.observacao && g.molecule_key && t.observacao.includes(g.molecule_key))
+    );
+
+    const custo = skuInfo?.custo_unit || 0;
+    const economiaRs = Math.round(g.total_un_abatidas * custo * 100) / 100;
+
+    result.push({
+      produto_id: pId,
+      descricao: skuInfo?.descricao || g.descricao,
+      barras: skuInfo?.barras || '',
+      labora: skuInfo?.labora || '',
+      molecule_key: g.molecule_key,
+      total_un_abatidas: g.total_un_abatidas,
+      custo_unit: custo,
+      economia_rs: economiaRs,
+      lojas_canceladas: Array.from(g.lojas_canceladas).map(fId => ({
+        filial_id: fId,
+        nome: filMap.get(fId)?.nome_reduz || `Loja ${fId}`
+      })),
+      lojas_doadoras: altStockStores.map(s => ({
+        filial_id: s.filial_id,
+        nome: filMap.get(s.filial_id)?.nome_reduz || `Loja ${s.filial_id}`,
+        estoque_atual: s.estoque_atual,
+        labora: s.labora,
+        descricao: s.descricao
+      })),
+      transfer_emitted: existingTransfer ? {
+        codigo: existingTransfer.codigo_transferencia,
+        id: existingTransfer.id,
+        status: existingTransfer.status,
+        filial_origem: existingTransfer.filial_origem_nome,
+        filial_destino: existingTransfer.filial_destino_nome
+      } : null,
+      created_at: g.created_at
+    });
+  }
+
+  return result;
+}
+
+function buildSkuFilterSql(paramsObj, runId, clientCode = 'bandeirante') {
   const getParam = (k) => (typeof paramsObj.get === 'function' ? paramsObj.get(k) : paramsObj[k]) || '';
   const where = ['run_id = ?'];
   const params = [runId];
@@ -136,6 +247,16 @@ function buildSkuFilterSql(paramsObj, runId) {
       where.push("excecoes_json <> '[]'");
     } else if (tab === 'buy') {
       where.push('sugestao_compra_un > 0');
+      // Isolamento da Pré-Tela de Curadoria IA: itens de moléculas com concorrência pendentes de homologação
+      where.push(`(molecule_key IS NULL OR molecule_key = '' OR molecule_key NOT IN (
+        SELECT molecule_key FROM engine_molecule_summary
+        WHERE run_id = ? AND labs_count > 1 AND sugestao_sku_soma > 0
+          AND molecule_key NOT IN (
+            SELECT DISTINCT molecule_key FROM buyer_learning_log
+            WHERE client_code = ? AND molecule_key IS NOT NULL AND molecule_key <> ''
+          )
+      ))`);
+      params.push(runId, clientCode);
     } else if (tab === 'pbm_replenish') {
       where.push('ddv_pbm_auto > 0');
     } else if (tab === 'non_med') {
@@ -383,6 +504,39 @@ const server = http.createServer(async (req, res) => {
           }
         : { macros: [], gruposPai: [], dismissedCount: 0, pbmCount: 0 };
 
+      // KPIs granulares por filial (ou 'all' consolidado) para sincronismo perfeito nos filtros
+      let filialKpis = {};
+      if (latestRun) {
+        filialKpis['all'] = latestRun.summary;
+        const stats = db.prepare(`
+          SELECT filial_id,
+                 COUNT(*) AS totalSkus,
+                 SUM(CASE WHEN abc_class = 'A' AND estoque_atual <= 0 THEN 1 ELSE 0 END) AS rupturasCurvaA,
+                 SUM(CASE WHEN abc_class = 'B' AND estoque_atual <= 0 THEN 1 ELSE 0 END) AS rupturasCurvaB,
+                 ROUND(SUM(venda_perdida_est_rs), 2) AS vendaPerdidaEstimadaRs91d,
+                 SUM(CASE WHEN sugestao_compra_un > 0 AND dismissed = 0 THEN 1 ELSE 0 END) AS skusSugestaoCompra,
+                 ROUND(SUM(CASE WHEN dismissed = 0 THEN sugestao_compra_rs ELSE 0 END), 2) AS totalSugestaoCompraRs,
+                 ROUND(SUM(CASE WHEN estoque_max > 0 AND estoque_atual > estoque_max THEN (estoque_atual - estoque_max) * custo_unit ELSE 0 END), 2) AS capitalExcessoAcimaMaxRs,
+                 ROUND(SUM(CASE WHEN abc_class = 'D' AND estoque_atual > 0 THEN estoque_atual * custo_unit ELSE 0 END), 2) AS capitalParadoCurvaDRs,
+                 ROUND(SUM(lote_vencendo_90d_rs), 2) AS lotesVencendo90dRs,
+                 ROUND(SUM(lote_vencido_qtd * custo_unit), 2) AS lotesVencidosRs,
+                 SUM(CASE WHEN excecoes_json <> '[]' THEN 1 ELSE 0 END) AS skusComExcecao
+          FROM engine_sku_results
+          WHERE run_id = ?
+          GROUP BY filial_id
+        `).all(latestRun.id);
+
+        for (const s of stats) {
+          filialKpis[String(s.filial_id)] = {
+            ...s,
+            referenceDate: latestRun.summary?.referenceDate,
+            weeksWindow: latestRun.summary?.weeksWindow,
+            economiaMoleculaRs: latestRun.summary?.economiaMoleculaRs || 0,
+            economiaMoleculaUn: latestRun.summary?.economiaMoleculaUn || 0,
+          };
+        }
+      }
+
       const filiaisPolicies = getFilialPolicies(clientCode);
       const licenseStatus = getClientLicenseStatus(clientCode);
       return sendJson(res, 200, {
@@ -392,11 +546,111 @@ const server = http.createServer(async (req, res) => {
         cmedImport: cmed.lastImport,
         filtersMeta,
         filiaisPolicies,
+        filialKpis,
         licenseStatus: {
           ...licenseStatus,
           currentMachineId: getMachineFingerprint(),
         },
       });
+    }
+
+    // ========================================================
+    // ROTAS DE CONTROLE ORÇAMENTÁRIO & DOTAÇÃO (OTB)
+    // ========================================================
+    if (pathname === '/api/budget/overview' && req.method === 'GET') {
+      try {
+        const force = urlObj.searchParams.get('refresh') === '1';
+        const filialId = urlObj.searchParams.get('filial_id');
+        const budget = await calculateBudgetOverview(clientCode, { forceRefresh: force, filialId });
+        return sendJson(res, 200, { ok: true, data: budget, budget, ...budget });
+      } catch (err) {
+        return sendJson(res, 500, { ok: false, error: `Erro ao apurar dotação orçamentária: ${err.message}` });
+      }
+    }
+
+    if (pathname === '/api/budget/recalculate' && req.method === 'POST') {
+      try {
+        const filialId = urlObj.searchParams.get('filial_id');
+        const budget = await calculateBudgetOverview(clientCode, { forceRefresh: true, filialId });
+        return sendJson(res, 200, { ok: true, data: budget, budget, ...budget });
+      } catch (err) {
+        return sendJson(res, 500, { ok: false, error: `Erro ao recalcular dotação: ${err.message}` });
+      }
+    }
+
+    // ========================================================
+    // OPERAÇÃO LOGÍSTICA (OL) & IA CONSULTORA DE PEDIDOS MÍNIMOS
+    // ========================================================
+    if (pathname === '/api/ol/fabricantes' && req.method === 'GET') {
+      try {
+        const fabricantes = listOlFabricantes(clientCode);
+        return sendJson(res, 200, { ok: true, fabricantes });
+      } catch (err) {
+        return sendJson(res, 500, { ok: false, error: err.message });
+      }
+    }
+
+    if (pathname === '/api/ol/dashboard' && req.method === 'GET') {
+      try {
+        const filialId = urlObj.searchParams.get('filial_id');
+        const dashboard = getOlDashboardOverview(clientCode, filialId);
+        return sendJson(res, 200, { ok: true, ...dashboard });
+      } catch (err) {
+        return sendJson(res, 500, { ok: false, error: err.message });
+      }
+    }
+
+    if (pathname === '/api/ol/fabricante' && req.method === 'POST') {
+      try {
+        const body = await readBody(req);
+        const result = saveOlFabricante(clientCode, body);
+        return sendJson(res, 200, result);
+      } catch (err) {
+        return sendJson(res, 500, { ok: false, error: err.message });
+      }
+    }
+
+    if (pathname === '/api/ol/opportunity' && req.method === 'GET') {
+      try {
+        const fabricante = urlObj.searchParams.get('fabricante');
+        const runId = urlObj.searchParams.get('runId') ? Number(urlObj.searchParams.get('runId')) : null;
+        const filialId = urlObj.searchParams.get('filial_id');
+        const analysis = analyzeOlOpportunity(clientCode, { fabricante, runId, filialId });
+        return sendJson(res, 200, { ok: true, ...analysis });
+      } catch (err) {
+        return sendJson(res, 500, { ok: false, error: err.message });
+      }
+    }
+
+    if (pathname === '/api/ol/export-excel' && req.method === 'POST') {
+      try {
+        const body = await readBody(req);
+        const { fabricante, items, observacoes } = body;
+        const profile = getClientProfile(clientCode) || {};
+        const olList = listOlFabricantes(clientCode);
+        const olConfig = olList.find(o => o.fabricante_nome.toUpperCase() === String(fabricante || '').toUpperCase()) || null;
+
+        const buffer = await generateOlOrderExcel({
+          clientName: profile.name || 'Drogaria',
+          clientCnpj: profile.buyer_cnpj || '',
+          filialNome: `Filial ${profile.buyer_filial_id || 2}`,
+          filialId: profile.buyer_filial_id || 2,
+          fabricante: fabricante || 'FABRICANTE',
+          olConfig,
+          items: items || [],
+          observacoes: observacoes || '',
+        });
+
+        const safeFab = String(fabricante || 'OL').replace(/[^a-zA-Z0-9_-]/g, '_');
+        res.writeHead(200, {
+          'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'Content-Disposition': `attachment; filename="PEDIDO_OL_${safeFab}_${new Date().toISOString().slice(0, 10)}.xlsx"`,
+          'Content-Length': buffer.length,
+        });
+        return res.end(buffer);
+      } catch (err) {
+        return sendJson(res, 500, { ok: false, error: err.message });
+      }
     }
 
     // ========================================================
@@ -689,8 +943,18 @@ const server = http.createServer(async (req, res) => {
       if (!forceSync && cached && (Date.now() - cached.timestamp < 30 * 60 * 1000)) {
         raw = cached.data;
       } else {
-        raw = await syncBigClientData(profile, { referenceDate: body.referenceDate || null });
-        _rawCache.set(clientCode, { data: raw, timestamp: Date.now() });
+        try {
+          raw = await syncBigClientData(profile, { referenceDate: body.referenceDate || null });
+          _rawCache.set(clientCode, { data: raw, timestamp: Date.now() });
+        } catch (syncErr) {
+          // Fallback resiliente: se for fastRecalc (ex: troca de perfil no topo) e tivermos qualquer cache anterior em memoria, aproveita
+          if (cached && cached.data) {
+            console.warn(`[engine/run] syncBigClientData falhou (${syncErr.code || syncErr.message}). Utilizando cache existente em memória para concluir recálculo.`);
+            raw = cached.data;
+          } else {
+            throw syncErr;
+          }
+        }
       }
       const result = runPurchasingEngine(profile, raw, {
         weeksWindow: Number(body.weeksWindow || profile.default_weeks),
@@ -711,7 +975,8 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/bi' && req.method === 'GET') {
       const latestRun = getLatestRun(clientCode);
       if (!latestRun) return sendJson(res, 200, { empty: true });
-      const bi = buildExecutiveBi(clientCode, latestRun.id, latestRun.summary);
+      const filialId = urlObj.searchParams.get('filial_id');
+      const bi = buildExecutiveBi(clientCode, latestRun.id, latestRun.summary, filialId);
       return sendJson(res, 200, { empty: false, runId: latestRun.id, referenceDate: latestRun.reference_date, ...bi });
     }
 
@@ -726,19 +991,75 @@ const server = http.createServer(async (req, res) => {
       const customHorizonRaw = urlObj.searchParams.get('horizon_days');
       const customHorizon = customHorizonRaw && !isNaN(Number(customHorizonRaw)) ? Number(customHorizonRaw) : null;
 
-      const { whereSql, params } = buildSkuFilterSql(urlObj.searchParams, latestRun.id);
-      const totalRow = db.prepare(`SELECT COUNT(*) AS cnt, ROUND(SUM(sugestao_compra_rs), 2) AS sum_rs FROM engine_sku_results WHERE ${whereSql}`).get(...params);
+      const tab = urlObj.searchParams.get('tab') || 'buy';
+      const { whereSql, params } = buildSkuFilterSql(urlObj.searchParams, latestRun.id, clientCode);
       const orderBy = getOrderByClause(sort);
 
       const activeSuspensions = getActiveSkuSuspensions(clientCode);
       const suspensionsMap = new Map(activeSuspensions.map((s) => [s.produto_id, s]));
 
-      const rows = db
-        .prepare(`SELECT * FROM engine_sku_results WHERE ${whereSql} ORDER BY ${orderBy} LIMIT ? OFFSET ?`)
-        .all(...params, limit, offset);
+      // Busca todos os candidatos que satisfazem os filtros de banco
+      let allCandidates = db
+        .prepare(`SELECT * FROM engine_sku_results WHERE ${whereSql} ORDER BY ${orderBy}`)
+        .all(...params);
 
-      const targetRows = budget > 0 ? selected.slice(offset, offset + limit) : rows;
-      const uniquePids = [...new Set(targetRows.map((r) => r.produto_id))];
+      // Hidrata os SKUs aplicando simulação de horizonte (ex: 15d, 21d, etc.) se solicitado
+      let processed = allCandidates.map((r) => hydrateSkuRow(r, customHorizon, suspensionsMap));
+
+      // Se estamos na aba 'buy' (Sugestão de Compra), NENHUM item que caia para 0 un ou com tag 'NÃO COMPRAR' pode aparecer
+      if (tab === 'buy') {
+        processed = processed.filter((r) => {
+          const q = r.budget_qtd !== undefined ? Number(r.budget_qtd) : Number(r.sugestao_compra_un || 0);
+          return q > 0 && r.ia_analysis?.acaoCodigo !== 'NAO_COMPRAR';
+        });
+      }
+
+      if (budget > 0) {
+        const { selected, used, cutOff, totalRequested, cutTotalRs } = applyBudgetCap(processed, budget);
+        const pagedRows = selected.slice(offset, offset + limit);
+        const uniquePids = [...new Set(pagedRows.map((r) => r.produto_id))];
+        const networkMap = new Map();
+        if (uniquePids.length > 0) {
+          const netRows = db
+            .prepare(
+              `SELECT filial_id, filial_reduz, filial_nome, produto_id, estoque_atual, transito_real,
+                      vendas_13s, ddv_projetada, estoque_min, estoque_max, cobertura_dias,
+                      sugestao_compra_un, sugestao_compra_rs, justificativa_ia, excecoes_json
+               FROM engine_sku_results
+               WHERE run_id = ? AND produto_id IN (${uniquePids.map(() => '?').join(',')}) AND filial_id <> 1
+               ORDER BY filial_id ASC`
+            )
+            .all(latestRun.id, ...uniquePids);
+
+          for (const nr of netRows) {
+            if (!networkMap.has(nr.produto_id)) networkMap.set(nr.produto_id, []);
+            networkMap.get(nr.produto_id).push(nr);
+          }
+        }
+        for (const pr of pagedRows) {
+          pr.rede_distribuicao = networkMap.get(pr.produto_id) || [];
+        }
+        return sendJson(res, 200, {
+          total: selected.length,
+          sumRs: used,
+          budgetApplied: budget,
+          budgetAudit: {
+            budget,
+            used,
+            totalRequested,
+            cutTotalRs,
+            selectedCount: selected.length,
+            cutCount: cutOff.length,
+            cutOffTop: cutOff.slice(0, 100),
+          },
+          rows: pagedRows,
+        });
+      }
+
+      const totalCount = processed.length;
+      const totalSumRs = Math.round(processed.reduce((a, b) => a + Number(b.sugestao_compra_rs || 0), 0) * 100) / 100;
+      const pagedRows = processed.slice(offset, offset + limit);
+      const uniquePids = [...new Set(pagedRows.map((r) => r.produto_id))];
       const networkMap = new Map();
       if (uniquePids.length > 0) {
         const netRows = db
@@ -757,29 +1078,14 @@ const server = http.createServer(async (req, res) => {
           networkMap.get(nr.produto_id).push(nr);
         }
       }
-
-      if (budget > 0) {
-        return sendJson(res, 200, {
-          total: selected.length,
-          sumRs: used,
-          budgetApplied: budget,
-          budgetAudit: {
-            budget,
-            used,
-            totalRequested,
-            cutTotalRs,
-            selectedCount: selected.length,
-            cutCount: cutOff.length,
-            cutOffTop: cutOff.slice(0, 100),
-          },
-          rows: selected.slice(offset, offset + limit).map((r) => hydrateSkuRow(r, customHorizon, suspensionsMap, networkMap.get(r.produto_id) || [])),
-        });
+      for (const pr of pagedRows) {
+        pr.rede_distribuicao = networkMap.get(pr.produto_id) || [];
       }
 
       return sendJson(res, 200, {
-        total: totalRow.cnt,
-        sumRs: totalRow.sum_rs || 0,
-        rows: rows.map((r) => hydrateSkuRow(r, customHorizon, suspensionsMap, networkMap.get(r.produto_id) || [])),
+        total: totalCount,
+        sumRs: totalSumRs,
+        rows: pagedRows,
       });
     }
 
@@ -905,19 +1211,73 @@ const server = http.createServer(async (req, res) => {
       const latestRun = getLatestRun(clientCode);
       if (!latestRun) return sendJson(res, 200, { routes: [], summary: {} });
 
-      const remanRows = db.prepare(`
-        SELECT r.*,
+      const filialId = urlObj.searchParams.get('filial_id');
+      const origemParam = urlObj.searchParams.get('origem');
+      const destinoParam = urlObj.searchParams.get('destino');
+      const tipoParam = urlObj.searchParams.get('tipo') || 'ALL';
+      const curvaParam = urlObj.searchParams.get('curva') || 'ALL';
+      const minValParam = Number(urlObj.searchParams.get('min_valor') || 0);
+      const searchParam = (urlObj.searchParams.get('search') || '').trim();
+
+      const conditions = ['r.run_id = ?'];
+      const params = [latestRun.id];
+
+      if (origemParam && origemParam !== 'ALL' && !isNaN(Number(origemParam))) {
+        conditions.push('r.filial_origem = ?');
+        params.push(Number(origemParam));
+      }
+      if (destinoParam && destinoParam !== 'ALL' && !isNaN(Number(destinoParam))) {
+        conditions.push('r.filial_destino = ?');
+        params.push(Number(destinoParam));
+      }
+      if (filialId && filialId !== 'all' && !isNaN(Number(filialId)) && !origemParam && !destinoParam) {
+        conditions.push('(r.filial_origem = ? OR r.filial_destino = ?)');
+        params.push(Number(filialId), Number(filialId));
+      }
+      if (tipoParam && tipoParam !== 'ALL') {
+        if (tipoParam === 'CURADORIA_IA') {
+          conditions.push("(r.tipo = 'CURADORIA_IA' OR r.motivo LIKE '%Curadoria%' OR esr_orig.justificativa_ia LIKE '%Remanejamento%')");
+        } else {
+          conditions.push('r.tipo = ?');
+          params.push(tipoParam);
+        }
+      }
+      if (curvaParam && curvaParam !== 'ALL') {
+        conditions.push('esr_orig.abc_class = ?');
+        params.push(curvaParam);
+      }
+      if (minValParam > 0) {
+        conditions.push('r.valor_total >= ?');
+        params.push(minValParam);
+      }
+      if (searchParam) {
+        conditions.push('(r.descricao LIKE ? OR esr_orig.barras LIKE ? OR esr_orig.labora LIKE ? OR CAST(r.produto_id AS TEXT) LIKE ?)');
+        const s = `%${searchParam}%`;
+        params.push(s, s, s, s);
+      }
+
+      const remanSql = `
+        SELECT r.id, r.run_id, r.produto_id, r.descricao, r.filial_origem, r.filial_destino,
+               r.tipo, r.qtd_sugerida, r.custo_unit, r.valor_total, r.validade_prioritaria, r.motivo,
                esr_orig.filial_nome AS filial_origem_nome, esr_orig.filial_reduz AS filial_origem_reduz,
                esr_dest.filial_nome AS filial_destino_nome, esr_dest.filial_reduz AS filial_destino_reduz,
-               esr_orig.barras, esr_orig.labora
+               esr_orig.barras, esr_orig.labora, esr_orig.abc_class, esr_orig.justificativa_ia, esr_orig.molecule_key
         FROM engine_remanejamento r
         LEFT JOIN engine_sku_results esr_orig ON esr_orig.run_id = r.run_id AND esr_orig.filial_id = r.filial_origem AND esr_orig.produto_id = r.produto_id
         LEFT JOIN engine_sku_results esr_dest ON esr_dest.run_id = r.run_id AND esr_dest.filial_id = r.filial_destino AND esr_dest.produto_id = r.produto_id
-        WHERE r.run_id = ?
+        WHERE ${conditions.join(' AND ')}
         ORDER BY r.filial_origem, r.filial_destino, r.valor_total DESC
-      `).all(latestRun.id);
+      `;
 
+      const remanRows = db.prepare(remanSql).all(...params);
+
+      // Agrupamento por Rota
       const routesMap = new Map();
+      let fefoCount = 0, fefoVal = 0;
+      let excessoCount = 0, excessoVal = 0;
+      let paradoCount = 0, paradoVal = 0;
+      let curadoriaCount = 0, curadoriaVal = 0;
+
       for (const row of remanRows) {
         const routeKey = `${row.filial_origem}->${row.filial_destino}`;
         if (!routesMap.has(routeKey)) {
@@ -932,28 +1292,137 @@ const server = http.createServer(async (req, res) => {
             totalItens: 0,
             totalUnidades: 0,
             valorTotalRs: 0,
+            countFefo: 0,
+            countExcesso: 0,
+            countParado: 0,
+            countCuradoria: 0,
             items: [],
           });
         }
         const rObj = routesMap.get(routeKey);
+        const val = Number(row.valor_total || 0);
+        const un = Number(row.qtd_sugerida || 0);
+
         rObj.totalItens += 1;
-        rObj.totalUnidades += Number(row.qtd_sugerida || 0);
-        rObj.valorTotalRs = Math.round((rObj.valorTotalRs + Number(row.valor_total || 0)) * 100) / 100;
+        rObj.totalUnidades += un;
+        rObj.valorTotalRs = Math.round((rObj.valorTotalRs + val) * 100) / 100;
+
+        const isCuradoria = row.tipo === 'CURADORIA_IA' || (row.motivo && row.motivo.includes('Curadoria')) || (row.justificativa_ia && row.justificativa_ia.includes('Remanejamento'));
+        if (isCuradoria) {
+          rObj.countCuradoria += 1;
+          curadoriaCount += 1;
+          curadoriaVal += val;
+        } else if (row.tipo === 'FEFO_VALIDADE') {
+          rObj.countFefo += 1;
+          fefoCount += 1;
+          fefoVal += val;
+        } else if (row.tipo === 'EXCESSO') {
+          rObj.countExcesso += 1;
+          excessoCount += 1;
+          excessoVal += val;
+        } else {
+          rObj.countParado += 1;
+          paradoCount += 1;
+          paradoVal += val;
+        }
+
         rObj.items.push({
           ...row,
           barras: row.barras || '',
           labora: row.labora || '',
+          isCuradoria,
         });
       }
 
       const activeTransfers = getMotorTransfers(clientCode);
+      const curadoriaDecisionsList = getCuradoriaDecisions(clientCode, latestRun.id);
+
+      // REV-026: Quando o comprador filtra por Curadoria IA, mesclar decisões tomadas para que nunca apareça vazio
+      if (tipoParam === 'CURADORIA_IA' || tipoParam === 'ALL') {
+        for (const cd of curadoriaDecisionsList) {
+          if (cd.lojas_doadoras && cd.lojas_doadoras.length > 0) {
+            const donor = cd.lojas_doadoras[0];
+            const dest = cd.lojas_canceladas[0] || { filial_id: donor.filial_id === 2 ? 3 : 2, nome: donor.filial_id === 2 ? 'BF CENTRO' : 'BF CID.NOVA' };
+            const rKey = `${donor.filial_id}->${dest.filial_id}`;
+            
+            if (!routesMap.has(rKey)) {
+              routesMap.set(rKey, {
+                routeKey: rKey,
+                filialOrigem: donor.filial_id,
+                filialOrigemNome: donor.nome,
+                filialOrigemReduz: donor.nome,
+                filialDestino: dest.filial_id,
+                filialDestinoNome: dest.nome,
+                filialDestinoReduz: dest.nome,
+                totalItens: 0,
+                totalUnidades: 0,
+                valorTotalRs: 0,
+                countFefo: 0,
+                countExcesso: 0,
+                countParado: 0,
+                countCuradoria: 0,
+                items: []
+              });
+            }
+            
+            const rObj = routesMap.get(rKey);
+            // Evitar duplicar o mesmo produto na mesma rota
+            if (!rObj.items.some(it => it.produto_id === cd.produto_id)) {
+              const itemQty = cd.total_un_abatidas || 1;
+              const itemRs = cd.economia_rs || Math.round(itemQty * cd.custo_unit * 100) / 100;
+              rObj.totalItens += 1;
+              rObj.totalUnidades += itemQty;
+              rObj.valorTotalRs = Math.round((rObj.valorTotalRs + itemRs) * 100) / 100;
+              rObj.countCuradoria += 1;
+              curadoriaCount += 1;
+              curadoriaVal += itemRs;
+
+              rObj.items.push({
+                id: `curad-${cd.produto_id}`,
+                run_id: latestRun.id,
+                produto_id: cd.produto_id,
+                descricao: cd.descricao,
+                filial_origem: donor.filial_id,
+                filial_origem_nome: donor.nome,
+                filial_destino: dest.filial_id,
+                filial_destino_nome: dest.nome,
+                tipo: 'CURADORIA_IA',
+                qtd_sugerida: itemQty,
+                custo_unit: cd.custo_unit,
+                valor_total: itemRs,
+                validade_prioritaria: '2027-12-31',
+                motivo: `🧬 Curadoria IA • Transfer-First: Abatimento de compra externa suprido por estoque de ${donor.labora} (${donor.estoque_atual} un em estoque)`,
+                barras: cd.barras,
+                labora: cd.labora,
+                isCuradoria: true
+              });
+            }
+          }
+        }
+      }
+
+      // Lista de filiais ativas para os dropdowns de filtro
+      const clientPolicies = getFilialPolicies(clientCode).filter((p) => Number(p.filial_id) !== 1);
+      const filiais = clientPolicies.map((p) => ({
+        filial_id: Number(p.filial_id),
+        label: `L${String(p.filial_id).padStart(2, '0')} • ${p.nome_reduz || p.nome_loja?.slice(0, 15) || `Loja ${p.filial_id}`}`,
+        short: `L${String(p.filial_id).padStart(2, '0')} (${p.nome_reduz || `F${p.filial_id}`})`
+      }));
 
       return sendJson(res, 200, {
         ok: true,
         runId: latestRun.id,
         routes: Array.from(routesMap.values()),
-        totalGeralRs: remanRows.reduce((a, b) => a + Number(b.valor_total || 0), 0),
+        totalGeralRs: Math.round(remanRows.reduce((a, b) => a + Number(b.valor_total || 0), 0) * 100) / 100,
         totalGeralUnidades: remanRows.reduce((a, b) => a + Number(b.qtd_sugerida || 0), 0),
+        totalItens: remanRows.length,
+        summary: {
+          fefoCount, fefoVal: Math.round(fefoVal * 100) / 100,
+          excessoCount, excessoVal: Math.round(excessoVal * 100) / 100,
+          paradoCount, paradoVal: Math.round(paradoVal * 100) / 100,
+          curadoriaCount, curadoriaVal: Math.round(curadoriaVal * 100) / 100,
+        },
+        filiais,
         transfers: activeTransfers,
       });
     }
@@ -1000,13 +1469,101 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true, transfers });
     }
 
-    if (pathname === '/api/remanejamento/transfer-status' && req.method === 'POST') {
+    if ((pathname === '/api/remanejamento/transfer-status' || pathname === '/api/remanejamento/status') && req.method === 'POST') {
       const body = await readBody(req);
-      if (!body.transferId || !body.status) {
+      const tId = Number(body.transferId || body.id);
+      const status = body.status;
+      if (!tId || !status) {
         return sendJson(res, 400, { error: 'transferId e status obrigatorios.' });
       }
-      updateMotorTransferStatus(clientCode, Number(body.transferId), body.status);
-      return sendJson(res, 200, { ok: true, transferId: body.transferId, status: body.status });
+      updateMotorTransferStatus(clientCode, tId, status);
+      return sendJson(res, 200, { ok: true, transferId: tId, status });
+    }
+
+    
+    // REV-026: Emitir transferência formal a partir de decisão da Curadoria IA
+    if (pathname === '/api/curadoria/emit-transfer' && req.method === 'POST') {
+      const latestRun = getLatestRun(clientCode);
+      if (!latestRun) return sendJson(res, 404, { error: 'Nenhuma execucao encontrada.' });
+      const body = await readBody(req);
+      const { produto_id, all } = body;
+      const decs = getCuradoriaDecisions(clientCode, latestRun.id);
+
+      if (all) {
+        let count = 0;
+        const emitted = [];
+        for (const dec of decs) {
+          if (!dec.transfer_emitted && dec.lojas_doadoras && dec.lojas_doadoras.length > 0) {
+            const bestDonor = dec.lojas_doadoras[0];
+            const bestDest = dec.lojas_canceladas[0] || { filial_id: bestDonor.filial_id === 2 ? 3 : 2, nome: bestDonor.filial_id === 2 ? 'Loja 3' : 'Loja 2' };
+            const qty = dec.total_un_abatidas || 1;
+            const resTrf = createMotorTransfer(clientCode, latestRun.id, {
+              filialOrigem: bestDonor.filial_id,
+              filialOrigemNome: bestDonor.nome,
+              filialDestino: bestDest.filial_id,
+              filialDestinoNome: bestDest.nome,
+              items: [{
+                produto_id: dec.produto_id,
+                barras: dec.barras,
+                descricao: dec.descricao,
+                labora: dec.labora,
+                qtd_solicitada: qty,
+                custo_unit: dec.custo_unit,
+                valor_total: dec.economia_rs,
+                motivo_decisao: `🧬 Curadoria IA • Transfer-First (Cancelou compras externas da molécula ${dec.molecule_key || ''})`
+              }],
+              observacao: `🧬 Curadoria IA • Transfer-First (${dec.descricao} • Cancelou compra externa)`
+            });
+            count++;
+            emitted.push(resTrf.codigoTransferencia);
+          }
+        }
+        return sendJson(res, 200, { ok: true, count, emitted, message: `${count} guias de transferência emitidas no motor!` });
+      }
+
+      const targetDec = decs.find(d => Number(d.produto_id) === Number(produto_id));
+      if (!targetDec) return sendJson(res, 404, { error: 'Decisao nao encontrada.' });
+      if (!targetDec.lojas_doadoras || targetDec.lojas_doadoras.length === 0) {
+        return sendJson(res, 400, { error: 'Nenhuma loja doadora com estoque alternativo para transferir.' });
+      }
+
+      const donor = targetDec.lojas_doadoras[0];
+      const dest = targetDec.lojas_canceladas[0] || { filial_id: donor.filial_id === 2 ? 3 : 2, nome: donor.filial_id === 2 ? 'Loja 3' : 'Loja 2' };
+      const qty = targetDec.total_un_abatidas || 1;
+      const resTrf = createMotorTransfer(clientCode, latestRun.id, {
+        filialOrigem: donor.filial_id,
+        filialOrigemNome: donor.nome,
+        filialDestino: dest.filial_id,
+        filialDestinoNome: dest.nome,
+        items: [{
+          produto_id: targetDec.produto_id,
+          barras: targetDec.barras,
+          descricao: targetDec.descricao,
+          labora: targetDec.labora,
+          qtd_solicitada: qty,
+          custo_unit: targetDec.custo_unit,
+          valor_total: targetDec.economia_rs,
+          motivo_decisao: `🧬 Curadoria IA • Transfer-First (Cancelou compras externas da molécula ${targetDec.molecule_key || ''})`
+        }],
+        observacao: `🧬 Curadoria IA • Transfer-First (${targetDec.descricao} • Cancelou compra externa)`
+      });
+
+      return sendJson(res, 200, { ok: true, codigoTransferencia: resTrf.codigoTransferencia, message: `Guia ${resTrf.codigoTransferencia} emitida com sucesso!` });
+    }
+
+    // REV-026: Ação operacional no lote crítico FEFO
+    if (pathname === '/api/remanejamento/fefo-action' && req.method === 'POST') {
+      const body = await readBody(req);
+      const { produto_id, filial_id, acao, motivo } = body;
+      recordBuyerLearning(clientCode, {
+        filial_id: Number(filial_id || 0),
+        produto_id: Number(produto_id),
+        descricao: body.descricao || `SKU ${produto_id}`,
+        tipo_evento: acao === 'SEGREGA_DEVOLUCAO' ? 'FEFO_SEGREGA_DEVOLUCAO' : 'FEFO_DESOVA_BALCAO',
+        motivo: motivo || (acao === 'SEGREGA_DEVOLUCAO' ? 'Lote vencido segregado para troca/devolução ao fornecedor' : 'Ação de desova ativa no balcão da loja'),
+        acao_futura: 'PREVENCAO_PERDAS'
+      });
+      return sendJson(res, 200, { ok: true, message: 'Ação operacional registrada com sucesso!' });
     }
 
     if (pathname === '/api/remanejamento/export-excel' && req.method === 'GET') {
@@ -1220,46 +1777,108 @@ const server = http.createServer(async (req, res) => {
       }).sort((a, b) => (a.custo_unit || 9999) - (b.custo_unit || 9999));
 
       const [substancia = '', concentracao = '', forma = '', packBucket = ''] = key.split('|');
-      const targetSku = distinctSkus.find((s) => s.produto_id === skuId) || null;
-      const cheapestSku = distinctSkus.filter((s) => s.custo_unit > 0).sort((a, b) => a.custo_unit - b.custo_unit)[0] || distinctSkus[0];
-      const otherSkus = targetSku ? distinctSkus.filter((s) => s.produto_id !== skuId) : distinctSkus;
+      const targetSku = distinctSkus.find((s) => s.produto_id === skuId) || distinctSkus.slice().sort((a, b) => b.total_sugestao_un - a.total_sugestao_un)[0] || distinctSkus[0];
+
+      // REV-022: Filtrar rigorosamente produtos sem estoque fisico nem sugestao (elimina fantasmas de R$ 0,01 e linhas de zeros)
+      const visibleSkus = distinctSkus.filter((s) =>
+        (targetSku && s.produto_id === targetSku.produto_id) ||
+        s.total_estoque > 0 ||
+        s.total_sugestao_un > 0
+      );
+
+      // Menor custo apenas entre produtos comercialmente validos (custo >= 0.50 e com estoque ou demanda real)
+      const candidateCheapest = visibleSkus.filter((s) =>
+        s.custo_unit >= 0.50 &&
+        (s.total_estoque > 0 || s.total_sugestao_un > 0)
+      );
+      const cheapestSku = candidateCheapest.length > 0
+        ? candidateCheapest.slice().sort((a, b) => a.custo_unit - b.custo_unit)[0]
+        : targetSku;
+
+      const otherSkus = targetSku ? visibleSkus.filter((s) => s.produto_id !== targetSku.produto_id) : visibleSkus;
       const otherStockTotal = otherSkus.reduce((acc, s) => acc + s.total_estoque, 0);
-      const totalDdvMolecula = distinctSkus.reduce((acc, s) => acc + s.total_ddv, 0);
+      const totalDdvMolecula = visibleSkus.reduce((acc, s) => acc + s.total_ddv, 0);
       const otherCoverageDays = totalDdvMolecula > 0 ? Math.round((otherStockTotal / totalDdvMolecula) * 10) / 10 : (otherStockTotal > 0 ? 999 : 0);
 
-      // REV-020: Deteccao de produtos de baixo giro / Curva D com estoque parado na mesma molecula
-      const deadStocks = distinctSkus.filter((s) => (s.abc_class === 'D' || /D/i.test(s.curva_erp_classe || '')) && s.total_estoque > 0);
+      // REV-020 / REV-022: Deteccao de produtos de baixo giro / Curva D com estoque parado na mesma molecula
+      const deadStocks = otherSkus.filter((s) => (s.abc_class === 'D' || /D/i.test(s.curva_erp_classe || '')) && s.total_estoque > 0);
       const deadTotalQty = deadStocks.reduce((acc, s) => acc + s.total_estoque, 0);
       const deadLabsList = Array.from(new Set(deadStocks.map((s) => s.labora || 'Outro'))).join(', ');
 
       let iaAdvice = null;
       if (deadStocks.length > 0 && targetSku && targetSku.total_sugestao_un > 0) {
+        const dedQty = Math.min(deadTotalQty, targetSku.total_sugestao_un);
+        const ecoDead = Math.round(dedQty * targetSku.custo_unit * 100) / 100;
         iaAdvice = {
           type: 'DEAD_STOCK_WARNING',
-          severity: 'warning',
-          title: '⚠️ Atenção ao Giro na Rede: Estoque Parado de Baixo Giro (Curva D) na Mesma Molécula',
-          message: `Existem ${deadTotalQty} un em estoque na rede de marcas/laboratórios de baixo giro (${deadLabsList}) com curva D e sem demanda recente. Antes de fechar compra de ${targetSku.total_sugestao_un} un de ${targetSku.descricao}, recomendamos priorizar a desova no balcão das lojas ou suspender temporariamente a compra.`,
+          severity: 'danger',
+          title: '🛑 Recomendação da IA: Não Recomendamos Comprar Agora Este Produto!',
+          headline: `Risco de Validade na Prateleira: ${deadTotalQty} un de marcas de baixo giro (Curva D) já estão paradas na rede.`,
+          message: `Identificamos que já existem ${deadTotalQty} unidades em estoque na rede das marcas ${deadLabsList} (Curva D - Baixo Giro), sem giro recente e correndo risco iminente de perda por validade na prateleira.\n\nAntes de fechar a compra de mais ${targetSku.total_sugestao_un} un de ${targetSku.descricao} (${targetSku.labora}), recomendamos priorizar a desova no balcão das lojas ou abater as ${dedQty} un existentes do pedido atual.`,
           deadStocks: deadStocks.map((s) => ({ produto_id: s.produto_id, descricao: s.descricao, labora: s.labora, estoque: s.total_estoque, curva: s.abc_class })),
+          deadTotalQty,
+          deadLabsList,
+          dedQty,
+          ecoDead,
           canSuspend: true,
+          canDiscount: deadTotalQty > 0,
+          canSwitch: cheapestSku && cheapestSku.produto_id !== targetSku.produto_id,
         };
       } else if (cheapestSku && targetSku && targetSku.produto_id !== cheapestSku.produto_id && targetSku.custo_unit > cheapestSku.custo_unit) {
         const diffUnit = (targetSku.custo_unit - cheapestSku.custo_unit).toFixed(2);
+        const economiaTotal = Math.round(Number(diffUnit) * targetSku.total_sugestao_un * 100) / 100;
         iaAdvice = {
           type: 'MARGIN_OPPORTUNITY',
           severity: 'info',
           title: '💡 Oportunidade de Maior Margem / Menor Custo na Rede',
-          message: `O laboratório ${cheapestSku.labora} (${cheapestSku.descricao}) tem o menor custo de compra registrado: R$ ${cheapestSku.custo_unit.toFixed(2)} vs R$ ${targetSku.custo_unit.toFixed(2)} da marca sugerida (Economia de R$ ${diffUnit} por unidade). A rede já possui ${cheapestSku.total_estoque} un em estoque deste fabricante mais econômico!`,
+          headline: `O fabricante ${cheapestSku.labora} possui menor custo de compra: Economia de R$ ${diffUnit}/un (R$ ${economiaTotal.toFixed(2)} no pedido).`,
+          message: `O laboratório ${cheapestSku.labora} (${cheapestSku.descricao}) está cotado a R$ ${cheapestSku.custo_unit.toFixed(2)} vs R$ ${targetSku.custo_unit.toFixed(2)} da marca demandada (${targetSku.labora}). A rede possui ${cheapestSku.total_estoque} un em estoque deste fabricante mais econômico!`,
           canSwitch: true,
+          canDiscount: otherStockTotal > 0,
+          canSuspend: true,
+          diffUnit: Number(diffUnit),
+          economiaTotal,
         };
       } else if (targetSku && targetSku.total_sugestao_un > 0 && otherStockTotal > 0 && otherCoverageDays >= 14) {
+        const dedQty = Math.min(otherStockTotal, targetSku.total_sugestao_un);
+        const ecoDeducao = Math.round(dedQty * targetSku.custo_unit * 100) / 100;
+        const otherLabsList = Array.from(new Set(otherSkus.filter((s) => s.total_estoque > 0).map((s) => s.labora))).join(', ');
         iaAdvice = {
           type: 'ENOUGH_STOCK_WARNING',
           severity: 'warning',
-          title: '⚠️ Estoque Existente da Mesma Molécula em Outros Laboratórios na Rede',
-          message: `O motor sugeriu compra de ${targetSku.total_sugestao_un} un de ${targetSku.descricao} (${targetSku.labora}) totalizando R$ ${(targetSku.total_sugestao_rs || 0).toFixed(2)}. Porém, a rede já possui ${otherStockTotal} unidades em estoque de outros laboratórios desta mesma apresentação, com ${otherCoverageDays} dias de cobertura garantida!`,
+          title: '⚠️ Recomendação da IA: Estoque Suficiente da Molécula em Outras Marcas',
+          headline: `A rede já possui ${otherStockTotal} un (${otherCoverageDays} dias de cobertura) em marcas alternativas (${otherLabsList}).`,
+          message: `O motor sugeriu compra de ${targetSku.total_sugestao_un} un de ${targetSku.descricao} (${targetSku.labora}) totalizando R$ ${(targetSku.total_sugestao_rs || 0).toFixed(2)}. Porém, a rede já possui ${otherCoverageDays} dias de cobertura garantida em estoques de outros fabricantes desta mesma apresentação!`,
           canDiscount: true,
+          canSuspend: true,
+          canSwitch: cheapestSku && cheapestSku.produto_id !== targetSku.produto_id,
+          dedQty,
+          ecoDeducao,
+        };
+      } else {
+        iaAdvice = {
+          type: 'BALANCED',
+          severity: 'success',
+          title: '✓ Molécula Equilibrada na Rede',
+          message: `Total de ${visibleSkus.length} produtos ativos nesta molécula. Estoque somado: ${visibleSkus.reduce((a, s) => a + s.total_estoque, 0)} un (Cobertura média: ${otherCoverageDays} dias).`,
+          canKeep: true,
         };
       }
+
+      // REV-023: Rotas nativas de remanejamento e estratégia loja a loja
+      const molProductIds = visibleSkus.map((s) => s.produto_id);
+      let nativeRemanRoutes = [];
+      if (molProductIds.length > 0) {
+        nativeRemanRoutes = db.prepare(`
+          SELECT r.id, r.produto_id, r.filial_origem, r.filial_destino, r.tipo, r.qtd_sugerida, r.custo_unit, r.valor_total, r.motivo,
+                 p.descricao, p.labora
+          FROM engine_remanejamento r
+          JOIN engine_sku_results p ON p.run_id = r.run_id AND p.filial_id = r.filial_origem AND p.produto_id = r.produto_id
+          WHERE r.run_id = ? AND r.produto_id IN (${molProductIds.map(() => '?').join(',')})
+          ORDER BY r.valor_total DESC
+        `).all(latestRun.id, ...molProductIds);
+      }
+      const storeStrategy = analyzeMoleculeStoreStrategy(targetSku, visibleSkus, filiais, nativeRemanRoutes);
 
       return sendJson(res, 200, {
         ok: true,
@@ -1271,13 +1890,14 @@ const server = http.createServer(async (req, res) => {
         concentracao,
         forma,
         packBucket,
-        summary: mol || {
-          skus_count: distinctSkus.length,
-          labs_count: new Set(distinctSkus.map((s) => s.labora)).size,
-          estoque_total: distinctSkus.reduce((acc, s) => acc + s.total_estoque, 0),
+        summary: {
+          ...(mol || {}),
+          skus_count: visibleSkus.length,
+          labs_count: new Set(visibleSkus.map((s) => s.labora)).size,
+          estoque_total: visibleSkus.reduce((acc, s) => acc + s.total_estoque, 0),
           ddv_proj_total: totalDdvMolecula,
           cobertura_molecula_dias: otherCoverageDays,
-          economia_rs_evitada: 0,
+          economia_rs_evitada: mol?.economia_rs_evitada || 0,
         },
         targetSku,
         cheapestSku,
@@ -1285,7 +1905,9 @@ const server = http.createServer(async (req, res) => {
         otherCoverageDays,
         deadStocks,
         ia_advice: iaAdvice,
-        skus: distinctSkus,
+        store_analysis: storeStrategy.stores,
+        remanejamento_sinergia: storeStrategy.remanejamento,
+        skus: visibleSkus,
       });
     }
 
@@ -1450,27 +2072,946 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { logs });
     }
 
+    // ========================================================
+    // CURADORIA IA DE MOLÉCULAS & LEARNING ENGINE
+    // ========================================================
+// ========================================================
+// AUXILIAR: ANÁLISE FILIAL A FILIAL & SINERGIA COM REMANEJAMENTO (REV-023)
+// ========================================================
+function analyzeMoleculeStoreStrategy(targetSku, distinctSkus, filiais, nativeRemanRoutes = []) {
+  if (!targetSku) return { stores: [], remanejamento: null };
+
+  const otherSkus = distinctSkus.filter((s) => s.produto_id !== targetSku.produto_id);
+  const storesAnalysis = [];
+  const doadoras = [];
+  const receptoras = [];
+
+  for (const f of filiais) {
+    const fId = Number(f.filial_id);
+    const targetInStore = (targetSku.lojas && targetSku.lojas[fId]) || { estoque_atual: 0, cobertura_dias: 0, sugestao_compra_un: 0, ddv_projetada: 0 };
+    const sugUn = Number(targetInStore.sugestao_compra_un || 0);
+    const sugRs = Number(targetInStore.sugestao_compra_rs || (sugUn * (targetSku.custo_unit || 0)).toFixed(2));
+    const estAlvo = Number(targetInStore.estoque_atual || 0);
+    const cobAlvo = Number(targetInStore.cobertura_dias || 0);
+    const ddvAlvo = Number(targetInStore.ddv_projetada || 0);
+
+    const altItems = [];
+    let altEstTotal = 0;
+    let deadEstTotal = 0;
+    let altDdvTotal = 0;
+
+    for (const os of otherSkus) {
+      const osInStore = (os.lojas && os.lojas[fId]) || { estoque_atual: 0, cobertura_dias: 0, ddv_projetada: 0 };
+      const e = Number(osInStore.estoque_atual || 0);
+      if (e > 0) {
+        altEstTotal += e;
+        altDdvTotal += Number(osInStore.ddv_projetada || 0);
+        const isDead = os.abc_class === 'D' || /D/i.test(os.curva_erp_classe || '');
+        if (isDead) deadEstTotal += e;
+        altItems.push({
+          produto_id: os.produto_id,
+          descricao: os.descricao,
+          labora: os.labora,
+          estoque: e,
+          cobertura_dias: osInStore.cobertura_dias,
+          abc_class: os.abc_class,
+          isDead,
+        });
+      }
+    }
+
+    const cobAltMedia = altDdvTotal > 0 ? Math.round((altEstTotal / altDdvTotal) * 10) / 10 : (altEstTotal > 0 ? 999 : 0);
+
+    let veredito = 'EQUILIBRADO';
+    let badgeColor = 'neutral';
+    let tituloVeredito = '✓ Estoque Equilibrado';
+    let orientacao = 'Estoque em níveis normais para esta filial.';
+    let acaoSugerida = 'Nenhuma compra externa necessária.';
+    let cancelQty = 0;
+    let faltaQty = 0;
+
+    if (sugUn > 0) {
+      if (altEstTotal >= sugUn || cobAltMedia >= 45 || altEstTotal >= 15) {
+        veredito = 'BLOQUEAR_COMPRA';
+        badgeColor = 'danger';
+        tituloVeredito = '🛑 NÃO COMPRAR NESTA FILIAL';
+        cancelQty = sugUn;
+        const labsText = altItems.map(a => `${a.labora}: ${a.estoque} un (${a.cobertura_dias >= 999 ? '999+d' : a.cobertura_dias + 'd'})`).slice(0, 3).join(', ');
+        orientacao = `A loja já possui ${altEstTotal} un em estoque de marcas concorrentes (${labsText}). Repor mais ${sugUn} un gerará sobre-estoque crítico e imobilização desnecessária de caixa!`;
+        acaoSugerida = `Cancelar a compra de ${sugUn} un desta filial (Economia de R$ ${(sugUn * (targetSku.custo_unit || 0)).toFixed(2)}).`;
+      } else if (altEstTotal > 0) {
+        veredito = 'DEDUZIR_PARCIAL';
+        badgeColor = 'warning';
+        tituloVeredito = '📉 DESCONTAR DO PEDIDO DA FILIAL';
+        cancelQty = Math.min(sugUn, altEstTotal);
+        const labsText = altItems.map(a => `${a.labora}: ${a.estoque} un`).join(', ');
+        orientacao = `A loja possui demanda de ${sugUn} un, mas já tem ${altEstTotal} un de marcas alternativas em prateleira (${labsText}).`;
+        acaoSugerida = `Abater as ${cancelQty} un existentes, reduzindo a compra para ${sugUn - cancelQty} un.`;
+      } else {
+        veredito = 'RUPTURA_REAL';
+        badgeColor = 'primary';
+        faltaQty = sugUn;
+        tituloVeredito = '🛒 RUPTURA / DEMANDA GENUÍNA';
+        orientacao = `Loja com estoque zerado e sem alternativas na mesma molécula. Demanda comprovada de ${sugUn} un.`;
+        acaoSugerida = `Atender prioritariamente via Remanejamento Interno (custo zero) ou compra direta.`;
+        receptoras.push({
+          filial_id: fId,
+          label: f.short || f.label,
+          faltaQty: sugUn,
+          sugRs: Number((sugUn * (targetSku.custo_unit || 0)).toFixed(2)),
+        });
+      }
+    } else {
+      if (altEstTotal >= 15 && cobAltMedia >= 60) {
+        veredito = 'DOADORA_EXCESSO';
+        badgeColor = 'purple';
+        tituloVeredito = '🚚 LOJA DOADORA (SOBRA DE ESTOQUE)';
+        const surplus = Math.max(0, altEstTotal - Math.round(altDdvTotal * 30));
+        orientacao = `Possui excedente de ${altEstTotal} un em marcas concorrentes (${cobAltMedia}d de cobertura).`;
+        acaoSugerida = `Pode transferir até ${surplus} un para filiais com falta, evitando compras externas.`;
+        if (surplus > 0) {
+          doadoras.push({ filial_id: fId, label: f.short || f.label, surplus, items: altItems });
+        }
+      } else if (deadEstTotal > 0) {
+        veredito = 'DESOVAR_BALCAO';
+        badgeColor = 'warning';
+        tituloVeredito = '⚠️ PRIORIZAR DESOVA NO BALCÃO';
+        orientacao = `Possui ${deadEstTotal} un de Curva D sem giro recente correndo risco de vencimento.`;
+        acaoSugerida = `Focar no balcão e não repor nada até zerar este estoque.`;
+      }
+    }
+
+    if (altEstTotal >= 20 && cobAltMedia >= 60) {
+      const surplus = Math.max(0, altEstTotal - Math.max(1, Math.round(altDdvTotal * 30)));
+      if (surplus > 0 && !doadoras.some((d) => d.filial_id === fId)) {
+        doadoras.push({ filial_id: fId, label: f.short || f.label, surplus, items: altItems });
+      }
+    }
+
+    storesAnalysis.push({
+      filial_id: fId,
+      label: f.short || f.label,
+      full_label: f.label,
+      targetSug: sugUn,
+      sugRs,
+      targetEst: estAlvo,
+      targetCob: cobAlvo,
+      altEstTotal,
+      deadEstTotal,
+      cobAltMedia,
+      altItems,
+      veredito,
+      badgeColor,
+      tituloVeredito,
+      orientacao,
+      acaoSugerida,
+      cancelQty,
+      faltaQty,
+    });
+  }
+
+  // Rotas de Remanejamento: nativas do motor ou calculadas entre doadoras e receptoras
+  const transferRoutes = [];
+  let totalTransferivel = 0;
+
+  if (nativeRemanRoutes.length > 0) {
+    for (const r of nativeRemanRoutes) {
+      totalTransferivel += r.qtd_sugerida;
+      const fOrig = filiais.find((fl) => fl.filial_id === r.filial_origem);
+      const fDest = filiais.find((fl) => fl.filial_id === r.filial_destino);
+      transferRoutes.push({
+        id: r.id,
+        from_filial_id: r.filial_origem,
+        from_label: fOrig ? (fOrig.short || fOrig.label) : `L0${r.filial_origem}`,
+        to_filial_id: r.filial_destino,
+        to_label: fDest ? (fDest.short || fDest.label) : `L0${r.filial_destino}`,
+        produto_id: r.produto_id,
+        produto_desc: r.descricao,
+        labora: r.labora,
+        qty: r.qtd_sugerida,
+        economia_rs: r.valor_total || Math.round(r.qtd_sugerida * (targetSku.custo_unit || 0) * 100) / 100,
+        motivo: r.motivo,
+        tipo: r.tipo,
+      });
+    }
+  } else if (doadoras.length > 0 && receptoras.length > 0) {
+    const doadorasCopy = doadoras.map((d) => ({ ...d }));
+    for (const rec of receptoras) {
+      let needed = rec.faltaQty;
+      for (const donor of doadorasCopy) {
+        if (needed <= 0) break;
+        if (donor.surplus <= 0 || donor.filial_id === rec.filial_id) continue;
+        const qtyToTransfer = Math.min(needed, donor.surplus);
+        donor.surplus -= qtyToTransfer;
+        needed -= qtyToTransfer;
+        totalTransferivel += qtyToTransfer;
+        const mainItem = donor.items[0] || { labora: 'Marca Alternativa', descricao: targetSku.descricao };
+        transferRoutes.push({
+          from_filial_id: donor.filial_id,
+          from_label: donor.label,
+          to_filial_id: rec.filial_id,
+          to_label: rec.label,
+          produto_id: mainItem.produto_id || targetSku.produto_id,
+          produto_desc: mainItem.descricao,
+          labora: mainItem.labora,
+          qty: qtyToTransfer,
+          economia_rs: Math.round(qtyToTransfer * (targetSku.custo_unit || 0) * 100) / 100,
+          motivo: 'Transferência de estoque excedente para cobrir ruptura sem compra externa',
+          tipo: 'EXCESSO',
+        });
+      }
+    }
+  }
+
+  const economiaRemanejamentoRs = Math.round(transferRoutes.reduce((acc, r) => acc + (r.economia_rs || 0), 0) * 100) / 100;
+  const remanejamento = {
+    hasOpportunities: transferRoutes.length > 0,
+    routes: transferRoutes,
+    totalTransferivel,
+    economiaRemanejamentoRs,
+    doadoras: doadoras.map((d) => ({ filial_id: d.filial_id, label: d.label, surplus: d.surplus })),
+    receptoras: receptoras.map((r) => ({ filial_id: r.filial_id, label: r.label, faltaQty: r.faltaQty })),
+  };
+
+  return {
+    stores: storesAnalysis,
+    remanejamento,
+  };
+}
+
+
+// ========================================================
+// AUXILIAR: VISÃO MATRICIAL POR MOLÉCULA (REV-021)
+// ========================================================
+function buildMoleculeMatricialCard(db, runId, molRow, clientCode, filiais, suspensionsMap) {
+  const allRows = db.prepare(`
+    SELECT filial_id, produto_id, barras, descricao, labora, fornecedor_nome,
+           abc_class, xyz_class, curva_erp_ranking, curva_erp_classe,
+           preco_venda, custo_unit, margem_pct,
+           estoque_atual, transito_real, ddv_projetada, cobertura_dias,
+           sugestao_compra_un, sugestao_compra_rs, justificativa_ia
+    FROM engine_sku_results
+    WHERE run_id = ? AND molecule_key = ? AND filial_id <> 1
+    ORDER BY produto_id ASC, filial_id ASC
+  `).all(runId, molRow.molecule_key);
+
+  const groupedMap = new Map();
+  for (const r of allRows) {
+    if (!groupedMap.has(r.produto_id)) {
+      groupedMap.set(r.produto_id, {
+        produto_id: r.produto_id,
+        barras: r.barras,
+        descricao: r.descricao,
+        labora: r.labora || 'Não Informado',
+        abc_class: r.abc_class || 'D',
+        curva_erp_classe: r.curva_erp_classe,
+        preco_venda: r.preco_venda,
+        custo_unit: r.custo_unit,
+        margem_pct: r.margem_pct,
+        lojas: {},
+        total_estoque: 0,
+        total_transito: 0,
+        total_ddv: 0,
+        total_sugestao_un: 0,
+        total_sugestao_rs: 0,
+        is_suspended: suspensionsMap.has(r.produto_id),
+      });
+    }
+    const item = groupedMap.get(r.produto_id);
+    item.lojas[r.filial_id] = {
+      filial_id: r.filial_id,
+      estoque_atual: Number(r.estoque_atual || 0),
+      transito_real: Number(r.transito_real || 0),
+      cobertura_dias: Number(r.cobertura_dias || 0),
+      ddv_projetada: Number(r.ddv_projetada || 0),
+      sugestao_compra_un: Number(r.sugestao_compra_un || 0),
+      sugestao_compra_rs: Number(r.sugestao_compra_rs || 0),
+      abc_class: r.abc_class,
+    };
+    item.total_estoque += Math.max(0, Number(r.estoque_atual || 0));
+    item.total_transito += Math.max(0, Number(r.transito_real || 0));
+    item.total_ddv += Number(r.ddv_projetada || 0);
+    item.total_sugestao_un += Number(r.sugestao_compra_un || 0);
+    item.total_sugestao_rs += Number(r.sugestao_compra_rs || 0);
+    if (r.custo_unit > 0 && (!item.custo_unit || r.custo_unit < item.custo_unit)) {
+      item.custo_unit = r.custo_unit;
+    }
+    if (r.preco_venda > 0 && (!item.preco_venda || r.preco_venda > item.preco_venda)) {
+      item.preco_venda = r.preco_venda;
+    }
+    if (['A', 'B'].includes(r.abc_class)) {
+      item.abc_class = r.abc_class;
+    }
+  }
+
+  const distinctSkus = Array.from(groupedMap.values()).map(p => {
+    p.cobertura_rede = p.total_ddv > 0
+      ? Math.round((p.total_estoque / p.total_ddv) * 10) / 10
+      : (p.total_estoque > 0 ? 999 : 0);
+    return p;
+  }).sort((a, b) => (a.custo_unit || 9999) - (b.custo_unit || 9999));
+
+  // O SKU alvo: preferir o que tem a maior sugestão de compra un
+  const targetSku = distinctSkus.slice().sort((a, b) => b.total_sugestao_un - a.total_sugestao_un)[0] || distinctSkus[0];
+
+  // REV-022: Filtrar rigorosamente produtos sem estoque fisico nem sugestao (elimina fantasmas de R$ 0,01 e linhas de zeros)
+  const visibleSkus = distinctSkus.filter((s) =>
+    (targetSku && s.produto_id === targetSku.produto_id) ||
+    s.total_estoque > 0 ||
+    s.total_sugestao_un > 0
+  );
+
+  // Se nao ha concorrente com estoque fisico nem demanda na rede, nao bloqueia o comprador
+  if (visibleSkus.length <= 1) {
+    return null;
+  }
+
+  // Menor custo apenas entre produtos comercialmente validos (custo >= 0.50 e com estoque ou demanda real)
+  const candidateCheapest = visibleSkus.filter(s =>
+    s.custo_unit >= 0.50 &&
+    (s.total_estoque > 0 || s.total_sugestao_un > 0)
+  );
+  const cheapestSku = candidateCheapest.length > 0
+    ? candidateCheapest.slice().sort((a, b) => a.custo_unit - b.custo_unit)[0]
+    : targetSku;
+
+  const otherSkus = targetSku ? visibleSkus.filter(s => s.produto_id !== targetSku.produto_id) : visibleSkus;
+  const otherStockTotal = otherSkus.reduce((acc, s) => acc + s.total_estoque, 0);
+  const totalDdvMolecula = visibleSkus.reduce((acc, s) => acc + s.total_ddv, 0);
+  const otherCoverageDays = totalDdvMolecula > 0 ? Math.round((otherStockTotal / totalDdvMolecula) * 10) / 10 : (otherStockTotal > 0 ? 999 : 0);
+
+  // Detecção de Curva D / Parados com estoque real na rede
+  const deadStocks = otherSkus.filter(s => (s.abc_class === 'D' || /D/i.test(s.curva_erp_classe || '')) && s.total_estoque > 0);
+  const deadTotalQty = deadStocks.reduce((acc, s) => acc + s.total_estoque, 0);
+  const deadLabsList = Array.from(new Set(deadStocks.map(s => s.labora || 'Outro'))).join(', ');
+
+  let iaAdvice = null;
+  if (deadStocks.length > 0 && targetSku && targetSku.total_sugestao_un > 0) {
+    const dedQty = Math.min(deadTotalQty, targetSku.total_sugestao_un);
+    const ecoDead = Math.round(dedQty * targetSku.custo_unit * 100) / 100;
+    iaAdvice = {
+      type: 'DEAD_STOCK_WARNING',
+      severity: 'danger',
+      title: '🛑 Recomendação da IA: Não Recomendamos Comprar Agora Este Produto!',
+      headline: `Risco de Validade na Prateleira: ${deadTotalQty} un de marcas de baixo giro (Curva D) já estão paradas na rede.`,
+      message: `Identificamos que já existem ${deadTotalQty} unidades em estoque na rede das marcas ${deadLabsList} (Curva D - Baixo Giro), sem giro recente e correndo risco iminente de perda por validade na prateleira.\n\nAntes de fechar a compra de mais ${targetSku.total_sugestao_un} un de ${targetSku.descricao} (${targetSku.labora}), recomendamos priorizar a desova no balcão das lojas ou abater as ${dedQty} un existentes do pedido atual.`,
+      deadStocks: deadStocks.map(s => ({ produto_id: s.produto_id, descricao: s.descricao, labora: s.labora, estoque: s.total_estoque })),
+      deadTotalQty,
+      deadLabsList,
+      dedQty,
+      ecoDead,
+      canSuspend: true,
+      canDiscount: deadTotalQty > 0,
+      canSwitch: cheapestSku && cheapestSku.produto_id !== targetSku.produto_id,
+    };
+  } else if (cheapestSku && targetSku && targetSku.produto_id !== cheapestSku.produto_id && targetSku.custo_unit > cheapestSku.custo_unit) {
+    const diffUnit = (targetSku.custo_unit - cheapestSku.custo_unit).toFixed(2);
+    const economiaTotal = Math.round(Number(diffUnit) * targetSku.total_sugestao_un * 100) / 100;
+    iaAdvice = {
+      type: 'MARGIN_OPPORTUNITY',
+      severity: 'info',
+      title: '💡 Oportunidade de Maior Margem / Menor Custo na Rede',
+      headline: `O fabricante ${cheapestSku.labora} possui menor custo de compra: Economia de R$ ${diffUnit}/un (R$ ${economiaTotal.toFixed(2)} no pedido).`,
+      message: `O laboratório ${cheapestSku.labora} (${cheapestSku.descricao}) está cotado a R$ ${cheapestSku.custo_unit.toFixed(2)} vs R$ ${targetSku.custo_unit.toFixed(2)} da marca demandada (${targetSku.labora}). A rede possui ${cheapestSku.total_estoque} un em estoque deste fabricante mais econômico!`,
+      canSwitch: true,
+      canDiscount: otherStockTotal > 0,
+      canSuspend: true,
+      diffUnit: Number(diffUnit),
+      economiaTotal,
+    };
+  } else if (targetSku && targetSku.total_sugestao_un > 0 && otherStockTotal > 0 && otherCoverageDays >= 14) {
+    const dedQty = Math.min(otherStockTotal, targetSku.total_sugestao_un);
+    const ecoDeducao = Math.round(dedQty * targetSku.custo_unit * 100) / 100;
+    const otherLabsList = Array.from(new Set(otherSkus.filter(s => s.total_estoque > 0).map(s => s.labora))).join(', ');
+    iaAdvice = {
+      type: 'ENOUGH_STOCK_WARNING',
+      severity: 'warning',
+      title: '⚠️ Recomendação da IA: Estoque Suficiente da Molécula em Outras Marcas',
+      headline: `A rede já possui ${otherStockTotal} un (${otherCoverageDays} dias de cobertura) em marcas alternativas (${otherLabsList}).`,
+      message: `O motor sugeriu compra de ${targetSku.total_sugestao_un} un de ${targetSku.descricao} (${targetSku.labora}) totalizando R$ ${(targetSku.total_sugestao_rs || 0).toFixed(2)}. Porém, a rede já possui ${otherCoverageDays} dias de cobertura garantida em marcas alternativas desta mesma apresentação!`,
+      canDiscount: true,
+      canSuspend: true,
+      canSwitch: cheapestSku && cheapestSku.produto_id !== targetSku.produto_id,
+      dedQty,
+      ecoDeducao,
+    };
+  } else {
+    iaAdvice = {
+      type: 'BALANCED',
+      severity: 'success',
+      title: '✓ Molécula Equilibrada na Rede',
+      message: `Total de ${visibleSkus.length} produtos ativos nesta molécula. Estoque somado: ${visibleSkus.reduce((a, s) => a + s.total_estoque, 0)} un (Cobertura média: ${otherCoverageDays} dias).`,
+      canKeep: true,
+    };
+  }
+
+  // REV-023: Rotas nativas de remanejamento e estratégia loja a loja
+  const molProductIds = visibleSkus.map(s => s.produto_id);
+  const nativeRemanRoutes = molProductIds.length > 0 ? db.prepare(`
+    SELECT r.id, r.produto_id, r.filial_origem, r.filial_destino, r.tipo, r.qtd_sugerida, r.custo_unit, r.valor_total, r.motivo,
+           p.descricao, p.labora
+    FROM engine_remanejamento r
+    JOIN engine_sku_results p ON p.run_id = r.run_id AND p.filial_id = r.filial_origem AND p.produto_id = r.produto_id
+    WHERE r.run_id = ? AND r.produto_id IN (${molProductIds.map(() => '?').join(',')})
+    ORDER BY r.valor_total DESC
+  `).all(runId, ...molProductIds) : [];
+  const storeStrategy = analyzeMoleculeStoreStrategy(targetSku, visibleSkus, filiais, nativeRemanRoutes);
+
+  return {
+    molecule_key: molRow.molecule_key,
+    substancia: molRow.substancia,
+    concentracao: molRow.concentracao,
+    forma: molRow.forma,
+    pack_bucket: molRow.pack_bucket,
+    labs_count: new Set(visibleSkus.map(s => s.labora)).size,
+    skus_count: visibleSkus.length,
+    targetSku,
+    cheapestSku,
+    otherStockTotal,
+    otherCoverageDays,
+    iaAdvice,
+    store_analysis: storeStrategy.stores,
+    remanejamento_sinergia: storeStrategy.remanejamento,
+    filiais,
+    skus: visibleSkus,
+  };
+}
+
+    // ========================================================
+    // CURADORIA IA: CARDS MATRICIAIS POR MOLÉCULA & BUYER LEARNING (REV-021)
+    // ========================================================
+    if (pathname === '/api/curadoria/opportunities' && req.method === 'GET') {
+      const latestRun = getLatestRun(clientCode);
+      if (!latestRun) return sendJson(res, 200, { ok: true, molecules: [], count: 0, totalEconomiaRs: 0 });
+
+      // Filiais operacionais ativas (exclui escritório filial_id = 1)
+      const clientPolicies = getFilialPolicies(clientCode).filter(p => Number(p.filial_id) !== 1);
+      const filiais = clientPolicies.map(p => ({
+        filial_id: Number(p.filial_id),
+        label: `L${String(p.filial_id).padStart(2, '0')} • ${p.nome_reduz || p.nome_loja?.slice(0, 15) || `Loja ${p.filial_id}`}`,
+        short: `L${String(p.filial_id).padStart(2, '0')} (${p.nome_reduz || `F${p.filial_id}`})`
+      }));
+
+      const activeSuspensions = getActiveSkuSuspensions(clientCode);
+      const suspensionsMap = new Map(activeSuspensions.map(s => [s.produto_id, s]));
+
+      // Moléculas que possuem concorrência (labs_count > 1) e sugestão de compra ativa (> 0)
+      // que ainda NÃO foram decididas pelo comprador no learning log
+      const pendingMols = db.prepare(`
+        SELECT molecule_key, substancia, concentracao, forma, pack_bucket,
+               labs_count, skus_count, estoque_total, sugestao_sku_soma,
+               economia_rs_evitada, melhor_sku_id, melhor_sku_desc, melhor_custo_unit
+        FROM engine_molecule_summary
+        WHERE run_id = ? AND labs_count > 1 AND sugestao_sku_soma > 0
+          AND molecule_key NOT IN (
+            SELECT DISTINCT molecule_key FROM buyer_learning_log
+            WHERE client_code = ? AND molecule_key IS NOT NULL AND molecule_key <> ''
+          )
+        ORDER BY sugestao_sku_soma DESC
+        LIMIT 40
+      `).all(latestRun.id, clientCode);
+
+      const cards = [];
+      let totalEconomiaRs = 0;
+
+      for (const mol of pendingMols) {
+        const card = buildMoleculeMatricialCard(db, latestRun.id, mol, clientCode, filiais, suspensionsMap);
+        if (card) {
+          cards.push(card);
+          if (card.iaAdvice?.economiaTotal) {
+            totalEconomiaRs += card.iaAdvice.economiaTotal;
+          } else if (card.iaAdvice?.ecoDeducao) {
+            totalEconomiaRs += card.iaAdvice.ecoDeducao;
+          }
+        }
+      }
+
+      const totalPendingRow = db.prepare(`
+        SELECT COUNT(*) AS total
+        FROM engine_molecule_summary
+        WHERE run_id = ? AND labs_count > 1 AND sugestao_sku_soma > 0
+          AND molecule_key NOT IN (
+            SELECT DISTINCT molecule_key FROM buyer_learning_log
+            WHERE client_code = ? AND molecule_key IS NOT NULL AND molecule_key <> ''
+          )
+      `).get(latestRun.id, clientCode);
+      const totalPendingCount = totalPendingRow ? totalPendingRow.total : 0;
+
+      return sendJson(res, 200, {
+        ok: true,
+        count: totalPendingCount,
+        totalEconomiaRs: Math.round(totalEconomiaRs * 100) / 100,
+        filiais,
+        molecules: cards,
+      });
+    }
+
+    if (pathname === '/api/curadoria/decision' && req.method === 'POST') {
+      const body = await readBody(req);
+      const latestRun = getLatestRun(clientCode);
+      const { action, filial_id, produto_id, molecule_key, motivo, target_sku_id, descricao, labora_origem, labora_proposto, qty, deduct_qty } = body;
+
+      if (action === 'APPROVE_ALL') {
+        const pendingMols = db.prepare(`
+          SELECT molecule_key, substancia, melhor_sku_id, melhor_sku_desc, melhor_custo_unit
+          FROM engine_molecule_summary
+          WHERE run_id = ? AND labs_count > 1 AND sugestao_sku_soma > 0
+            AND molecule_key NOT IN (
+              SELECT DISTINCT molecule_key FROM buyer_learning_log
+              WHERE client_code = ? AND molecule_key IS NOT NULL AND molecule_key <> ''
+            )
+        `).all(latestRun.id, clientCode);
+
+        let count = 0;
+        for (const pm of pendingMols) {
+          recordBuyerLearning(clientCode, {
+            filial_id: 0,
+            molecule_key: pm.molecule_key,
+            descricao: pm.substancia,
+            tipo_evento: 'HOMOLOGOU_EM_LOTE',
+            motivo: 'Homologação expressa em lote na Pré-Tela de Curadoria IA',
+            acao_futura: 'APROVADO',
+          });
+          count++;
+        }
+        return sendJson(res, 200, { ok: true, message: `${count} moléculas homologadas com sucesso!` });
+      }
+
+      if (action === 'SUSPEND') {
+        const fId = Number(filial_id || 0);
+        const pId = Number(produto_id);
+        recordSkuSuspension(clientCode, fId, pId, {
+          descricao: descricao || '',
+          motivo: motivo || 'Suspenso para desova de Curva D no balcão das lojas (Curadoria IA)',
+          days: 30,
+          origem: 'CURADORIA_DESOVA',
+          moleculeKey: molecule_key,
+          gatilhoCobertura: 7.0,
+        });
+
+        // Zera sugestão de compra em engine_sku_results
+        db.prepare('UPDATE engine_sku_results SET sugestao_compra_un = 0, sugestao_compra_rs = 0, justificativa_ia = ? WHERE run_id = ? AND produto_id = ?' + (fId ? ' AND filial_id = ?' : ''))
+          .run('Suspenso para priorizar desova no balcão da loja', latestRun.id, pId, ...(fId ? [fId] : []));
+
+        recordBuyerLearning(clientCode, {
+          filial_id: fId,
+          produto_id: pId,
+          molecule_key,
+          descricao,
+          tipo_evento: 'SUSPENSAO_DESOVA_BALCAO',
+          motivo: motivo || 'Suspenso para desova de Curva D no balcão',
+          acao_futura: 'SUSPENDER_ENQUANTO_ESTOQUE_ALTERNATIVO',
+        });
+
+        return sendJson(res, 200, { ok: true, message: 'Compra suspensa temporariamente para priorizar desova. IA monitorará vendas diárias!' });
+      }
+
+      if (action === 'DEDUCT') {
+        const fId = Number(filial_id || 0);
+        const pId = Number(produto_id);
+        const totalDed = Number(deduct_qty || 0);
+        let remainingDed = totalDed;
+
+        if (fId > 0) {
+          db.prepare(`
+            UPDATE engine_sku_results
+            SET sugestao_compra_un = MAX(0, sugestao_compra_un - ?),
+                sugestao_compra_rs = ROUND(MAX(0, sugestao_compra_un - ?) * custo_unit, 2),
+                justificativa_ia = ?
+            WHERE run_id = ? AND produto_id = ? AND filial_id = ?
+          `).run(remainingDed, remainingDed, `Deduzidas ${remainingDed} un de estoque concorrente da mesma molécula existente na rede`, latestRun.id, pId, fId);
+        } else {
+          // Distribui proporcionalmente pelas lojas que possuem sugestao ativa (maior primeiro)
+          const storesWithSug = db.prepare(`
+            SELECT filial_id, sugestao_compra_un, custo_unit
+            FROM engine_sku_results
+            WHERE run_id = ? AND produto_id = ? AND filial_id <> 1 AND sugestao_compra_un > 0
+            ORDER BY sugestao_compra_un DESC
+          `).all(latestRun.id, pId);
+
+          for (const s of storesWithSug) {
+            if (remainingDed <= 0) break;
+            const toDeduct = Math.min(s.sugestao_compra_un, remainingDed);
+            const newSug = s.sugestao_compra_un - toDeduct;
+            const newRs = Math.round(newSug * s.custo_unit * 100) / 100;
+            db.prepare(`
+              UPDATE engine_sku_results
+              SET sugestao_compra_un = ?, sugestao_compra_rs = ?, justificativa_ia = ?
+              WHERE run_id = ? AND produto_id = ? AND filial_id = ?
+            `).run(newSug, newRs, `Abatidas ${toDeduct} un de estoque concorrente parado na rede`, latestRun.id, pId, s.filial_id);
+            remainingDed -= toDeduct;
+          }
+        }
+
+        recordBuyerLearning(clientCode, {
+          filial_id: fId,
+          produto_id: pId,
+          molecule_key,
+          descricao,
+          tipo_evento: 'DEDUZIU_ESTOQUE_MOLECULA',
+          motivo: `Abatidas ${totalDed} un do pedido considerando estoque concorrente parado na rede`,
+          acao_futura: 'DEDUZIR_ESTOQUE_CONCORRENTE',
+        });
+
+        return sendJson(res, 200, { ok: true, message: `Estoque alternativo de ${totalDed} un abatido do pedido com sucesso!` });
+      }
+
+      if (action === 'REMANEJAR_E_CANCELAR') {
+        const pId = Number(produto_id);
+        const { blockedStores = [], routes = [] } = body;
+
+        db.exec('BEGIN');
+        try {
+          // 1. Zera compra nas lojas com excesso bloqueado
+          for (const b of blockedStores) {
+            const bFId = Number(b.filial_id);
+            db.prepare('UPDATE engine_sku_results SET sugestao_compra_un = 0, sugestao_compra_rs = 0, justificativa_ia = ? WHERE run_id = ? AND produto_id = ? AND filial_id = ?')
+              .run(`Compra cancelada via Curadoria IA: Loja já possui ${b.altEstTotal || 0} un de marcas alternativas em estoque`, latestRun.id, pId, bFId);
+
+            recordSkuSuspension(clientCode, bFId, pId, {
+              descricao: descricao || '',
+              motivo: `Compra bloqueada pela Curadoria IA: loja possui ${b.altEstTotal || 0} un de marcas alternativas da mesma molécula`,
+              days: 30,
+              origem: 'CURADORIA_SOBREESTOQUE',
+              moleculeKey: molecule_key,
+              gatilhoCobertura: 7.0,
+            });
+          }
+
+          // 2. Abate transferências nas lojas receptoras
+          for (const r of routes) {
+            const destFId = Number(r.to_filial_id);
+            const qty = Number(r.qty || 0);
+            if (qty > 0) {
+              db.prepare(`
+                UPDATE engine_sku_results
+                SET sugestao_compra_un = MAX(0, sugestao_compra_un - ?),
+                    sugestao_compra_rs = ROUND(MAX(0, sugestao_compra_un - ?) * custo_unit, 2),
+                    justificativa_ia = ?
+                WHERE run_id = ? AND produto_id = ? AND filial_id = ?
+              `).run(qty, qty, `Suprido por Remanejamento Interno (${qty} un vindas de ${r.from_label}) - Transfer-First`, latestRun.id, pId, destFId);
+            }
+          }
+
+          db.exec('COMMIT');
+        } catch (e) {
+          db.exec('ROLLBACK');
+          throw e;
+        }
+
+        // REV-025: Registrar guia de transferência formal no motor com sinalização de Curadoria IA
+        if (routes && routes.length > 0) {
+          const groupedRoutes = new Map();
+          for (const r of routes) {
+            const key = `${r.from_filial_id || r.filial_origem}->${r.to_filial_id || r.filial_destino}`;
+            if (!groupedRoutes.has(key)) {
+              groupedRoutes.set(key, {
+                origem: Number(r.from_filial_id || r.filial_origem),
+                origemNome: r.from_label || `Loja ${r.from_filial_id || r.filial_origem}`,
+                destino: Number(r.to_filial_id || r.filial_destino),
+                destinoNome: r.to_label || `Loja ${r.to_filial_id || r.filial_destino}`,
+                items: [],
+              });
+            }
+            groupedRoutes.get(key).items.push({
+              produto_id: Number(r.produto_id || pId),
+              barras: r.barras || '',
+              descricao: r.produto_desc || descricao,
+              labora: r.labora || '',
+              qtd_solicitada: Number(r.qty || 0),
+              custo_unit: Number(r.custo_unit || 0),
+              valor_total: Number(r.economia_rs || 0),
+              motivo_decisao: `🧬 Curadoria IA: Substituição de molécula para suprir demanda da filial e cancelar compras externas`,
+            });
+          }
+
+          for (const grp of groupedRoutes.values()) {
+            try {
+              createMotorTransfer(clientCode, latestRun.id, {
+                filialOrigem: grp.origem,
+                filialOrigemNome: grp.origemNome,
+                filialDestino: grp.destino,
+                filialDestinoNome: grp.destinoNome,
+                items: grp.items,
+                observacao: `🧬 Curadoria IA • Transfer-First (Cancelou compras externas da molécula ${molecule_key})`
+              });
+            } catch (errTransf) {
+              console.error('Aviso ao emitir transferência formal da curadoria:', errTransf.message);
+            }
+          }
+        }
+
+        recordBuyerLearning(clientCode, {
+          filial_id: 0,
+          produto_id: pId,
+          molecule_key,
+          descricao,
+          tipo_evento: 'REMANEJOU_E_CANCELOU_COMPRA_EXTERNA',
+          motivo: `Remanejamento homologado pela IA: compras canceladas em lojas com excesso e demanda suprida por transferência interna`,
+          acao_futura: 'SEMPRE_PRIORIZAR_TRANSFER_FIRST',
+        });
+
+        return sendJson(res, 200, {
+          ok: true,
+          message: 'Remanejamento homologado com sucesso! Compras canceladas nas lojas com excesso e transferências aprovadas!'
+        });
+      }
+
+      // REV-024: Ação direta em card individual de filial
+      if (action === 'CANCEL_STORE_PURCHASE') {
+        const pId = Number(produto_id);
+        const fId = Number(filial_id);
+        const reason = motivo || 'Compra da filial cancelada na Curadoria IA por estoque concorrente existente';
+
+        db.prepare('UPDATE engine_sku_results SET sugestao_compra_un = 0, sugestao_compra_rs = 0, justificativa_ia = ? WHERE run_id = ? AND produto_id = ? AND filial_id = ?')
+          .run(reason, latestRun.id, pId, fId);
+
+        recordSkuSuspension(clientCode, fId, pId, {
+          descricao: descricao || '',
+          motivo: reason,
+          days: 30,
+          origem: 'CURADORIA_CARD_CANCEL',
+          moleculeKey: molecule_key,
+          gatilhoCobertura: 7.0,
+        });
+
+        recordBuyerLearning(clientCode, {
+          filial_id: fId,
+          produto_id: pId,
+          molecule_key,
+          descricao,
+          tipo_evento: 'CANCELOU_COMPRA_FILIAL_INDIVIDUAL',
+          motivo: reason,
+          acao_futura: 'BLOQUEAR_COMPRA_FILIAL',
+        });
+
+        return sendJson(res, 200, {
+          ok: true,
+          message: `Compra da filial L0${fId} cancelada com sucesso! Economia de caixa garantida.`
+        });
+      }
+
+      // REV-024: Master Ação da IA em 1 Clique
+      if (action === 'EXECUTE_IA_1CLICK') {
+        const pId = Number(produto_id);
+        const { blockedStores = [], routes = [], deductQty = 0, target_sku_id = null } = body;
+        let totalCanceladoUn = 0;
+        let totalEconomizadoRs = 0;
+
+        db.exec('BEGIN');
+        try {
+          // 1. Se houver lojas bloqueadas por excesso de concorrentes
+          for (const b of blockedStores) {
+            const bFId = Number(b.filial_id);
+            const r = db.prepare('SELECT sugestao_compra_un, sugestao_compra_rs FROM engine_sku_results WHERE run_id = ? AND produto_id = ? AND filial_id = ?').get(latestRun.id, pId, bFId);
+            if (r) {
+              totalCanceladoUn += Number(r.sugestao_compra_un || 0);
+              totalEconomizadoRs += Number(r.sugestao_compra_rs || 0);
+            }
+            db.prepare('UPDATE engine_sku_results SET sugestao_compra_un = 0, sugestao_compra_rs = 0, justificativa_ia = ? WHERE run_id = ? AND produto_id = ? AND filial_id = ?')
+              .run(`Solução IA 1-Clique: Compra cancelada (estoque de concorrente ou Curva D parado na rede)`, latestRun.id, pId, bFId);
+
+            recordSkuSuspension(clientCode, bFId, pId, {
+              descricao: descricao || '',
+              motivo: `Solução IA 1-Clique: compra cancelada para priorizar desova e proteger caixa`,
+              days: 30,
+              origem: 'CURADORIA_1CLICK_ACTION',
+              moleculeKey: molecule_key,
+              gatilhoCobertura: 7.0,
+            });
+          }
+
+          // 2. Se houver rotas de remanejamento
+          for (const r of routes) {
+            const destFId = Number(r.to_filial_id);
+            const qty = Number(r.qty || 0);
+            if (qty > 0) {
+              db.prepare(`
+                UPDATE engine_sku_results
+                SET sugestao_compra_un = MAX(0, sugestao_compra_un - ?),
+                    sugestao_compra_rs = ROUND(MAX(0, sugestao_compra_un - ?) * custo_unit, 2),
+                    justificativa_ia = ?
+                WHERE run_id = ? AND produto_id = ? AND filial_id = ?
+              `).run(qty, qty, `Suprido via Remanejamento 1-Clique (${qty} un de ${r.from_label}) - Transfer-First`, latestRun.id, pId, destFId);
+            }
+          }
+
+          // 3. Se for apenas dedução simples de estoque parado
+          if (blockedStores.length === 0 && routes.length === 0 && deductQty > 0) {
+            const sugRows = db.prepare('SELECT filial_id, sugestao_compra_un, custo_unit FROM engine_sku_results WHERE run_id = ? AND produto_id = ? AND sugestao_compra_un > 0').all(latestRun.id, pId);
+            let remToDeduct = deductQty;
+            for (const row of sugRows) {
+              if (remToDeduct <= 0) break;
+              const d = Math.min(remToDeduct, row.sugestao_compra_un);
+              const newSug = row.sugestao_compra_un - d;
+              const newRs = Math.round(newSug * row.custo_unit * 100) / 100;
+              db.prepare('UPDATE engine_sku_results SET sugestao_compra_un = ?, sugestao_compra_rs = ?, justificativa_ia = ? WHERE run_id = ? AND produto_id = ? AND filial_id = ?')
+                .run(newSug, newRs, `Abatidas ${d} un via Solução IA 1-Clique considerando produto alternativo parado`, latestRun.id, pId, row.filial_id);
+              remToDeduct -= d;
+              totalCanceladoUn += d;
+              totalEconomizadoRs += Math.round(d * row.custo_unit * 100) / 100;
+            }
+          }
+
+          db.exec('COMMIT');
+        } catch (e) {
+          db.exec('ROLLBACK');
+          throw e;
+        }
+
+        recordBuyerLearning(clientCode, {
+          filial_id: 0,
+          produto_id: pId,
+          molecule_key,
+          descricao,
+          tipo_evento: 'EXECUTOU_SOLUCAO_IA_1CLIQUE',
+          motivo: `Executada recomendação completa da IA em 1 clique (Cancelou ${totalCanceladoUn} un, Economizou R$ ${totalEconomizadoRs.toFixed(2)})`,
+          acao_futura: 'SEMPRE_SEGUIR_IA_REMANEJAMENTO_E_SOBREESTOQUE',
+        });
+
+        return sendJson(res, 200, {
+          ok: true,
+          message: `Solução da IA executada com sucesso em 1 clique! Economia de R$ ${totalEconomizadoRs.toFixed(2)} retida no caixa.`,
+          totalCanceladoUn,
+          totalEconomizadoRs
+        });
+      }
+
+      if (action === 'SWITCH') {
+        const fId = Number(filial_id || 2);
+        const fromPid = Number(produto_id);
+        const toPid = Number(target_sku_id);
+        const switchQty = Number(qty || 0);
+
+        const targetRow = db.prepare('SELECT custo_unit, descricao FROM engine_sku_results WHERE run_id = ? AND filial_id = ? AND produto_id = ?').get(latestRun.id, fId, toPid);
+        if (targetRow) {
+          db.exec('BEGIN');
+          try {
+            db.prepare('UPDATE engine_sku_results SET sugestao_compra_un = 0, sugestao_compra_rs = 0, justificativa_ia = ? WHERE run_id = ? AND produto_id = ?' + (fId ? ' AND filial_id = ?' : ''))
+              .run(`Demanda transferida pelo comprador para o SKU mais rentável (${targetRow.descricao})`, latestRun.id, fromPid, ...(fId ? [fId] : []));
+
+            db.prepare('UPDATE engine_sku_results SET sugestao_compra_un = sugestao_compra_un + ?, sugestao_compra_rs = ROUND((sugestao_compra_un + ?) * custo_unit, 2), justificativa_ia = ? WHERE run_id = ? AND produto_id = ?' + (fId ? ' AND filial_id = ?' : ''))
+              .run(switchQty, switchQty, `Sugestão homologada via Curadoria IA (transferida de marca com maior custo)`, latestRun.id, toPid, ...(fId ? [fId] : []));
+            db.exec('COMMIT');
+          } catch (e) {
+            db.exec('ROLLBACK');
+          }
+        }
+
+        recordBuyerLearning(clientCode, {
+          filial_id: fId,
+          produto_id: fromPid,
+          molecule_key,
+          descricao,
+          fabricante_origem: labora_origem,
+          fabricante_proposto: labora_proposto,
+          tipo_evento: 'TROCOU_MENOR_CUSTO',
+          motivo: motivo || 'Homologada troca para laboratório de menor custo na pré-tela',
+          acao_futura: 'SEMPRE_PREFERIR_LAB',
+        });
+
+        return sendJson(res, 200, { ok: true, message: 'Troca para fabricante de menor custo homologada com sucesso!' });
+      }
+
+      // Default: KEEP (Manter compra original)
+      recordBuyerLearning(clientCode, {
+        filial_id: Number(filial_id || 0),
+        produto_id: Number(produto_id || 0),
+        molecule_key,
+        descricao,
+        tipo_evento: 'MANTEVE_COMPRA_ORIGINAL',
+        motivo: motivo || 'Comprador optou por manter marca sugerida originalmente',
+        acao_futura: 'MANTER_MARCA',
+      });
+
+      return sendJson(res, 200, { ok: true, message: 'Compra da marca original homologada e liberada para Sugestão de Compra!' });
+    }
+
+    if (pathname === '/api/curadoria/desova-items' && req.method === 'GET') {
+      const rows = db.prepare(`
+        SELECT s.*, p.descricao, p.labora, p.estoque_atual, p.ddv_projetada, p.cobertura_dias
+        FROM client_sku_suspensions s
+        LEFT JOIN (
+          SELECT produto_id, filial_id, descricao, labora, estoque_atual, ddv_projetada, cobertura_dias
+          FROM engine_sku_results
+          WHERE run_id = (SELECT id FROM engine_runs WHERE client_code = ? ORDER BY id DESC LIMIT 1)
+        ) p ON p.produto_id = s.produto_id AND (s.filial_id = 0 OR p.filial_id = s.filial_id)
+        WHERE s.client_code = ? AND (s.origem = 'CURADORIA_DESOVA' OR s.motivo LIKE '%desova%')
+        ORDER BY s.id DESC
+      `).all(clientCode, clientCode);
+
+      return sendJson(res, 200, { ok: true, items: rows });
+    }
+
+    if (pathname === '/api/curadoria/desova-unsuspend' && req.method === 'POST') {
+      const body = await readBody(req);
+      const { filial_id, produto_id } = body;
+      removeSkuSuspension(clientCode, Number(filial_id || 0), Number(produto_id));
+      recordBuyerLearning(clientCode, {
+        filial_id: Number(filial_id || 0),
+        produto_id: Number(produto_id),
+        tipo_evento: 'LIBEROU_DESOVA_MANUAL',
+        motivo: 'Comprador liberou produto manualmente para retorno à esteira de compras',
+        acao_futura: 'LIBERAR_COMPRA',
+      });
+      return sendJson(res, 200, { ok: true, message: 'Produto liberado com sucesso para a esteira de compras!' });
+    }
+
+    if (pathname === '/api/buyer/learning-log' && req.method === 'GET') {
+      const logs = getBuyerLearningLog(clientCode, 150);
+      return sendJson(res, 200, { ok: true, logs });
+    }
+
     if (pathname === '/api/remanejamento' && req.method === 'GET') {
       const latestRun = getLatestRun(clientCode);
       if (!latestRun) return sendJson(res, 200, { transfers: [], expiringLots: [] });
 
-      const transfers = db
-        .prepare('SELECT * FROM engine_remanejamento WHERE run_id = ? ORDER BY valor_total DESC LIMIT 200')
-        .all(latestRun.id);
+      const filialId = urlObj.searchParams.get('filial_id');
+      const hasFilial = filialId && filialId !== 'all' && !isNaN(Number(filialId)) && Number(filialId) > 0;
+      const fNum = hasFilial ? Number(filialId) : null;
 
-      const expiringLots = db
-        .prepare(
-          `SELECT produto_id, filial_id, descricao, abc_class, preco_venda, custo_unit, margem_pct,
-                  estoque_atual, ddv_projetada, lote_vencendo_90d_qtd, lote_vencendo_90d_rs,
-                  lote_vencido_qtd, lote_menor_validade
+      const transfersSql = hasFilial
+        ? 'SELECT * FROM engine_remanejamento WHERE run_id = ? AND (filial_origem = ? OR filial_destino = ?) ORDER BY valor_total DESC LIMIT 200'
+        : 'SELECT * FROM engine_remanejamento WHERE run_id = ? ORDER BY valor_total DESC LIMIT 200';
+      const transfersParams = hasFilial ? [latestRun.id, fNum, fNum] : [latestRun.id];
+      const transfers = db.prepare(transfersSql).all(...transfersParams);
+
+      const expSql = hasFilial
+        ? `SELECT produto_id, filial_id, descricao, abc_class, preco_venda, custo_unit, margem_pct,
+                  estoque_atual, ddv_projetada,
+                  lote_menor_validade AS menor_validade,
+                  lote_vencendo_90d_qtd AS qtd_vencendo_90d,
+                  lote_vencido_qtd AS qtd_vencido,
+                  ROUND((lote_vencendo_90d_qtd + lote_vencido_qtd) * custo_unit, 2) AS valor_risco_rs,
+                  CASE 
+                    WHEN lote_vencido_qtd > 0 THEN 'LOTE_VENCIDO'
+                    WHEN lote_vencendo_90d_qtd > 0 AND estoque_atual > (ddv_projetada * 90) THEN 'PERDA_VALIDADE_IMINENTE'
+                    ELSE 'FEFO_ALERTA'
+                  END AS acao_recomendada
            FROM engine_sku_results
-           WHERE run_id = ? AND (lote_vencendo_90d_qtd > 0 OR lote_vencido_qtd > 0)
-           ORDER BY lote_vencido_qtd DESC, lote_vencendo_90d_rs DESC
+           WHERE run_id = ? AND filial_id = ? AND estoque_atual > 0 AND (lote_vencendo_90d_qtd > 0 OR lote_vencido_qtd > 0)
+           ORDER BY valor_risco_rs DESC, lote_menor_validade ASC
            LIMIT 150`
-        )
-        .all(latestRun.id);
+        : `SELECT produto_id, filial_id, descricao, abc_class, preco_venda, custo_unit, margem_pct,
+                  estoque_atual, ddv_projetada,
+                  lote_menor_validade AS menor_validade,
+                  lote_vencendo_90d_qtd AS qtd_vencendo_90d,
+                  lote_vencido_qtd AS qtd_vencido,
+                  ROUND((lote_vencendo_90d_qtd + lote_vencido_qtd) * custo_unit, 2) AS valor_risco_rs,
+                  CASE 
+                    WHEN lote_vencido_qtd > 0 THEN 'LOTE_VENCIDO'
+                    WHEN lote_vencendo_90d_qtd > 0 AND estoque_atual > (ddv_projetada * 90) THEN 'PERDA_VALIDADE_IMINENTE'
+                    ELSE 'FEFO_ALERTA'
+                  END AS acao_recomendada
+           FROM engine_sku_results
+           WHERE run_id = ? AND estoque_atual > 0 AND (lote_vencendo_90d_qtd > 0 OR lote_vencido_qtd > 0)
+           ORDER BY valor_risco_rs DESC, lote_menor_validade ASC
+           LIMIT 150`;
+      const expParams = hasFilial ? [latestRun.id, fNum] : [latestRun.id];
+      const expiringLots = db.prepare(expSql).all(...expParams);
+      const curadoriaDecisions = getCuradoriaDecisions(clientCode, latestRun.id);
 
-      return sendJson(res, 200, { transfers, expiringLots });
+      return sendJson(res, 200, { transfers, expiringLots, curadoriaDecisions });
     }
 
     if (pathname === '/api/pbm' && req.method === 'GET') {
@@ -1525,7 +3066,7 @@ const server = http.createServer(async (req, res) => {
         }
       } else {
         const filterSource = req.method === 'POST' ? body : urlObj.searchParams;
-        const { whereSql, params } = buildSkuFilterSql(filterSource, latestRun.id);
+        const { whereSql, params } = buildSkuFilterSql(filterSource, latestRun.id, clientCode);
         if (budget > 0) {
           const allBuy = db
             .prepare(`SELECT * FROM engine_sku_results WHERE ${whereSql} AND sugestao_compra_un > 0 ORDER BY roi_marginal DESC, sugestao_compra_rs DESC`)

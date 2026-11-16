@@ -54,11 +54,13 @@ export function assertReadOnlySql(sql) {
 function resolveDbConfig(cfg = null) {
   loadProjectEnv();
   let rawPass =
-    cfg?.db_password !== undefined && cfg?.db_password !== ''
-      ? cfg.db_password
-      : cfg?.password !== undefined && cfg?.password !== ''
-        ? cfg.password
-        : process.env.DB_PASSWORD || '';
+    cfg?.db_pass !== undefined && cfg?.db_pass !== ''
+      ? cfg.db_pass
+      : cfg?.db_password !== undefined && cfg?.db_password !== ''
+        ? cfg.db_password
+        : cfg?.password !== undefined && cfg?.password !== ''
+          ? cfg.password
+          : process.env.DB_PASSWORD || '';
 
   // Se por acaso vier como mascara de exibicao, nunca envie as bolinhas como senha real
   if (rawPass === '••••••••' || rawPass === '********') {
@@ -73,26 +75,51 @@ function resolveDbConfig(cfg = null) {
     database: cfg?.db_name || cfg?.database || process.env.DB_NAME || 'bandeirante',
     dateStrings: true,
     decimalNumbers: false,
-    connectTimeout: 5000,
+    connectTimeout: 30000,
     enableKeepAlive: true,
     keepAliveInitialDelay: 10000,
   };
 }
 
 /**
- * Cria uma conexao MySQL somente leitura usando as variaveis do perfil ou .env.
+ * Cria uma conexao MySQL somente leitura usando as variaveis do perfil ou .env,
+ * com retentativa automatica em caso de indisponibilidade transiente ou ETIMEDOUT.
  */
 export async function createReadOnlyConnection(customConfig = null) {
   const connConfig = resolveDbConfig(customConfig);
-  const conn = await mysql.createConnection(connConfig);
+  let lastErr = null;
+  const maxAttempts = 3;
 
-  try {
-    await conn.query('SET SESSION TRANSACTION READ ONLY');
-  } catch {
-    // Versoes antigas de MySQL/MariaDB podem ignorar; assertReadOnlySql valida queries no JS
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const conn = await mysql.createConnection(connConfig);
+
+      try {
+        await conn.query('SET SESSION TRANSACTION READ ONLY');
+      } catch {
+        // Versoes antigas de MySQL/MariaDB podem ignorar; assertReadOnlySql valida queries no JS
+      }
+
+      return conn;
+    } catch (err) {
+      lastErr = err;
+      const isTransient =
+        err.code === 'ETIMEDOUT' ||
+        err.code === 'ECONNRESET' ||
+        err.code === 'PROTOCOL_CONNECTION_LOST' ||
+        err.code === 'EHOSTUNREACH' ||
+        err.code === 'ECONNREFUSED';
+
+      if (isTransient && attempt < maxAttempts) {
+        console.warn(`[db/client] Falha transiente na tentativa ${attempt}/${maxAttempts} (${err.code || err.message}). Retentando em ${attempt * 1000}ms...`);
+        await new Promise((r) => setTimeout(r, attempt * 1000));
+        continue;
+      }
+      throw err;
+    }
   }
 
-  return conn;
+  throw lastErr;
 }
 
 /**
@@ -100,12 +127,36 @@ export async function createReadOnlyConnection(customConfig = null) {
  */
 export async function createWriteConnection(customConfig = null) {
   const connConfig = resolveDbConfig(customConfig);
-  const conn = await mysql.createConnection(connConfig);
-  return conn;
+  let lastErr = null;
+  const maxAttempts = 3;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const conn = await mysql.createConnection(connConfig);
+      return conn;
+    } catch (err) {
+      lastErr = err;
+      const isTransient =
+        err.code === 'ETIMEDOUT' ||
+        err.code === 'ECONNRESET' ||
+        err.code === 'PROTOCOL_CONNECTION_LOST' ||
+        err.code === 'EHOSTUNREACH' ||
+        err.code === 'ECONNREFUSED';
+
+      if (isTransient && attempt < maxAttempts) {
+        console.warn(`[db/client] Tentativa de escrita ${attempt}/${maxAttempts} falhou (${err.code || err.message}). Retentando em ${attempt * 1000}ms...`);
+        await new Promise((r) => setTimeout(r, attempt * 1000));
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  throw lastErr;
 }
 
 /**
- * Executa uma query somente leitura e retorna as linhas com timeout de seguranca.
+ * Executa uma query somente leitura e retorna as linhas com timeout de seguranca ampliado.
  * @param {mysql.Connection} conn
  * @param {string} sql
  * @param {unknown[]} [params]
@@ -113,7 +164,7 @@ export async function createWriteConnection(customConfig = null) {
  */
 export async function runReadOnlyQuery(conn, sql, params = [], options = {}) {
   assertReadOnlySql(sql);
-  const timeoutMs = Number(options.timeout || 45000);
+  const timeoutMs = Number(options.timeout || 120000);
   const [rows] = await conn.query({ sql, timeout: timeoutMs }, params);
   return rows;
 }
@@ -201,6 +252,18 @@ export async function testBigConnection(customConfig) {
       // Ignora caso tabela produtos tenha restrição de acesso
     }
 
+    // Descoberta de bases disponíveis no servidor (para cenários e testes multi-base)
+    let availableDatabases = [];
+    try {
+      const [dbList] = await conn.query('SHOW DATABASES');
+      const ignored = new Set(['information_schema', 'mysql', 'performance_schema', 'sys', 'test']);
+      availableDatabases = dbList
+        .map((d) => d.Database || d.database || Object.values(d)[0])
+        .filter((d) => d && !ignored.has(String(d).toLowerCase()));
+    } catch {
+      // Ignora caso o usuário tenha permissão restrita
+    }
+
     return {
       ok: true,
       latencyMs,
@@ -208,6 +271,7 @@ export async function testBigConnection(customConfig) {
       dbName: dbInfo[0]?.db_name || connConfig.database,
       verifiedTables,
       totalProducts,
+      databases: availableDatabases,
       filiais: filiais.map((f) => ({
         filial_id: f.filial_id,
         nome: f.nome,

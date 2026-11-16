@@ -1,4 +1,4 @@
-import { getAnalyticsDb, getGroupCoverageConfigs, saveGroupCoverageConfigs, getActiveSkuSuspensions } from '../store/analyticsDb.mjs';
+import { getAnalyticsDb, getGroupCoverageConfigs, saveGroupCoverageConfigs, getActiveSkuSuspensions, removeSkuSuspension, recordBuyerLearning } from '../store/analyticsDb.mjs';
 import { getCachedCmedMaps, lookupCmedCascade } from '../services/cmedService.mjs';
 import { buildPresentationSignature } from '../../lib/moleculeNormalizer.mjs';
 
@@ -323,10 +323,36 @@ export function runPurchasingEngine(profile, rawData, { weeksWindow = profile.de
     stockMap.set(`${s.filial_id}|${s.produto_id}`, s);
   }
   const suspendedSet = new Set(rawData.suspendedRows.map((r) => `${r.filial_id}|${r.produto_id}`));
-  // Suspensões registradas exclusivamente no Motor (REV-011)
+  // Suspensões registradas exclusivamente no Motor (REV-011 & REV-021: Reativação Inteligente por Cobertura <= 7d)
   const clientCode = profile.code || 'bandeirante';
   const motorSuspensions = getActiveSkuSuspensions(clientCode);
   for (const ms of motorSuspensions) {
+    if (ms.origem === 'CURADORIA_DESOVA' || (ms.motivo && ms.motivo.toLowerCase().includes('desova'))) {
+      const molKey = ms.molecule_key;
+      if (molKey) {
+        // Encontra concorrentes desta molécula no rawData para checar cobertura remanescente
+        const competitors = (rawData.products || []).filter(p => p.molecule_key === molKey && p.produto_id !== ms.produto_id);
+        const compStockTotal = competitors.reduce((acc, p) => acc + (rawData.stockMap?.get(p.produto_id) || 0), 0);
+        const compDdvTotal = competitors.reduce((acc, p) => acc + (rawData.ddvMap?.get(p.produto_id) || 0), 0);
+        const compCoverage = compDdvTotal > 0 ? (compStockTotal / compDdvTotal) : (compStockTotal > 0 ? 999 : 0);
+        const threshold = Number(ms.gatilho_cobertura_limite || 7.0);
+
+        if (compCoverage <= threshold || compStockTotal === 0) {
+          // Gatilho atingido: remove suspensão automaticamente para evitar ruptura na loja
+          removeSkuSuspension(clientCode, ms.filial_id, ms.produto_id);
+          recordBuyerLearning(clientCode, {
+            filial_id: ms.filial_id,
+            produto_id: ms.produto_id,
+            molecule_key: ms.molecule_key,
+            descricao: ms.descricao,
+            tipo_evento: 'REATIVACAO_AUTOMATICA_DESOVA',
+            motivo: `Estoque de marcas concorrentes atingiu ${compCoverage.toFixed(1)}d (limite seguro <= ${threshold}d). Compra reativada automaticamente sem ruptura!`,
+            acao_futura: 'LIBERAR_COMPRA',
+          });
+          continue; // Liberado: não adiciona ao suspendedSet
+        }
+      }
+    }
     suspendedSet.add(`${ms.filial_id}|${ms.produto_id}`);
   }
 
@@ -575,7 +601,7 @@ export function runPurchasingEngine(profile, rawData, { weeksWindow = profile.de
       const ddvLiquida = Math.max(0, ddvAjustada * (1 - pbmShare));
       const ddvProjetada = ddvLiquida * idxSaz;
 
-      // Lotes e perdas
+      // Lotes e perdas com blindagem contra estoques fantasmas
       const skuLots = lotsMap.get(skKey) || [];
       let loteVencendo90dQtd = 0;
       let loteVencidoQtd = 0;
@@ -583,6 +609,14 @@ export function runPurchasingEngine(profile, rawData, { weeksWindow = profile.de
       for (const lt of skuLots) {
         if (lt.validade < refDate) loteVencidoQtd += lt.qty;
         else if (lt.validade <= limit90d) loteVencendo90dQtd += lt.qty;
+      }
+      // Blindagem estrita: quantidade total em risco não pode exceder o estoque físico atual da loja
+      if (estoqueAtual <= 0) {
+        loteVencendo90dQtd = 0;
+        loteVencidoQtd = 0;
+      } else {
+        loteVencidoQtd = Math.min(loteVencidoQtd, estoqueAtual);
+        loteVencendo90dQtd = Math.min(loteVencendo90dQtd, Math.max(0, estoqueAtual - loteVencidoQtd));
       }
       const loteVencendo90dRs = round2(loteVencendo90dQtd * custoUnit);
       const lossInfo = lossMap.get(skKey);

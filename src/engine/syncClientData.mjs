@@ -63,16 +63,7 @@ export async function syncBigClientData(profile, { referenceDate = null } = {}) 
     const start91 = addDaysIso(refDate, -90); // 91 dias fechados: [start91 .. refDate]
     const endExcl = addDaysIso(refDate, 1);
 
-    // 2.1 Maturidade de cada loja & Politicas de Carencia Multi-Loja
-    const storeMaturityRows = await runReadOnlyQuery(
-      conn,
-      `SELECT filial_id, MIN(data_hora) AS primeira_venda, COUNT(*) AS total_vendas
-       FROM movment
-       WHERE apagado = 'N' AND COALESCE(cancelado, 'N') <> 'S' AND E_S = 'S' AND oper IN (2, 3)
-       GROUP BY filial_id`
-    );
-    const maturityMap = new Map(storeMaturityRows.map((r) => [Number(r.filial_id), r]));
-
+    // 2.1 Maturidade de cada loja & Politicas de Carencia Multi-Loja (Ultra-Rápido via Políticas e Índice Direto)
     const existingPolicies = getFilialPolicies(profile.code);
     const policiesMap = new Map(existingPolicies.map((p) => [Number(p.filial_id), p]));
     const filiaisMetadata = [];
@@ -81,11 +72,26 @@ export async function syncBigClientData(profile, { referenceDate = null } = {}) 
       const fId = Number(f.filial_id);
       let policy = policiesMap.get(fId);
 
-      const mat = maturityMap.get(fId);
       let inauDate = policy?.data_inauguracao;
-      if (!inauDate && mat?.primeira_venda) {
-        inauDate = String(mat.primeira_venda).slice(0, 10);
+      if (!inauDate && f.escritorio !== 'S') {
+        try {
+          const minRows = await runReadOnlyQuery(
+            conn,
+            `SELECT DATE(data_hora) AS primeira_venda
+             FROM movment
+             WHERE filial_id = ? AND oper IN (2, 3) AND apagado = 'N'
+             ORDER BY data_hora ASC LIMIT 1`,
+            [fId],
+            { timeout: 3000 }
+          );
+          if (minRows?.[0]?.primeira_venda) {
+            inauDate = String(minRows[0].primeira_venda).slice(0, 10);
+          }
+        } catch (_errMin) {
+          // Fallback seguro caso banco do cliente demore
+        }
       }
+
       // Se filial 4 e a data gravada for anterior a outubro/2026 devido a transacao isolada de teste de PDV,
       // utiliza a data real de inicio das operacoes continuas (02/10/2026)
       if (fId === 4 && (!inauDate || inauDate < '2026-10-01')) {
@@ -140,6 +146,27 @@ export async function syncBigClientData(profile, { referenceDate = null } = {}) 
     }
 
     const pendingTransfers = getPendingTransfersItemsMap(profile.code);
+
+    // Complementa com transferências em trânsito nativas do Linx BIG (transferencia WHERE recebido = 'N' AND apagado = 'N')
+    try {
+      const bigPendingTransfers = await runReadOnlyQuery(
+        conn,
+        `SELECT defilial_id, parafilial_id, produto_id, SUM(COALESCE(qtde, 0)) AS qty_transf
+         FROM transferencia
+         WHERE recebido = 'N' AND apagado = 'N'
+           AND (defilial_id IN (${scopeIn}) OR parafilial_id IN (${scopeIn}))
+         GROUP BY defilial_id, parafilial_id, produto_id`
+      );
+      for (const bt of bigPendingTransfers) {
+        const destKey = `${bt.parafilial_id}|${bt.produto_id}`;
+        const origKey = `${bt.defilial_id}|${bt.produto_id}`;
+        const q = Number(bt.qty_transf || 0);
+        pendingTransfers.incomingMap.set(destKey, (pendingTransfers.incomingMap.get(destKey) || 0) + q);
+        pendingTransfers.outgoingMap.set(origKey, (pendingTransfers.outgoingMap.get(origKey) || 0) + q);
+      }
+    } catch (errBigTransf) {
+      console.warn('[SYNC] Aviso ao consultar transferencia do Linx BIG:', errBigTransf.message);
+    }
 
     // Janelas YoY para sazonalidade historica (ano anterior)
     const lyNextStart = addDaysIso(refDate, -364);
@@ -276,12 +303,26 @@ export async function syncBigClientData(profile, { referenceDate = null } = {}) 
     // Função auxiliar para fatiar queries pesadas do ERP quando houver mais de 3 filiais selecionadas
     async function queryFilialsChunked(filialList, chunkSize, sqlFactory, params) {
       if (filialList.length <= chunkSize) {
-        return runReadOnlyQuery(conn, sqlFactory(filialList.join(',')), params);
+        return runReadOnlyQuery(conn, sqlFactory(filialList.join(',')), params, { timeout: 120000 });
       }
       const aggregated = [];
       for (let i = 0; i < filialList.length; i += chunkSize) {
         const slice = filialList.slice(i, i + chunkSize);
-        const chunkRows = await runReadOnlyQuery(conn, sqlFactory(slice.join(',')), params);
+        let chunkRows = null;
+        let lastErr = null;
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          try {
+            chunkRows = await runReadOnlyQuery(conn, sqlFactory(slice.join(',')), params, { timeout: 120000 });
+            break;
+          } catch (cErr) {
+            lastErr = cErr;
+            if (attempt < 2) {
+              console.warn(`[syncClientData] Chunk filiais [${slice.join(',')}] falhou (${cErr.code || cErr.message}). Retentando em 1500ms...`);
+              await new Promise((r) => setTimeout(r, 1500));
+            }
+          }
+        }
+        if (!chunkRows) throw lastErr;
         aggregated.push(...chunkRows);
       }
       return aggregated;
@@ -297,7 +338,7 @@ export async function syncBigClientData(profile, { referenceDate = null } = {}) 
               SUM(ABS(m.quanti_uni)) AS qty,
               SUM(ABS(m.valor_tot)) AS revenue,
               COUNT(DISTINCT DATE(m.data_hora)) AS sale_days
-       FROM movment m
+       FROM movment m FORCE INDEX (data_hora)
        WHERE m.filial_id IN (${inClause})
          AND m.data_hora >= ?
          AND m.data_hora < ?
@@ -317,7 +358,7 @@ export async function syncBigClientData(profile, { referenceDate = null } = {}) 
               m.produto_id,
               SUM(CASE WHEN m.data_hora >= ? AND m.data_hora < ? THEN ABS(m.quanti_uni) ELSE 0 END) AS next30_ly,
               SUM(CASE WHEN m.data_hora >= ? AND m.data_hora < ? THEN ABS(m.quanti_uni) ELSE 0 END) AS prev60_ly
-       FROM movment m
+       FROM movment m FORCE INDEX (data_hora)
        WHERE m.filial_id IN (${inClause})
          AND m.data_hora >= ?
          AND m.data_hora < ?
@@ -408,23 +449,21 @@ export async function syncBigClientData(profile, { referenceDate = null } = {}) 
       [cutoffStart, endExcl]
     );
 
+    // Lead Time real medido pela diferença entre a emissão da nota e a entrada física na loja
     const leadTimeHistory = await runReadOnlyQuery(
       conn,
-      `SELECT ped.fornece_id,
-              pr.grupo_id,
-              DATEDIFF(e.datanota, DATE(ped.datahora)) AS lt_dias
-       FROM pedidos ped
-       JOIN entradas e ON e.fornece_id = ped.fornece_id
-         AND e.filial_id = ped.filial_id
-         AND e.produto_id = ped.produto_id
+      `SELECT e.fornece_id,
+              p.grupo_id,
+              DATEDIFF(DATE(e.data_hora), e.datanota) AS lt_dias
+       FROM entradas e
+       JOIN produto p ON p.Produto_id = e.produto_id
+       WHERE e.filial_id IN (${scopeIn})
+         AND e.datanota >= ?
          AND e.apagado = 'N'
-         AND e.datanota >= DATE(ped.datahora)
-         AND DATEDIFF(e.datanota, DATE(ped.datahora)) BETWEEN 0 AND 60
-       JOIN produto pr ON pr.Produto_id = ped.produto_id
-       WHERE ped.filial_id IN (${scopeIn})
-         AND ped.apagado = 'N'
-         AND ped.datahora >= ?`,
-      [start18m]
+         AND e.data_hora >= e.datanota
+         AND DATEDIFF(DATE(e.data_hora), e.datanota) BETWEEN 0 AND 45
+       LIMIT 10000`,
+      [cutoffStart]
     );
 
     // 8.1 Transito Faturado NFe (Notas em nfe_cab baixadas no banco aguardando conferencia/entrada)
@@ -448,20 +487,25 @@ export async function syncBigClientData(profile, { referenceDate = null } = {}) 
       [cutoffStart, endExcl]
     );
 
-    // 9. Lotes em gondola / vencimento (lote_novo) e Perdas (ultimos 365 dias)
+    // 9. Lotes em gondola / vencimento (lote_novo blindado com estoque real) e Perdas (ultimos 365 dias)
     const start365 = addDaysIso(refDate, -365);
+    const cutoffLots = addDaysIso(refDate, -180); // Descarta lotes jurássicos de anos anteriores nunca baixados pelo BIG
     const lots = await runReadOnlyQuery(
       conn,
-      `SELECT fillogica_id AS filial_id,
-              produto_id,
-              lote,
-              validade,
-              estoque AS qty
-       FROM lote_novo
-       WHERE fillogica_id IN (${scopeIn})
-         AND apagado = 'N'
-         AND estoque > 0
-         AND validade > '1990-01-01'`
+      `SELECT ln.fillogica_id AS filial_id,
+              ln.produto_id,
+              ln.lote,
+              DATE(ln.validade) AS validade,
+              LEAST(ln.estoque, em.estoque) AS qty
+       FROM lote_novo ln
+       JOIN estoque_minimo em ON em.filial_id = ln.fillogica_id AND em.produto_id = ln.produto_id AND em.apagado = 'N'
+       JOIN produto p ON p.Produto_id = ln.produto_id AND p.apagado = 'N' AND p.inativo = 'N'
+       WHERE ln.fillogica_id IN (${scopeIn})
+         AND ln.apagado = 'N'
+         AND ln.estoque > 0
+         AND em.estoque > 0
+         AND ln.validade >= ?`,
+      [cutoffLots]
     );
 
     const losses = await runReadOnlyQuery(

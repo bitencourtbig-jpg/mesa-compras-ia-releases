@@ -241,3 +241,182 @@ export async function generateBigNativeImportXlsx({
   return buffer;
 }
 
+/**
+ * Gera a planilha executiva formatada de Pedido de Operação Logística (OL)
+ * para envio direto ao Representante Comercial do Laboratório / Indústria Farmacêutica.
+ */
+export async function generateOlOrderExcel({
+  clientName = 'Drogaria',
+  clientCnpj = '',
+  filialNome = '',
+  filialId = 2,
+  fabricante = 'FABRICANTE',
+  olConfig = null,
+  items = [],
+  observacoes = '',
+}) {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'FSConsultoria - Mesa de Compras IA';
+  workbook.created = new Date();
+
+  const ws = workbook.addWorksheet('PEDIDO_OL', {
+    views: [{ state: 'frozen', ySplit: 6 }],
+  });
+
+  // Título e Cabeçalho do Pedido
+  ws.mergeCells('A1:G1');
+  const titleCell = ws.getCell('A1');
+  titleCell.value = `📦 PEDIDO DE COMPRA • OPERAÇÃO LOGÍSTICA (OL) — ${String(fabricante).toUpperCase()}`;
+  titleCell.font = { name: 'Segoe UI', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
+  titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0D9488' } }; // Teal escuro
+  titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
+  ws.getRow(1).height = 32;
+
+  // Linhas de dados da farmácia e da OL
+  ws.mergeCells('A2:D2');
+  ws.getCell('A2').value = `Farmácia: ${clientName} | Filial: ${filialNome || filialId} | CNPJ: ${sanitizeCnpj(clientCnpj)}`;
+  ws.getCell('A2').font = { name: 'Segoe UI', size: 10, bold: true };
+
+  ws.mergeCells('E2:G2');
+  const minVal = olConfig?.pedido_minimo_rs ? Number(olConfig.pedido_minimo_rs).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : 'R$ 3.000,00';
+  ws.getCell('E2').value = `Canal: Operação Logística (OL) | Pedido Mínimo: ${minVal}`;
+  ws.getCell('E2').font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FF0F766E' } };
+  ws.getCell('E2').alignment = { horizontal: 'right' };
+
+  ws.mergeCells('A3:D3');
+  ws.getCell('A3').value = `Data de Emissão: ${new Date().toLocaleDateString('pt-BR')} ${new Date().toLocaleTimeString('pt-BR')}`;
+  ws.getCell('A3').font = { name: 'Segoe UI', size: 9, italic: true };
+
+  ws.mergeCells('E3:G3');
+  const cond = `Condição: Prazo ${olConfig?.prazo_medio_dias || 45}d • Desc. Extra: ${olConfig?.desconto_extra_pct || 10}%`;
+  ws.getCell('E3').value = cond;
+  ws.getCell('E3').font = { name: 'Segoe UI', size: 9, italic: true };
+  ws.getCell('E3').alignment = { horizontal: 'right' };
+
+  if (observacoes) {
+    ws.mergeCells('A4:G4');
+    ws.getCell('A4').value = `Obs: ${observacoes}`;
+    ws.getCell('A4').font = { name: 'Segoe UI', size: 9, italic: true, color: { argb: 'FF475569' } };
+  }
+
+  // Linha 6: Cabeçalhos das Colunas
+  const headerRowIdx = 6;
+  const colHeaders = [
+    { key: 'item', title: 'Item', width: 8, align: 'center' },
+    { key: 'codigo', title: 'Cód. BIG', width: 12, align: 'center' },
+    { key: 'ean', title: 'EAN-13 (Barras)', width: 20, align: 'center' },
+    { key: 'descricao', title: 'Descrição do Produto / Apresentação', width: 48, align: 'left' },
+    { key: 'qtd', title: 'Qtd Pedida', width: 14, align: 'right' },
+    { key: 'preco', title: 'Preço Custo (R$)', width: 16, align: 'right' },
+    { key: 'total', title: 'Total Líquido (R$)', width: 18, align: 'right' },
+  ];
+
+  ws.columns = colHeaders.map(c => ({ header: c.title, key: c.key, width: c.width }));
+  ws.getRow(headerRowIdx).height = 24;
+
+  const headerRow = ws.getRow(headerRowIdx);
+  colHeaders.forEach((col, idx) => {
+    const cell = headerRow.getCell(idx + 1);
+    cell.value = col.title;
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+    cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+    cell.alignment = { vertical: 'middle', horizontal: col.align };
+    cell.border = {
+      top: { style: 'medium', color: { argb: 'FF0F172A' } },
+      bottom: { style: 'medium', color: { argb: 'FF0F172A' } },
+    };
+  });
+
+  // Linhas de Dados
+  let curRowIdx = headerRowIdx + 1;
+  let totalUnits = 0;
+  let totalRs = 0;
+
+  items.forEach((item, idx) => {
+    const qty = Math.max(1, Math.round(Number(item.quantidade ?? item.sugestao_compra_un ?? item.qtd ?? 1)));
+    const preco = Number(item.custo_unit ?? item.preco ?? 0);
+    const lineTotal = Math.round((qty * preco) * 100) / 100;
+    totalUnits += qty;
+    totalRs += lineTotal;
+
+    const row = ws.getRow(curRowIdx);
+    row.height = 20;
+
+    row.getCell(1).value = idx + 1;
+    row.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
+
+    row.getCell(2).value = Number(item.produto_id || item.codigo || 0);
+    row.getCell(2).alignment = { vertical: 'middle', horizontal: 'center' };
+
+    row.getCell(3).value = sanitizeEan13(item.barras, item.produto_id);
+    row.getCell(3).numFmt = '@';
+    row.getCell(3).alignment = { vertical: 'middle', horizontal: 'center' };
+
+    row.getCell(4).value = String(item.descricao || item.nome || '').trim();
+    row.getCell(4).alignment = { vertical: 'middle', horizontal: 'left' };
+
+    row.getCell(5).value = qty;
+    row.getCell(5).numFmt = '#,##0';
+    row.getCell(5).alignment = { vertical: 'middle', horizontal: 'right' };
+
+    row.getCell(6).value = preco;
+    row.getCell(6).numFmt = '#,##0.00';
+    row.getCell(6).alignment = { vertical: 'middle', horizontal: 'right' };
+
+    row.getCell(7).value = lineTotal;
+    row.getCell(7).numFmt = '#,##0.00';
+    row.getCell(7).alignment = { vertical: 'middle', horizontal: 'right' };
+
+    row.eachCell((cell) => {
+      cell.border = {
+        top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+        bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+        left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+        right: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+      };
+      cell.font = { name: 'Segoe UI', size: 9.5 };
+    });
+
+    if (idx % 2 === 1) {
+      row.eachCell((cell) => {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+      });
+    }
+
+    curRowIdx += 1;
+  });
+
+  // Linha de Totais
+  const totalRow = ws.getRow(curRowIdx);
+  totalRow.height = 26;
+  ws.mergeCells(`A${curRowIdx}:D${curRowIdx}`);
+  const lblTot = totalRow.getCell(1);
+  lblTot.value = `TOTAL DO PEDIDO OL (${items.length} ITENS):`;
+  lblTot.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FF0F172A' } };
+  lblTot.alignment = { vertical: 'middle', horizontal: 'right' };
+
+  const cellTotQtd = totalRow.getCell(5);
+  cellTotQtd.value = totalUnits;
+  cellTotQtd.numFmt = '#,##0';
+  cellTotQtd.font = { name: 'Segoe UI', size: 11, bold: true };
+  cellTotQtd.alignment = { vertical: 'middle', horizontal: 'right' };
+
+  totalRow.getCell(6).value = '';
+
+  const cellTotRs = totalRow.getCell(7);
+  cellTotRs.value = totalRs;
+  cellTotRs.numFmt = '#,##0.00';
+  cellTotRs.font = { name: 'Segoe UI', size: 11, bold: true, color: { argb: 'FF0F766E' } };
+  cellTotRs.alignment = { vertical: 'middle', horizontal: 'right' };
+
+  totalRow.eachCell((cell) => {
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+    cell.border = {
+      top: { style: 'medium', color: { argb: 'FF94A3B8' } },
+      bottom: { style: 'double', color: { argb: 'FF0F172A' } },
+    };
+  });
+
+  return await workbook.xlsx.writeBuffer();
+}
+

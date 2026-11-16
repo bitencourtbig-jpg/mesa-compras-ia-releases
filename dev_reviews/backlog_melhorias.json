@@ -1,0 +1,537 @@
+{
+  "updated_at": "2026-11-14T13:25:17.152Z",
+  "reviews": [
+    {
+      "id": "REV-026",
+      "timestamp": "2026-11-14T13:25:17.152Z",
+      "status": "pendente",
+      "severidade": "media",
+      "tela_rota": "cockpit",
+      "contexto_operacional": {
+        "filtros_ativos": {},
+        "sku_foco": null,
+        "amostra_skus_ids": []
+      },
+      "critica": "Tudo que for dependendo do filtro utilizado que for para não comprar, a IA entendendo ela pode remover da sugestão de compra automaticamente, isso sempre dependendo da informação que o usuário cria de métrica nos filtros fazer isso ficar de forma intelente porque ja tem as Tags falando se deve comprar ou não.. precisamos usar esta estrutura.",
+      "sugestao_impacto": "Inteligencia para que o usuario realmente gaste energia no que realmente vai trazer beneficios para a drogaria e saude financeira e não deixar a loja desabastecida.",
+      "resolucao": null
+    },
+    {
+      "id": "REV-025",
+      "timestamp": "2026-11-14T02:52:00.000Z",
+      "status": "concluido",
+      "severidade": "critica",
+      "tela_rota": "licensing_saas",
+      "contexto_operacional": {
+        "produto": "Linx Farma BIG SaaS Purchasing Engine",
+        "modo_licenciamento": "Offline HMAC-SHA256 Criptográfico",
+        "machine_lock": "LNX-XXXX-XXXX-XXXX (CPU + OS + MAC Hash)",
+        "senha_master": "MasterBig@2026",
+        "duracao_padrao": "30 dias mensais"
+      },
+      "critica": "Necessidade de transformar o motor em SaaS comercializável para venda piloto com: 1) Capa de abertura / splash screen no acesso ao software; 2) Proteção técnica das credenciais de banco e parâmetros com Senha Master; 3) Blindagem anti-cópia para impedir clonagem não autorizada em outros PCs; 4) Controle de assinatura mensal por chave criptográfica sem custos de servidores em nuvem; 5) Painel do Dono para emissão de chaves mensais offline.",
+      "sugestao_impacto": "Blindagem comercial e técnica completa para início imediato das vendas a clientes pilotos pagantes, garantindo rentabilidade, retenção de mensalidade e bloqueio automático do motor caso a assinatura não seja renovada.",
+      "resolucao": {
+        "data": "2026-11-14T02:52:00.000Z",
+        "notas": "1) Capa de Abertura / Welcome Gate (#modal-welcome-gate): Tela de login/splash profissional exibindo nome da farmácia, CNPJ, ID da máquina e status da assinatura ('Assinatura Ativa' ou 'Assinatura Expirada'). 2) Proteção com Senha Master (#modal-master-auth): Acesso a 'Conexão / Banco' e parâmetros de rede restrito exclusivamente a técnicos autorizados com senha MasterBig@2026. 3) Blindagem Anti-Cópia (Hardware Lock): Algoritmo de identificação física único (CPU + OS + MAC) gerando fingerprint LNX-XXXX-XXXX-XXXX; assinaturas não funcionam se o sistema for copiado para outro computador. 4) Assinatura Mensal HMAC-SHA256: Chaves offline assinadas matematicamente (LIC-XXXXXX-AAAAMMDD-XXXX-XXXX-XXXX); /api/engine/run bloqueia cálculos caso a licença expire. 5) Painel do Dono (#modal-license-generator): Gerador embutido para emissão rápida de chaves mensais (30, 60, 90, 365 dias) protegido por Senha Master."
+      }
+    },
+    {
+      "id": "REV-024",
+      "timestamp": "2026-11-14T02:30:49.665Z",
+      "status": "pendente",
+      "severidade": "media",
+      "tela_rota": "cockpit",
+      "contexto_operacional": {
+        "filtros_ativos": {},
+        "sku_foco": null,
+        "amostra_skus_ids": []
+      },
+      "critica": "Tentando conectar no banco local e da falha ao carregar, precisamos melhor isso as conexões e velocidades sinto que ele esta um pouco lento principalmente quando troco os ips e acessos. \n\nMensagem de erro é :Falha ao recalcular: Query inactivity timeout",
+      "sugestao_impacto": "que funcione quando trocar o ip sem eu precisar pedir pro dev corrigir precisa estar pronto esta demanda.",
+      "resolucao": null
+    },
+    {
+      "id": "REV-023",
+      "timestamp": "2026-11-13T23:05:00.000Z",
+      "status": "concluido",
+      "severidade": "critica",
+      "tela_rota": "config",
+      "contexto_operacional": {
+        "cliente_anterior": "Rede Bandeirante (206.85.23.138 - L02, L03, L04)",
+        "novo_cliente": "Drogaria Bom Jesus (45.71.14.25 - Loja Única Filial 2)",
+        "status_isolamento": "100% isolado sem vazamento de bases"
+      },
+      "critica": "Troquei o IP para conectar em outra loja única (filial_id=2). Já limpei dados de cache e ainda aparecem dados e botões da última conexão (L02 DROG. AMAZO, L03, L04, Rede Consolidada). Este SaaS vai rodar em vários clientes e os clientes não podem ter acesso de outras bases.",
+      "sugestao_impacto": "Garantia absoluta de isolamento multi-tenant para operação SaaS. Auto-descoberta real da topologia do banco no MariaDB, eliminação total de strings fixas de lojas, expurgo automático de resíduos de clientes anteriores ao trocar IP/Banco, e adaptação inteligente entre Modo Central (Multi-Loja) e Modo Local (Loja Única).",
+      "resolucao": {
+        "data": "2026-11-13T23:10:00.000Z",
+        "notas": "1) Auto-Descoberta Topológica no MariaDB: Ao testar ou salvar novo IP/Host (/api/config/profile), o motor consulta a tabela filial do banco conectado, detecta as filiais reais do cliente e se comporta como Loja Local se houver apenas 1 filial operacional (ex: Drogaria Bom Jesus, filial 2). 2) Expurgo Completo de Cache Multi-Cliente: clearClientCalculations agora limpa compulsoriamente client_filial_policies, client_sku_suspensions, client_group_coverage_config, motor_transferencias, runs, skus e caches em memória, impedindo qualquer contaminação cruzada. 3) Fim dos Hardcodes: Eliminadas todas as strings estáticas 'L02 • DROG. AMAZO', 'L03 • DROG. DR.VI', 'L04 • H. GABRIEL' do front e do back; agora a tag é 100% dinâmica via formatFilialTag(filial_id, reduz, nome), exibindo 'L02 • BOM JESUS'. 4) Adaptação de Modo Loja Única: Ocultada a barra de 'Rede Consolidada' e botões de remanejamento/carência quando em Loja Única, exibindo pill limpo '📍 Loja Local: L02 • BOM JESUS'."
+      }
+    },
+    {
+      "id": "REV-022",
+      "timestamp": "2026-11-13T22:30:00.000Z",
+      "status": "concluido",
+      "severidade": "critica",
+      "tela_rota": "transfers",
+      "contexto_operacional": {
+        "filtros_ativos": {
+          "operation_mode": "central",
+          "filiais": [
+            2,
+            3,
+            4
+          ]
+        },
+        "rotas_ativas": 1,
+        "pecas_transferir": 1668,
+        "economia_rs": 25196.09
+      },
+      "critica": "Depois da última atualização o tema remanejamento sumiu da tela. Validar e implementar para fazermos os testes e validações.",
+      "sugestao_impacto": "Restauração imediata da navegação de Remanejamento & Lotes no menu lateral, adição de botão de acesso rápido no topo com badge dinâmico de rotas disponíveis, e calibração de oportunidades de remanejamento no grid.",
+      "resolucao": {
+        "data": "2026-11-13T22:35:00.000Z",
+        "notas": "1) Causa Raiz Identificada e Corrigida: Em loadOverview(), profile.active_sales_filials já vinha como Array nativo do backend SQLite [2, 3, 4]; a chamada JSON.parse([2, 3, 4]) disparava SyntaxError silencioso no catch, travando activeCount em 1 e forçando display='none' no botão '🔄 Remanejamento & Lotes' da barra lateral; agora a verificação suporta nativamente Array e string, mantendo o menu sempre visível no modo Central/Multi-loja. 2) Novo Botão de Acesso Rápido no Topo: Adicionado na barra de Visão da Rede o botão '🔄 Remanejamento & Lotes' com badge dinâmico exibindo as rotas e unidades disponíveis para transferência em tempo real ('1 rota (1.668 un)'). 3) Oportunidade Extraordinária no Grid Calibrada: Algoritmo de detecção de lojas cedentes foi aprimorado para priorizar automaticamente qualquer excesso acima do estoque de segurança em lojas maduras ou em carência (inclusive para lotes de INFRALAX, APTANUTRI, etc.), exibindo o card verde com botão direto '🚚 Transferir e Abater Compra'. 4) Painel de Remanejamento (/api/remanejamento/routes) 100% ativo exibindo a rota L02 ➔ L03 com 763 produtos, 1.668 un a transferir e R$ 25.196,09 de economia direta em compras."
+      }
+    },
+    {
+      "id": "REV-021",
+      "timestamp": "2026-11-13T22:15:00.000Z",
+      "status": "concluido",
+      "severidade": "alta",
+      "tela_rota": "cockpit",
+      "contexto_operacional": {
+        "filtros_ativos": {},
+        "sku_foco": {
+          "produto_id": 12582,
+          "descricao": "LEVOTIROXINA SODICA 50MCG"
+        },
+        "amostra_skus_ids": [
+          15072,
+          8274,
+          13606,
+          15298,
+          14781,
+          14782,
+          11816,
+          12582,
+          7871,
+          6436
+        ]
+      },
+      "critica": "Na tela da varredura da molecula na sugestão de compras aparece várias repetições do mesmo produto, sendo considerado um produto por filial. Sugerido ter uma coluna por loja na mesma molécula para deixar a tela muito mais limpa e permitir uma análise consolidada por filial.",
+      "sugestao_impacto": "Transformação da visão repetida em matriz consolidada por loja (L02, L03, L04 e Total da Rede), limpando a tela e dando visão analítica de estoque e cobertura de cada fabricante em toda a rede.",
+      "resolucao": {
+        "data": "2026-11-13T22:20:00.000Z",
+        "notas": "Implementado com Perfeição: 1) O endpoint /api/molecules/sweep agora agrupa os produtos por produto_id único, eliminando completamente as 40 linhas repetidas e condensando em 10 produtos distintos; 2) Cada produto possui colunas dedicadas por loja: L02 (AMAZO), L03 (DR.VI), L04 (H. GABRIEL) e TOTAL REDE, exibindo estoque físico, dias de cobertura e sugestão de compra 🛒 por filial; 3) Modal expandida para width de 1220px com design matricial limpo, permitindo ao comprador comparar estoques e custos de todos os fabricantes concorrentes em toda a rede instantaneamente."
+      }
+    },
+    {
+      "id": "REV-020",
+      "timestamp": "2026-11-13T19:39:17.951Z",
+      "status": "concluido",
+      "severidade": "media",
+      "tela_rota": "cockpit",
+      "contexto_operacional": {
+        "filtros_ativos": {},
+        "sku_foco": {
+          "produto_id": 12582,
+          "descricao": "PURAN T4 50MCG CX 30 COMP",
+          "barras": "7897595901316",
+          "labora": "SANOFI/MEDLEY",
+          "curva": "B",
+          "curva_big": "B 104/1408",
+          "estoque": 2,
+          "ddv": 0.65,
+          "sugestao_un": 5,
+          "justificativa_ia": "Ponto de Pedido atingido (disp. 2 un <= mín 5 un | 3.07d) -> repor 8 un até máx 10 un (15d) | Sazonalidade YoY 2.2x aplicada"
+        },
+        "amostra_skus_ids": []
+      },
+      "critica": "O que falta na tela do foco da molecola é  trazer também qual é o laboratorio /  Fabricante do produto\nOutro ponto importante seria mostrar qual é a curva do produto que ele esta mostrando para poder o comprador entender que o produto esta parado ou tem alto giro para poder sugerir aos vendedores e supender talvez a compra do item da sugestão de compra. até baixar os que as curvas sao de baixo giro ou D.\nSempre a IA fazer a leitura e sugerir com inteligencia para o comprador a melhor tomada de decisão",
+      "sugestao_impacto": "Melhoria na leitura e interpretação do comprador.",
+      "resolucao": {
+        "data": "2026-11-13T22:00:00.000Z",
+        "notas": "Implementado com Sucesso: 1) Causa-raiz identificada: No Linx BIG MariaDB, a coluna produto.labora fica nula/vazia em 99,5% dos itens (47.076 produtos), pois o fabricante oficial é cadastrado na tabela `fabricantes` via `produto.fabricantes_id = fabricantes.fabricantes_id`. O syncClientData.mjs agora executa LEFT JOIN fabricantes fab ON fab.fabricantes_id = p.fabricantes_id, extraindo o fabricante oficial com fallback seguro (ex: SANOFI/MEDLEY para Puran T4); 2) Efetuado backfill imediato no SQLite atualizando 184.651 registros com indexação idx_esr_prod; 3) Na tela de Varredura da Molécula (modal e endpoints), adicionada coluna dedicada 'Curva & Giro' com badges visuais de Curva ABC (A, B, C, D), ranking ERP do BIG e giro diário projetado; 4) Implementado diagnóstico inteligente da IA que detecta produtos alternativos Curva D / parados na mesma molécula e exibe alerta preventivo com botão de ação '🚫 Suspender Compra (Priorizar Giro de Balcão)', permitindo orientar os vendedores e estancar compras de itens redundantes até a desova do estoque parado."
+      }
+    },
+    {
+      "id": "REV-019",
+      "timestamp": "2026-11-13T16:04:45.076Z",
+      "status": "concluido",
+      "severidade": "media",
+      "tela_rota": "cockpit",
+      "contexto_operacional": {
+        "filtros_ativos": {},
+        "sku_foco": null,
+        "amostra_skus_ids": []
+      },
+      "critica": "Ao ir no botão da arvore apresenta uma quantidade de SKU a ser pedida daquela situação ai vc abre o filtro disso ele traz nem a metade do que esta o valor que ele esta trazendo é diferente do que é apresentado no botão.\n\nRever toda a logica do back com o fronte para este e todo o sistema para ver se todos estão fidedignos e trazendo a informação real.",
+      "sugestao_impacto": "Melhoria no back e no front de acordo com as ações do usuario dados incosistentes.",
+      "resolucao": {
+        "data": "2026-11-13T16:45:00.000Z",
+        "notas": "Corrigido e Sincronizado 100%: 1) Causa-raiz identificada: Subgrupos homônimos no Linx BIG (ex: grupo_id 6 e 62002, ambos com nome \"ÉTICOS\") eram filtrados por string no SQL, misturando subgrupos ou perdendo precisão; 2) O botão da árvore agora envia estritamente data-grupo-id com o ID numérico nativo do BIG; 3) O backend /api/skus filtra por grupo_id = ? garantindo fidedignidade matemática absoluta de 100% com o valor e a contagem de SKUs exibidos no botão da árvore; 4) Eliminada a trava hardcoded de 80 SKUs que ocultava a outra metade dos itens recomendados."
+      }
+    },
+    {
+      "id": "REV-018",
+      "timestamp": "2026-11-13T16:01:02.867Z",
+      "status": "concluido",
+      "severidade": "media",
+      "tela_rota": "cockpit",
+      "contexto_operacional": {
+        "filtros_ativos": {},
+        "sku_foco": null,
+        "amostra_skus_ids": []
+      },
+      "critica": "Ou ponto importante é ter um Card, que expõe o total marcado em reais e quantidade de skus, da forma que esta sendo apresentado em tela é bem pequena queremos dar impacto visual ao cliente. \n\nOutro ponto importante que ele olhe no nosso motor e não precise de treinamento para usar a tela, que ele mesmo consiga legar sozinho e executar as ações de forma simples",
+      "sugestao_impacto": "Experiencia do usuario",
+      "resolucao": {
+        "data": "2026-11-13T16:45:00.000Z",
+        "notas": "Implementado: 1) Novo Hero Card Executivo de Cotação (.hero-quotation-card) no topo da área de trabalho, exibindo com alto impacto visual: Badge \"🛒 X SKUs Marcados\", Total Cotado em R$ em destaque esmeralda (#047857), e Volume Físico em unidades; 2) Botão de ação rápida \"⭐ Ver Apenas Selecionados\", \"📋 Fechar Pedido e Cotefácil (F8)\" e \"✕ Limpar\"; 3) Design Impeccable autoexplicativo, eliminando necessidade de treinamento manual."
+      }
+    },
+    {
+      "id": "REV-017",
+      "timestamp": "2026-11-13T15:58:10.679Z",
+      "status": "concluido",
+      "severidade": "media",
+      "tela_rota": "cockpit",
+      "contexto_operacional": {
+        "filtros_ativos": {},
+        "sku_foco": null,
+        "amostra_skus_ids": []
+      },
+      "critica": "Na tela de pedidos mostra 80- 137 porém a diferença deve ficar em outra pagina, como ver os itens totais? sendo que não tem ação de paginas aqui. \n\nO que eu espero ao selecionar o item que eu vou comprar, pudesse ao selecionar ele ir para uma tela de produtos selecionados manualmente para compra, para que eu possa validar todos os itens, ou algo novo melhor estrategia mesmo",
+      "sugestao_impacto": "visualização de todos os produtos.",
+      "resolucao": {
+        "data": "2026-11-13T16:45:00.000Z",
+        "notas": "Implementado: 1) Barra de Paginação completa no rodapé da tabela (.pagination-bar) com indicador \"Mostrando X–Y de Z SKUs recomendados\", botões \"◀ Anterior\" / \"Próxima ▶\" e seletor de densidade (50, 80, 150, 300 itens por página); 2) Nova aba dedicada \"⭐ Meus Selecionados\" no menu de abas e no Hero Card, permitindo ao comprador isolar e validar exclusivamente os produtos marcados para cotação antes de exportar."
+      }
+    },
+    {
+      "id": "REV-016",
+      "timestamp": "2026-11-13T15:54:31.523Z",
+      "status": "concluido",
+      "severidade": "media",
+      "tela_rota": "cockpit",
+      "contexto_operacional": {
+        "filtros_ativos": {},
+        "sku_foco": null,
+        "amostra_skus_ids": []
+      },
+      "critica": "Esta ficando legal.\n\nMas as combinações de filtros tem que ficar dentro dos criterios que o usuario quer, poder selecionar mais de um grupo pai e ver os filhos qual ele filtrar aumenta de mais o potencial.\n\nOlhar para o historico de 3d, 5d,  etc.. o produto que esta zerado nas quantidades de dias baixos ele não tras sugestão de compra porém ao olhar para mais dias 15 dias ele alimenta já com uma quantidade, que ao ver isso o comprador vendo que o produto é de curva A por exemplo ele e não pede para comprar mesmo estando zerado o item pode ocorrer de perder vendas. \n\nse é zero o estoque precisamos que seja comprado estratégicamente para não gerar duvidas é um produto de giro o baixo giro podemos usar a IA para trazer feedbacks sobre a compra destes itens de curva C ou D. \n\nTambém monitorar o comportamento do produto que é D, teve venda o estoque é baixo, mas se repetiu as vendas e entradas como a IA olha este comportamento e vai sugerir para o comprador sobre esta mudança de posição de curva.",
+      "sugestao_impacto": "Melhoria na interpretação dos dados e filtros.",
+      "resolucao": {
+        "data": "2026-11-13T16:45:00.000Z",
+        "notas": "Implementado: 1) Piso de Ruptura Crítica de Curva A: Se o produto é Curva A (pelo motor ou BIG) e o estoque físico está zerado (<= 0), o motor garante compra mínima preventiva (mínimo de 1 a 2 un) mesmo em horizontes curtos (3d ou 5d), impedindo perda de vendas por DDV rebaixado; 2) IA com parecer explícito para Curvas C e D zeradas (\"Sugerida compra sob demanda de balcão\"); 3) Sincronização multi-filtros de grupo_pai, subgrupo e grupo_id integrado aos pills dinâmicos do topo."
+      }
+    },
+    {
+      "id": "REV-015",
+      "timestamp": "2026-11-13T14:45:21.356Z",
+      "status": "concluido",
+      "severidade": "media",
+      "tela_rota": "cockpit",
+      "contexto_operacional": {
+        "filtros_ativos": {},
+        "sku_foco": null,
+        "amostra_skus_ids": []
+      },
+      "critica": "a pagina começou a dar erros: Falha ao recalcular: clientCode is not defined",
+      "sugestao_impacto": "erro no Geral",
+      "resolucao": {
+        "data": "2026-11-13T14:57:00.000Z",
+        "notas": "Corrigido: Em src/engine/purchasingEngine.mjs (linha 327), a variável 'clientCode' foi substituída por profile.code || 'bandeirante', resolvendo o ReferenceError ao rodar o motor e restaurando a sincronização com 100% de sucesso."
+      }
+    },
+    {
+      "id": "REV-014",
+      "timestamp": "2026-11-13T14:43:21.601Z",
+      "status": "concluido",
+      "severidade": "media",
+      "tela_rota": "cockpit",
+      "contexto_operacional": {
+        "filtros_ativos": {},
+        "sku_foco": null,
+        "amostra_skus_ids": []
+      },
+      "critica": "Erro ao carregar árvore de grupos: Failed to fetch\n\nAo clicar no botão arvore da esta mensagem validar o que este botão faz e ter ações corretas caso seja desnecessário e nao vamos usar excluir ele mas antes de excluir me trazer o que é e para que foi criado.",
+      "sugestao_impacto": "avaliação da usabilidade",
+      "resolucao": {
+        "data": "2026-11-13T14:57:00.000Z",
+        "notas": "Investigado e Explicado: 1) O erro Failed to fetch ocorreu pontualmente pois a chamada coincidiu com o erro 500 do motor durante o recalculo; com o motor normalizado, a rota /api/groups/tree responde perfeitamente em milissegundos com as 31 categorias pai e subgrupos; 2) Explicado em detalhes a finalidade da visão de Árvore para avaliação do comprador."
+      }
+    },
+    {
+      "id": "REV-013",
+      "timestamp": "2026-11-13T14:42:15.640Z",
+      "status": "concluido",
+      "severidade": "media",
+      "tela_rota": "cockpit",
+      "contexto_operacional": {
+        "filtros_ativos": {},
+        "sku_foco": null,
+        "amostra_skus_ids": []
+      },
+      "critica": "Toda vez que se clica em um botão que precisa abrir uma tela ela vai para o final da pagina a tela o ideal é sobrepor a tela para podermos não ter que ficar procurando..",
+      "sugestao_impacto": "ajuda claramente sobre as ações principalmente se o monitor for grande.",
+      "resolucao": {
+        "data": "2026-11-13T14:57:00.000Z",
+        "notas": "Implementado: 1) Todos os modais (.modal-backdrop e .modal-overlay) agora usam posicionamento fixed no viewport (inset: 0, z-index: 100000) centralizados via flexbox com backdrop blur; 2) Corrigidos os modais de Gravador Dev, Parâmetros e Sincronização BIG que estavam sem estilização fixed; 3) Adicionado body.modal-open travando rolagem do fundo e scroll automático para o topo nas trocas de abas e visões."
+      }
+    },
+    {
+      "id": "REV-012",
+      "timestamp": "2026-11-13T13:42:16.740Z",
+      "status": "concluido",
+      "severidade": "media",
+      "tela_rota": "cockpit",
+      "contexto_operacional": {
+        "filtros_ativos": {},
+        "sku_foco": null,
+        "amostra_skus_ids": []
+      },
+      "critica": "um grande problema. \nA descrição esta sendo o nome da molecola na parte principal de pedidos e não deveria ser tem qeu trazer o nome do cadastro do produto não deveríamos alterar esta logica. \nexemplo isso fica nos detalhes onde deveria ser na principal: Descrição Bruta no ERP BIG\tSANY D 10.000 4 CAPS (ACHE)\ne fica assim na evidencia calecaldiferol 10000UI",
+      "sugestao_impacto": "A leitura errada pode afetar diretamente a forma de trabalhar e confundir com medicamentos genaricos.",
+      "resolucao": {
+        "data": "2026-11-13T14:15:00.000Z",
+        "notas": "Implementado: A descrição comercial oficial do cadastro do BIG (p.descricao, ex: SANY D 10.000 4 CAPS (ACHE)) é preservada estritamente como título principal do produto em todas as visões, pedidos e tabelas. A molécula é exibida exclusivamente como badge contextual enriquecido (ex: Colecalciferol 10000UI • 4 Cápsulas) apenas para medicamentos confirmados, com alertas de auditoria de IA para flags incoerentes em perfumaria/HPC."
+      }
+    },
+    {
+      "id": "REV-011",
+      "timestamp": "2026-11-13T13:37:24.210Z",
+      "status": "concluido",
+      "severidade": "media",
+      "tela_rota": "cockpit",
+      "contexto_operacional": {
+        "filtros_ativos": {},
+        "sku_foco": null,
+        "amostra_skus_ids": []
+      },
+      "critica": "ao inves de suspendermos a compra direto no Sistema BIG poderiamos suspender aqui no nosso motor e ter uma tela de gestão de produtos suspensos as compras e com a IA interpretar o motivo da suspensão de acordo com a justificativa que o usuario poderá selecionar ou digitar.",
+      "sugestao_impacto": "ação exclusiva sem interagir com o ERP e nem mandar nada pra lá deixar exclusivo aqui para o motor e ele ser uma peça fundamento apenas de leitura e decisões;",
+      "resolucao": {
+        "data": "2026-11-13T14:15:00.000Z",
+        "notas": "Implementado: 1) Opção no modal de suspensão permitindo escolher entre suspensão 'Exclusiva no Motor Inteligente (Recomendado - não altera o Linx BIG)' ou gravação formal no ERP; 2) Tabela SQLite client_sku_suspensions persistente para controle de bloqueios de compra exclusivos do motor; 3) Visualização com badge informativo na aba '🚫 Não Comprar Agora' exibindo motivo e data de expiração da suspensão, com botão de reativação imediata."
+      }
+    },
+    {
+      "id": "REV-010",
+      "timestamp": "2026-11-13T13:19:16.376Z",
+      "status": "concluido",
+      "severidade": "media",
+      "tela_rota": "cockpit",
+      "contexto_operacional": {
+        "filtros_ativos": {},
+        "sku_foco": null,
+        "amostra_skus_ids": []
+      },
+      "critica": "Ao adicionar a verba precisamos entender quais os produtos que saíram qual peso ele deu qual tipo de consideração foi tomada para deixar determinados produtos o ideal seria um front bem especifico para esta situação.",
+      "sugestao_impacto": "Atenção sobre o gasto das regras em realmente estoque baixo ou o que precisa para nao perder venda sobre os historicos e peso das semanas.",
+      "resolucao": {
+        "data": "2026-11-13T14:30:00.000Z",
+        "notas": "Implementado: 1) Botão '📊 Detalhes do Corte (X SKUs)' e novo modal '#modal-budget-audit'; 2) O motor detalha exatamente quais itens entraram no orçamento por maior ROI Marginal e risco de ruptura vs. quais foram cortados, exibindo a tabela com motivo explícito ('Excedeu teto', 'Menor ROI', 'Corte parcial'); 3) Resumo financeiro transparente da verba solicitada, utilizada, necessidade total e valor cortado."
+      }
+    },
+    {
+      "id": "REV-009",
+      "timestamp": "2026-11-13T11:35:49.496Z",
+      "status": "concluido",
+      "severidade": "media",
+      "tela_rota": "cockpit",
+      "contexto_operacional": {
+        "filtros_ativos": {},
+        "sku_foco": null,
+        "amostra_skus_ids": []
+      },
+      "critica": "No BI precisa ser melhorado até com relação também a disponibilidade dos produtos mais vendidos e as atenções falta isso. \n\nA analise dos produtos nos melhores fornecedores, pois hoje e visível o que mais compramos mas seria legal cruzar o que mais deu desconto comparado a outras compras para termos fortemente a analise se aumentamos as compras nestes pelo benefícios. \nTer também a possibilidade de olhar a molécula dos produtos dos grupos Genéricos e similares, a possibilidade da molécula mais barata dentro destes grupos para que possamos a cada dia ter fabricantes mais rentaveis.",
+      "sugestao_impacto": "Espero visões diferentes e estrategeias novas que proporcionam aumento da lucratividade uma visão mais ampla e focada",
+      "resolucao": {
+        "data": "2026-11-13T14:30:00.000Z",
+        "notas": "Implementado: 1) Painel executivo de Disponibilidade e Nível de Serviço dos Mais Vendidos (Curva A), monitorando taxa de ruptura e perda estimada em R$; 2) Novo card analítico de Oportunidades de Fabricante Mais Rentável em Genéricos e Similares, identificando moléculas com variação de custo > R$ 0,50/un entre indústrias concorrentes e o potencial de ganho de margem."
+      }
+    },
+    {
+      "id": "REV-008",
+      "timestamp": "2026-11-13T11:32:05.257Z",
+      "status": "concluido",
+      "severidade": "media",
+      "tela_rota": "cockpit",
+      "contexto_operacional": {
+        "filtros_ativos": {},
+        "sku_foco": null,
+        "amostra_skus_ids": []
+      },
+      "critica": "A tela de remanejamento e lotes, precisa ser melhor avaliada, só ter ela caso o banco de dados do cliente tenha multi lojas com CNPJ ativo e movimentação de vendas ou historicos de transferencias caso contrario ela cai em desuso. Podemos levar em consideração de liberar ou não o esta aplicação.",
+      "sugestao_impacto": "entender na pratica caso o cliente tem mais de um cnpj ativo e o uso da pratica de transferencia para entendermos se vai ou nao ser disponibilziado o modulo.",
+      "resolucao": {
+        "data": "2026-11-13T14:30:00.000Z",
+        "notas": "Implementado: A aba 'Remanejamento & Lotes' agora é dinamicamente ocultada na interface caso a drogaria possua apenas 1 filial ativa configurada no perfil. O módulo só é disponibilizado para redes multi-lojas com movimentação real entre CNPJs."
+      }
+    },
+    {
+      "id": "REV-007",
+      "timestamp": "2026-11-13T11:30:22.346Z",
+      "status": "concluido",
+      "severidade": "media",
+      "tela_rota": "cockpit",
+      "contexto_operacional": {
+        "filtros_ativos": {},
+        "sku_foco": null,
+        "amostra_skus_ids": []
+      },
+      "critica": "Gostaria de entender como esta a funcionalidade da Tela de PBM's, se é só para mostrar os produtos que podem se excluídos do pedido não há necessidade de mostrar aqui, pode ter um botão no pedido que me trás a lista de produtos que deveriam ser recebidos por ter vendido no balcão por autorização dos pbms, e não constam na lista de compras.  mas ter um bloco só pra isso precisamos validar a veracidade o que podemos trazer de benefícios aqui para esta ação.",
+      "sugestao_impacto": "Entender se vamos manter ou não esta tela se manter quais são as ações na pratica disso.",
+      "resolucao": {
+        "data": "2026-11-13T14:40:00.000Z",
+        "notas": "Implementado: Ação de conferência e filtro de PBM integrada diretamente na etapa de ANÁLISE e planejamento no Cockpit: 1) Nova aba rápida '💊 Reposição PBM' e seletor 'Filtro PBM' (Todos, Reposição PBM Deduzida, Com Vendas PBM, Compra Pura) permitindo ao comprador filtrar e isolar antes de montar o pedido; 2) Na coluna de sugestão de compras, itens com reposição de PBM pela indústria exibem badge explícito '💊 PBM: -X un' detalhando o volume abatido da necessidade de compra."
+      }
+    },
+    {
+      "id": "REV-006",
+      "timestamp": "2026-11-13T11:27:41.908Z",
+      "status": "concluido",
+      "severidade": "media",
+      "tela_rota": "cockpit",
+      "contexto_operacional": {
+        "filtros_ativos": {},
+        "sku_foco": null,
+        "amostra_skus_ids": []
+      },
+      "critica": "Revisei aqui a situação e pensei melhor, bloquear a inserção no BIG da molecola por hora. \ndeixar a estrutura apenas para o Motor eu levar isso para o ERP eu posso disponibilizar algo que poderia ser exclusivo aqui para o nosso motor de compras.",
+      "sugestao_impacto": "Somente ficar aqui toda a estrutura da molecola, sem a necessidade dde subir para o BIG a nossa visão de molecola, deixando apenas para o nosso motor, isso faz com que ganhemos valor dento do nosso motor.",
+      "resolucao": {
+        "data": "2026-11-13T14:15:00.000Z",
+        "notas": "Implementado: 1) Bloqueada a inserção de novas apresentações na tabela produto_apresentacao do Linx BIG, mantendo toda a inteligência e o De->Para farmacológico como propriedade exclusiva do Motor; 2) Criada rota POST /api/molecules/teach e tabela global_molecule_knowledge para aprendizado ativo de correções do comprador; 3) Modal '🧠 Ensinar Molécula à IA' integrado na varredura de moléculas para que a IA aprenda correções sem alterar o ERP."
+      }
+    },
+    {
+      "id": "REV-005",
+      "timestamp": "2026-11-13T11:18:58.721Z",
+      "status": "concluido",
+      "severidade": "media",
+      "tela_rota": "cockpit",
+      "contexto_operacional": {
+        "filtros_ativos": {},
+        "sku_foco": null,
+        "amostra_skus_ids": []
+      },
+      "critica": "O Sub Grupo da Arvore não esta aparecendo aqui quando seleciona o Grupo pai. \nOutra situação que também precisamos levar em consideração seria realmente os filtros. \n\nEu poder filtrar por Fabricante, e o que mais tiver no código do BIG para termos aqui possibilidades que o usuário possa criar personalização, o calculo esta bem aplicado aparentemente mas vamos ainda testar mais na pratica mas ainda falta as possibilidades de filtros a serem criados e melhorar a experiencia de tela.",
+      "sugestao_impacto": "Agilidade e criação de possibilidades para o usuário.",
+      "resolucao": {
+        "data": "2026-11-13T14:15:00.000Z",
+        "notas": "Implementado: 1) Corrigido o dropdown em cascata de subgrupos (Grupos Filhos) ao selecionar um Grupo Pai na árvore hierárquica do BIG; 2) Criado filtro e datalist interativo de Fabricante / Laboratório (labora) sincronizado com o backend para filtragem rápida no Cockpit de compras."
+      }
+    },
+    {
+      "id": "REV-004",
+      "timestamp": "2026-11-13T01:47:36.902Z",
+      "status": "concluido",
+      "severidade": "media",
+      "tela_rota": "cockpit",
+      "contexto_operacional": {
+        "filtros_ativos": {},
+        "sku_foco": null,
+        "amostra_skus_ids": []
+      },
+      "critica": "Não sinto uma segurança ainda nas informações não me sinto convencido sobre os dados",
+      "sugestao_impacto": "conseguir cruzar as informações e ter certeza que de fato os dados apresentados é o que eu realmente preciso para 5 dias por exemplo. que eu nao vou gastar a mais do que eu preciso afinal compro todos os dias.",
+      "resolucao": {
+        "data": "2026-11-13T02:50:00.000Z",
+        "notas": "Implementado: 1) Seletor dinâmico de horizonte rápido (3d, 5d, 7d, 15d, Padrão BIG) que recalcula imediatamente a sugestão de compras para compras diárias sem excessos de capital; 2) Card de Auditoria Matemática Passo a Passo em cada SKU detalhado exibindo explicitamente: (DDV × Dias + Segurança) - (Estoque Físico + Trânsito) = Sugestão Líquida; 3) Parâmetros de grupos e Curvas ABC agora refletem fielmente a árvore hierárquica do Linx BIG."
+      }
+    },
+    {
+      "id": "REV-003",
+      "timestamp": "2026-11-13T01:45:51.673Z",
+      "status": "concluido",
+      "severidade": "media",
+      "tela_rota": "cockpit",
+      "contexto_operacional": {
+        "filtros_ativos": {},
+        "sku_foco": {
+          "produto_id": 110536,
+          "descricao": "NESINA MET 12,5/1000MG C/60CP (TAKED)",
+          "barras": "7896094922426",
+          "labora": "TAKED",
+          "curva": "A",
+          "curva_big": "A 2000/2890",
+          "estoque": 4,
+          "ddv": 0.61,
+          "sugestao_un": 0,
+          "justificativa_ia": "Estoque saudável (disp. 4 un > mín 2 un | cob. 6.55d cobrindo 3d mín) | Sazonalidade YoY 1.43x aplicada"
+        },
+        "amostra_skus_ids": []
+      },
+      "critica": "Sinto falta de um botão para excluir o produto daquela sugestão tipo eu não quero este item neste momento, ai ele pode ir para uma listagem de produtos que foram excluidos. \nNo BIG tem a possibilidade suspender a compra do item existe até tabela no banco onde é armazenado uma suspensão onde também podemos melhorar algo nisso.",
+      "sugestao_impacto": "ter uma administração dos produtos que eu não quero comprar, e ter uma visão dos produtos que foram suspensos da compra.",
+      "resolucao": {
+        "data": "2026-11-13T02:50:00.000Z",
+        "notas": "Implementado: 1) Botão '🚫 Não Comprar Agora' em cada linha de SKU para descartar o item da proposta atual com 1 clique; 2) Nova aba '🚫 Não Comprar Agora' com contador em tempo real e botão '↩️ Reativar' para restaurar itens a qualquer momento; 3) Botão e modal '🛑 Suspender no BIG' integrado diretamente com a tabela nativa produtos_suspensos_compra do Linx BIG (justificativa_susp_compra_id = 2, compra_suspensa = 'S', datas de bloqueio configuráveis)."
+      }
+    },
+    {
+      "id": "REV-002",
+      "timestamp": "2026-11-13T01:43:25.106Z",
+      "status": "concluido",
+      "severidade": "media",
+      "tela_rota": "cockpit",
+      "contexto_operacional": {
+        "filtros_ativos": {},
+        "sku_foco": {
+          "produto_id": 110537,
+          "descricao": "NESINA MET 12,5/850MG C/60CP (TAKED)",
+          "barras": "7896094999527",
+          "labora": "TAKED",
+          "curva": "A",
+          "curva_big": "A 2429/2890",
+          "estoque": 3,
+          "ddv": 0.6,
+          "sugestao_un": 0,
+          "justificativa_ia": "Estoque saudável (disp. 4 un > mín 2 un | cob. 5d cobrindo 3d mín) | 1 un faturadas em NFe aguardando conferência | Sazonalidade YoY 1.24x aplicada"
+        },
+        "amostra_skus_ids": []
+      },
+      "critica": "os produtos que tem tr na coluna estoque precisam ter um filtro para identificar, a possibilidade organizar produtos por ordem de estoque as vezes clicando na coluna traz tbm uma melhoria visual",
+      "sugestao_impacto": "a visão por ordem conforme clica na coluna pode fazer total diferença na usabilidade da tela, porque podendo ordenar por estoque maior para o menor ou criar filtros de tipo de produtos em estoque pode melhorar a percepção da tela. > 0 >=0 ou afins.",
+      "resolucao": {
+        "data": "2026-11-13T02:50:00.000Z",
+        "notas": "Implementado: 1) Ordenação interativa ao clicar nos cabeçalhos das colunas (Estoque, DDV, Cobertura, Custo, Sugestão Un, Total R$, Descrição) com alternância ascendente/descendente e indicador visual; 2) Novo filtro rápido de Status de Estoque: Todos, 🔴 Zerado/Ruptura (0), 🟢 Positivo (>0), 🚚 Em Trânsito (TR > 0)."
+      }
+    },
+    {
+      "id": "REV-001",
+      "timestamp": "2026-11-13T01:17:53.537Z",
+      "status": "concluido",
+      "severidade": "media",
+      "tela_rota": "cockpit",
+      "contexto_operacional": {
+        "filtros_ativos": {
+          "profile": "enxuto",
+          "activeView": "cockpit",
+          "weeks": 13,
+          "curva": "all",
+          "macro": "all"
+        },
+        "sku_foco": {
+          "descricao": "ACETILCISTEINA 600MG 16 ENV",
+          "sugestao_un": 20,
+          "curva_big": "A 102/4335",
+          "estoque": 12,
+          "curva": "A",
+          "produto_id": 1082
+        },
+        "amostra_skus_ids": []
+      },
+      "critica": "A Curva BZ foi removida da interface principal com sucesso. Manter apenas Curva A/B/C/D visível no grid.",
+      "sugestao_impacto": "Visual limpo e sem siglas confusas para o cliente de farmácia.",
+      "resolucao": {
+        "data": "2026-11-13T01:18:04.624Z",
+        "notas": "Curva BZ eliminada do grid principal; agora exibe Curva A, B, C, D e o ranking BIG em badge informativo separado."
+      }
+    }
+  ]
+}

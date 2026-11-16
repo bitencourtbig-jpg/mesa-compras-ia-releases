@@ -1114,8 +1114,8 @@ input[type="search"] {
   left: 0;
   right: 0;
   bottom: 0;
-  width: 100vw;
-  height: 100vh;
+  width: 100%;
+  height: 100%;
   background: rgba(15, 23, 42, 0.65);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
@@ -1257,21 +1257,241 @@ body.modal-open {
   border-top: 1px dashed var(--border);
 }
 
-@media (max-width: 1180px) {
-  .kpi-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .kpi-cell { border-bottom: 1px solid var(--border); }
-  .split-grid, .detail-grid, .bi-grid-2 { grid-template-columns: 1fr; }
-  .flow-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .bi-stat-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+/* ==========================================================================
+   SISTEMA RESPONSIVO MULTI-DISPOSITIVO & ADAPTAÇÃO CROSS-BROWSER (IMPECCABLE)
+   ========================================================================== */
+
+/* 1. Telas Médias & Notebooks Padrão (ex: 1366x768, 1280x800) */
+@media (max-width: 1400px) {
+  .topbar-controls {
+    gap: 6px;
+  }
+  .topbar-controls .btn {
+    padding: 0 10px;
+    font-size: 11.5px;
+    height: 30px;
+  }
+  .control-group select {
+    height: 30px;
+    font-size: 11.5px;
+    padding: 4px 8px;
+  }
+  .kpi-strip {
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  }
+  .kpi-cell {
+    padding: 8px 10px;
+  }
+  .kpi-val {
+    font-size: 15px;
+  }
 }
 
-@media (max-width: 820px) {
-  .app-shell { grid-template-columns: 1fr; }
-  .sidebar { border-right: none; border-bottom: 1px solid var(--border); }
-  .nav-list { flex-direction: row; flex-wrap: wrap; }
-  .nav-item { width: auto; }
-  .kpi-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .flow-steps, .glossary-grid { grid-template-columns: 1fr; }
+/* 2. Laptops Compactos e Tablets em Modo Paisagem (<= 1180px) */
+@media (max-width: 1180px) {
+  .app-shell {
+    grid-template-columns: 200px minmax(0, 1fr);
+  }
+  .sidebar {
+    padding: 12px 8px;
+    gap: 12px;
+  }
+  .nav-item {
+    padding: 7px 8px;
+    font-size: 12px;
+    gap: 7px;
+  }
+  .kpi-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .kpi-cell {
+    border-bottom: 1px solid var(--border);
+  }
+  .split-grid, .detail-grid, .bi-grid-2 {
+    grid-template-columns: 1fr;
+  }
+  .flow-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .bi-stat-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* 3. Tablets e Notebooks Pequenos (<= 992px) */
+@media (max-width: 992px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+  .sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 10px 14px;
+    gap: 10px;
+  }
+  .brand {
+    padding: 0;
+  }
+  .nav-list {
+    flex-direction: row;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    gap: 6px;
+    padding-bottom: 4px;
+  }
+  .nav-list::-webkit-scrollbar {
+    display: none;
+  }
+  .nav-item {
+    width: auto;
+    white-space: nowrap;
+    flex-shrink: 0;
+    padding: 6px 12px;
+    border-radius: 20px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+  }
+  .nav-item.active {
+    background: var(--accent);
+    color: #ffffff;
+    border-color: var(--accent);
+  }
+  .sidebar-footer {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding-top: 8px;
+    margin-top: 0;
+  }
+  .sidebar-footer .btn {
+    width: auto !important;
+    margin-bottom: 0 !important;
+  }
+  .main-area {
+    padding: 12px 14px 24px;
+    gap: 12px;
+  }
+  .topbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .topbar-controls {
+    justify-content: flex-start;
+  }
+  .multiloja-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 8px 12px;
+  }
+  .multiloja-right {
+    justify-content: flex-end;
+  }
+}
+
+/* 4. Tablets em Modo Retrato e Smartphones (<= 768px) */
+@media (max-width: 768px) {
+  select,
+  input[type="text"],
+  input[type="search"],
+  input[type="number"],
+  input[type="password"] {
+    font-size: 14px;
+    min-height: 38px;
+  }
+  input[type="search"] {
+    min-width: 100%;
+    width: 100%;
+  }
+  .btn {
+    min-height: 38px;
+    padding: 0 12px;
+    font-size: 12px;
+  }
+  .btn-sm {
+    min-height: 32px;
+    padding: 0 10px;
+    font-size: 11px;
+  }
+  .kpi-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .kpi-cell {
+    padding: 8px 10px;
+  }
+  .kpi-val {
+    font-size: 14px;
+  }
+  .flow-steps, .glossary-grid {
+    grid-template-columns: 1fr;
+  }
+  .modal-backdrop, .modal-overlay {
+    padding: 8px;
+  }
+  .modal-card {
+    width: calc(100vw - 16px) !important;
+    max-height: 96vh !important;
+    margin: 4px auto !important;
+    border-radius: 8px !important;
+  }
+  .modal-head, .modal-header {
+    padding: 10px 14px;
+  }
+  .modal-body {
+    padding: 12px 14px;
+  }
+  .modal-footer {
+    padding: 10px 14px;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .modal-footer-actions {
+    width: 100%;
+    flex-direction: column;
+  }
+  .modal-footer-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+  .table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    width: 100%;
+  }
+}
+
+/* 5. Smartphones Pequenos (<= 480px) */
+@media (max-width: 480px) {
+  .topbar-controls {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    width: 100%;
+  }
+  .control-group {
+    width: 100%;
+  }
+  .topbar-controls .btn-primary {
+    grid-column: span 2;
+    width: 100%;
+    justify-content: center;
+  }
+  .kpi-strip {
+    grid-template-columns: 1fr 1fr;
+  }
+  .kpi-cell {
+    padding: 6px 8px;
+  }
+  .kpi-label {
+    font-size: 10px;
+  }
+  .kpi-val {
+    font-size: 13px;
+  }
 }
 
 /* ==========================================================================
@@ -2459,19 +2679,22 @@ body.modal-open {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  flex-wrap: wrap;
   gap: 12px;
   padding: 8px 16px;
   background: #ffffff;
   border-bottom: 1px solid var(--border-subtle);
   border-top: 1px solid var(--border-subtle);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .multiloja-left {
   display: flex;
   align-items: center;
   gap: 10px;
-  flex-wrap: wrap;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
 }
 
 .multiloja-title {
@@ -2480,12 +2703,27 @@ body.modal-open {
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .multiloja-chips {
   display: flex;
   align-items: center;
   gap: 8px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  padding-bottom: 2px;
+  max-width: 100%;
+  flex: 1 1 auto;
+}
+
+.multiloja-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
   flex-wrap: wrap;
 }
 
@@ -2985,3 +3223,148 @@ body.modal-open {
   padding: 20px 24px;
   box-shadow: 0 2px 6px rgba(0,0,0,0.03);
 }
+
+/* CURADORIA EXECUTIVA DE MOLÉCULAS */
+.curadoria-product-row {
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.curadoria-product-row:hover,
+.curadoria-product-row:hover td {
+  background: #f8fafc !important;
+}
+
+/* ==========================================================================
+   POLIMENTO RESPONSIVO IMPECCABLE: CURADORIA, MOLÉCULAS, REMANEJAMENTO & MODAIS
+   ========================================================================== */
+
+/* Curadoria Pré-Tela IA */
+.curadoria-container {
+  width: 100%;
+  max-width: 100%;
+}
+
+.curadoria-header-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 16px 20px;
+  background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);
+  border: 1.5px solid #a7f3d0;
+  border-radius: 12px;
+}
+
+/* Modal de Análise da Molécula (Sweep Modal) */
+#molecule-sweep-modal .modal-card {
+  width: min(1200px, 96vw) !important;
+  max-height: 94vh !important;
+}
+
+#sweep-action-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--bg-subtle);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.04);
+}
+
+.store-action-card {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.store-action-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.btn-cancel-card-purchase {
+  transition: all 0.15s ease;
+}
+
+.btn-cancel-card-purchase:hover {
+  background: #fecaca !important;
+  color: #7f1d1d !important;
+  border-color: #f87171 !important;
+}
+
+/* Remanejamento Multi-Loja & Lotes FEFO */
+.reman-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.reman-filter-row select,
+.reman-filter-row input {
+  flex: 1 1 auto;
+  min-width: 130px;
+}
+
+/* Adaptação para Telas Pequenas e Mobile */
+@media (max-width: 768px) {
+  .modal-backdrop,
+  .modal-overlay {
+    padding: 8px !important;
+  }
+  .modal-card,
+  #molecule-sweep-modal .modal-card {
+    width: 100% !important;
+    max-width: calc(100vw - 16px) !important;
+    max-height: 96vh !important;
+    margin: auto !important;
+  }
+  .curadoria-header-card {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 12px 14px;
+  }
+  .curadoria-header-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+  .curadoria-header-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+  #sweep-action-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+  #sweep-action-bar > div {
+    flex-direction: column;
+    width: 100%;
+  }
+  #sweep-action-bar .btn {
+    width: 100%;
+    justify-content: center;
+  }
+  .reman-filter-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .reman-filter-row select,
+  .reman-filter-row input {
+    width: 100%;
+    min-width: 100%;
+  }
+  .quick-labora-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+
