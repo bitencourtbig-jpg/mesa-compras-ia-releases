@@ -813,23 +813,14 @@
             </div>
           </div>
 
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead>
-                <tr style="background:#f5f3ff;">
-                  <th style="color:#5b21b6;">Produto Demandado (Compra Cancelada)</th>
-                  <th style="color:#5b21b6;">Molécula Ativa</th>
-                  <th style="color:#5b21b6;">Lojas Onde a Compra Foi Cancelada</th>
-                  <th style="color:#5b21b6;">Lojas com Estoque Concorrente (Doadoras)</th>
-                  <th class="num" style="color:#5b21b6;">Qtd Abatida</th>
-                  <th class="num" style="color:#5b21b6;">Economia Caixa</th>
-                  <th style="color:#5b21b6; text-align:center;">Ação Imediata</th>
-                </tr>
-              </thead>
-              <tbody id="curadoria-decisions-tbody">
-                <!-- Preenchido via JS com decisões da Curadoria -->
-              </tbody>
-            </table>
+          <!-- CARDS DE TRANSFERÊNCIAS CONSOLIDADAS POR LOJA (ROTA DOADORA ➔ RECEPTORA) -->
+          <div id="curadoria-routes-container" style="display:flex; flex-direction:column; gap:12px; margin-bottom:16px;">
+            <!-- Preenchido via JS com as rotas unificadas por loja da rodada do comprador -->
+          </div>
+
+          <!-- SEÇÃO DE ABATIMENTOS NO BALCÃO LOCAL / DESOVA SEM TRÂNSITO INTER-LOJAS -->
+          <div id="curadoria-local-container">
+            <!-- Preenchido via JS com produtos retidos no balcão da filial (ex: Nesina, Azelan) -->
           </div>
         </div>
 
@@ -1013,7 +1004,10 @@
               </div>
             </div>
             <div style="padding:12px 20px;background:var(--bg-subtle);border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
-              <a id="btn-modal-trf-download" href="#" class="btn btn-secondary btn-sm" style="font-weight:700;">📥 Baixar Romaneio Excel</a>
+              <div id="modal-trf-footer-actions" style="display:flex;gap:10px;align-items:center;">
+                <a id="btn-modal-trf-download" href="#" class="btn btn-secondary btn-sm" style="font-weight:700;">📥 Baixar Romaneio Excel</a>
+                <button id="btn-modal-trf-emit-route" class="btn btn-primary btn-sm hidden" type="button" style="background:#7c3aed;border-color:#6d28d9;font-weight:700;">📄 Confirmar &amp; Emitir Guia Desta Loja</button>
+              </div>
               <button id="btn-close-modal-trf-bottom" class="btn btn-primary btn-sm" type="button">Fechar</button>
             </div>
           </div>

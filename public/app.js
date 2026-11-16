@@ -3278,6 +3278,7 @@ async function executeSyncBigApres() {
 
 
 let currentActiveTransfers = [];
+let currentCuradoriaRoutes = [];
 
 function openTransferItemsModal(transferId) {
   const modalEl = document.getElementById('modal-transfer-items');
@@ -3294,11 +3295,16 @@ function openTransferItemsModal(transferId) {
   const metaEl = document.getElementById('modal-trf-meta');
   const tbodyEl = document.getElementById('modal-trf-tbody');
   const dlBtn = document.getElementById('btn-modal-trf-download');
+  const emitBtn = document.getElementById('btn-modal-trf-emit-route');
 
   if (titleEl) titleEl.textContent = `📦 Guia de Transferência ${t.codigo_transferencia || `TRF-${t.id}`}`;
   if (subEl) subEl.textContent = `Origem: ${t.filial_origem_nome || `Loja ${t.filial_origem}`} ➔ Destino: ${t.filial_destino_nome || `Loja ${t.filial_destino}`}`;
 
-  if (dlBtn) dlBtn.href = `/api/remanejamento/export-excel?transferId=${t.id}`;
+  if (dlBtn) {
+    dlBtn.href = `/api/remanejamento/export-excel?transferId=${t.id}`;
+    dlBtn.classList.remove('hidden');
+  }
+  if (emitBtn) emitBtn.classList.add('hidden');
 
   if (metaEl) {
     metaEl.innerHTML = `
@@ -3345,6 +3351,98 @@ function openTransferItemsModal(transferId) {
   };
 }
 
+function openAuditPlannedRouteModal(routeKey) {
+  const modalEl = document.getElementById('modal-transfer-items');
+  if (!modalEl) return;
+
+  const route = currentCuradoriaRoutes.find(r => r.routeKey === routeKey);
+  if (!route) {
+    showBanner('Rota não encontrada.', true);
+    return;
+  }
+
+  const titleEl = document.getElementById('modal-trf-title');
+  const subEl = document.getElementById('modal-trf-sub');
+  const metaEl = document.getElementById('modal-trf-meta');
+  const tbodyEl = document.getElementById('modal-trf-tbody');
+  const dlBtn = document.getElementById('btn-modal-trf-download');
+  const emitBtn = document.getElementById('btn-modal-trf-emit-route');
+
+  if (titleEl) titleEl.textContent = `🔍 Auditoria de Transferência • ${route.filialOrigemNome} ➔ ${route.filialDestinoNome}`;
+  if (subEl) subEl.textContent = `Visualização prévia dos produtos planejados pelo comprador antes da emissão formal`;
+
+  if (route.transferEmitted) {
+    if (dlBtn) {
+      dlBtn.href = `/api/remanejamento/export-excel?transferId=${route.transferEmitted.id}`;
+      dlBtn.classList.remove('hidden');
+    }
+    if (emitBtn) emitBtn.classList.add('hidden');
+  } else {
+    if (dlBtn) dlBtn.classList.add('hidden');
+    if (emitBtn) {
+      emitBtn.classList.remove('hidden');
+      emitBtn.onclick = async () => {
+        emitBtn.disabled = true;
+        emitBtn.textContent = 'Emitindo guia consolidada...';
+        try {
+          const res = await apiPost('/api/curadoria/emit-transfer', { routeKey });
+          showBanner(res.message || 'Guia de transferência emitida com sucesso!');
+          modalEl.style.display = 'none';
+          modalEl.classList.add('hidden');
+          await loadTransfers();
+        } catch (err) {
+          showBanner(`Erro ao emitir guia: ${err.message}`, true);
+          emitBtn.disabled = false;
+          emitBtn.textContent = '📄 Confirmar & Emitir Guia Desta Loja';
+        }
+      };
+    }
+  }
+
+  if (metaEl) {
+    metaEl.innerHTML = `
+      <div><strong>Status:</strong> ${route.transferEmitted ? `<span class="badge" style="background:#ede9fe;color:#5b21b6;font-weight:800;">✓ Guia ${esc(route.transferEmitted.codigo)}</span>` : '<span class="badge badge-accent">Planejado / Pendente de Emissão</span>'}</div>
+      <div><strong>Total de Produtos:</strong> <strong>${num(route.totalItens)} produtos</strong></div>
+      <div><strong>Total a Transferir:</strong> <strong>${num(route.totalUnidades)} un</strong></div>
+      <div><strong>Economia Caixa:</strong> <strong style="color:#047857;">${brl(route.valorTotalRs)}</strong></div>
+    `;
+  }
+
+  const items = route.items || [];
+  if (tbodyEl) {
+    if (items.length === 0) {
+      tbodyEl.innerHTML = '<tr><td colspan="8" class="muted" style="text-align:center;padding:20px;">Nenhum item nesta rota.</td></tr>';
+    } else {
+      tbodyEl.innerHTML = items.map(it => `
+        <tr>
+          <td><code>${it.produto_id}</code></td>
+          <td><code>${esc(it.barras || '—')}</code></td>
+          <td><strong>${esc(it.descricao)}</strong></td>
+          <td><span class="muted">${esc(it.labora || '—')}</span></td>
+          <td class="num"><strong style="color:#4c1d95;font-size:13px;">${num(it.qtd_sugerida)} un</strong></td>
+          <td class="num">${brl(it.custo_unit)}</td>
+          <td class="num"><strong style="color:#047857;">${brl(it.valor_total)}</strong></td>
+          <td style="font-size:11px;color:#475569;">${esc(it.motivo_decisao || `Estoque disponível na doadora: ${it.estoque_doador || 0} un`)}</td>
+        </tr>
+      `).join('');
+    }
+  }
+
+  modalEl.style.display = 'flex';
+  modalEl.classList.remove('hidden');
+
+  const closeBtn = document.getElementById('btn-close-modal-trf');
+  const closeBtnBottom = document.getElementById('btn-close-modal-trf-bottom');
+  const closeModal = () => {
+    modalEl.style.display = 'none';
+    modalEl.classList.add('hidden');
+    if (dlBtn) dlBtn.classList.remove('hidden');
+    if (emitBtn) emitBtn.classList.add('hidden');
+  };
+  if (closeBtn) closeBtn.onclick = closeModal;
+  if (closeBtnBottom) closeBtnBottom.onclick = closeModal;
+}
+
 async function loadTransfers() {
   if (!state.remanFilters) {
     state.remanFilters = { search: '', tipo: 'ALL', curva: 'ALL', origem: 'ALL', destino: 'ALL', minValor: 0 };
@@ -3364,14 +3462,17 @@ async function loadTransfers() {
 
   const [routesData, remanData] = await Promise.all([
     apiGet(`/api/remanejamento/routes${queryStr}`).catch(() => ({ routes: [], transfers: [], totalGeralRs: 0, totalGeralUnidades: 0, totalItens: 0, summary: {}, filiais: [] })),
-    apiGet(`/api/remanejamento${state.selectedFilial && state.selectedFilial !== 'all' ? `?filial_id=${state.selectedFilial}` : ''}`).catch(() => ({ transfers: [], expiringLots: [] })),
+    apiGet(`/api/remanejamento${state.selectedFilial && state.selectedFilial !== 'all' ? `?filial_id=${state.selectedFilial}` : ''}`).catch(() => ({ transfers: [], expiringLots: [], curadoriaDecisions: [], curadoriaRoutes: [], localCounterDeductions: [] })),
   ]);
 
   const routes = routesData.routes || [];
   const activeTransfers = routesData.transfers || [];
   const expiringLots = remanData.expiringLots || [];
   const curadoriaDecisions = remanData.curadoriaDecisions || [];
+  const curadoriaRoutes = remanData.curadoriaRoutes || curadoriaDecisions.storePairTransfers || [];
+  const localCounterDeductions = remanData.localCounterDeductions || curadoriaDecisions.localCounterDeductions || [];
   currentActiveTransfers = activeTransfers;
+  currentCuradoriaRoutes = curadoriaRoutes;
   const summary = routesData.summary || {};
   const filiaisList = routesData.filiais || [];
 
@@ -3425,78 +3526,123 @@ async function loadTransfers() {
     `;
   }
 
-  
-  // Renderizar SEÇÃO 1: Decisões da Rodada do Comprador (Curadoria IA & Abatimentos)
-  const curadoriaTbody = document.getElementById('curadoria-decisions-tbody');
-  if (curadoriaTbody) {
-    if (curadoriaDecisions.length === 0) {
-      curadoriaTbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;padding:24px;">Nenhuma decisão de curadoria registrada nesta rodada. Ao analisar as moléculas na Pré-Tela e deduzir compras ou autorizar remanejamentos, elas aparecerão listadas aqui com prioridade máxima.</td></tr>';
+  // Renderizar SEÇÃO 1: Decisões da Rodada do Comprador (Consolidadas por Loja Doadora ➔ Receptora)
+  const routesContainerEl = document.getElementById('curadoria-routes-container');
+  const localContainerEl = document.getElementById('curadoria-local-container');
+
+  if (routesContainerEl) {
+    if (curadoriaRoutes.length === 0 && localCounterDeductions.length === 0) {
+      routesContainerEl.innerHTML = `
+        <div class="empty-state-box" style="padding:28px 20px; text-align:center; background:#fff; border:1px dashed #cbd5e1; border-radius:10px;">
+          <div style="font-size:28px; margin-bottom:6px;">🎯✨</div>
+          <div style="font-weight:700; font-size:13.5px; color:#334155;">Nenhuma decisão de curadoria registrada nesta rodada</div>
+          <div class="muted" style="font-size:12px; margin-top:2px;">
+            Ao analisar as moléculas na Pré-Tela e homologar trocas ou remanejamentos, as guias de transferência serão geradas aqui unificadas por loja para envio conjunto.
+          </div>
+        </div>
+      `;
     } else {
-      curadoriaTbody.innerHTML = curadoriaDecisions.map(d => {
-        const lojasCancStr = d.lojas_canceladas && d.lojas_canceladas.length > 0
-          ? d.lojas_canceladas.map(l => `<span class="badge" style="background:#fee2e2;color:#991b1b;font-size:9.5px;font-weight:700;">${esc(l.nome)}</span>`).join(' ')
-          : '<span class="muted" style="font-size:11px;">Rede toda (rateio)</span>';
-
-        const lojasDoadStr = d.lojas_doadoras && d.lojas_doadoras.length > 0
-          ? d.lojas_doadoras.slice(0, 3).map(l => `<span class="badge" style="background:#ede9fe;color:#5b21b6;font-size:9.5px;font-weight:600;" title="${esc(l.descricao)}">${esc(l.nome)}: ${l.estoque_atual} un (${esc(l.labora)})</span>`).join(' ') + (d.lojas_doadoras.length > 3 ? `<span class="muted" style="font-size:10px;">+${d.lojas_doadoras.length - 3}</span>` : '')
-          : '<span class="muted" style="font-size:11px;">Sem doador externo</span>';
-
-        let actionCell = '';
-        if (d.transfer_emitted) {
-          actionCell = `
-            <span class="badge" style="background:#ede9fe;color:#5b21b6;font-weight:800;font-size:10px;">
-              ✓ Guia ${esc(d.transfer_emitted.codigo)}
-            </span>
-          `;
-        } else if (d.lojas_doadoras && d.lojas_doadoras.length > 0) {
-          actionCell = `
-            <button class="btn btn-primary btn-xs btn-emit-curadoria-single" data-pid="${d.produto_id}" style="background:#7c3aed;border-color:#6d28d9;font-weight:700;">
-              📄 Emitir Guia
-            </button>
-          `;
-        } else {
-          actionCell = '<span class="badge badge-success" style="font-size:10px;">✓ Abatimento no Balcão</span>';
-        }
-
+      routesContainerEl.innerHTML = curadoriaRoutes.map(r => {
+        const isEmitted = Boolean(r.transferEmitted);
         return `
-          <tr>
-            <td>
-              <div style="font-weight:700;color:#0f172a;">${esc(d.descricao)}</div>
-              <div style="font-size:11px;color:#64748b;">Cód BIG: ${d.produto_id} ${d.barras ? `&bull; EAN: ${esc(d.barras)}` : ''} &bull; ${esc(d.labora || '—')}</div>
-            </td>
-            <td>
-              <span class="badge" style="background:#f1f5f9;color:#334155;font-weight:600;font-size:10px;">${esc(d.molecule_key || '—')}</span>
-            </td>
-            <td>${lojasCancStr}</td>
-            <td>${lojasDoadStr}</td>
-            <td class="num"><strong style="color:#4c1d95;font-size:13px;">${num(d.total_un_abatidas)} un</strong></td>
-            <td class="num"><strong style="color:#047857;font-size:13px;">${brl(d.economia_rs)}</strong></td>
-            <td style="text-align:center;">${actionCell}</td>
-          </tr>
+          <div class="route-store-card" style="background:#ffffff; border:1.5px solid ${isEmitted ? '#86efac' : '#c4b5fd'}; border-radius:12px; padding:16px 20px; box-shadow:0 2px 6px rgba(0,0,0,0.03); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+            <div>
+              <div style="font-size:15px; font-weight:800; color:#1e1b4b; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                <span>🚚 Rota: ${esc(r.filialOrigemNome)} ➔ ${esc(r.filialDestinoNome)}</span>
+                ${isEmitted ? `
+                  <span class="badge" style="background:#dcfce7; color:#15803d; font-weight:800; font-size:11px;">
+                    ✓ Guia ${esc(r.transferEmitted.codigo)} (${r.transferEmitted.status})
+                  </span>
+                ` : `
+                  <span class="badge" style="background:#ede9fe; color:#6d28d9; font-weight:800; font-size:11px;">
+                    ⏳ Aguardando Emissão da Guia
+                  </span>
+                `}
+              </div>
+              <div style="font-size:12.5px; color:#475569; margin-top:4px;">
+                <strong>${num(r.totalItens)} produtos agrupados</strong> &bull; <strong>${num(r.totalUnidades)} peças</strong> &bull; Economia Retida no Caixa: <strong style="color:#047857; font-size:13.5px;">${brl(r.valorTotalRs)}</strong>
+              </div>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <button class="btn btn-secondary btn-sm btn-audit-route" data-route-key="${r.routeKey}" style="font-weight:700;">
+                🔍 Auditar Produtos (${num(r.totalItens)})
+              </button>
+              ${isEmitted ? `
+                <a href="/api/remanejamento/export-excel?transferId=${r.transferEmitted.id}" class="btn btn-secondary btn-sm" download style="font-weight:700; color:#047857; border-color:#86efac; display:inline-flex; align-items:center; gap:4px;">
+                  📥 Baixar Romaneio Excel
+                </a>
+              ` : `
+                <button class="btn btn-primary btn-sm btn-emit-route-single" data-route-key="${r.routeKey}" style="background:#7c3aed; border-color:#6d28d9; font-weight:700;">
+                  📄 Emitir Guia Desta Loja
+                </button>
+              `}
+            </div>
+          </div>
         `;
       }).join('');
 
-      // Eventos dos botões de emitir guia da curadoria
-      curadoriaTbody.querySelectorAll('.btn-emit-curadoria-single').forEach(btn => {
+      // Eventos para auditar produtos da rota
+      routesContainerEl.querySelectorAll('.btn-audit-route').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const rKey = btn.dataset.routeKey;
+          openAuditPlannedRouteModal(rKey);
+        });
+      });
+
+      // Eventos para emitir guia única da rota
+      routesContainerEl.querySelectorAll('.btn-emit-route-single').forEach(btn => {
         btn.addEventListener('click', async () => {
-          const pId = Number(btn.dataset.pid);
+          const rKey = btn.dataset.routeKey;
           btn.disabled = true;
-          btn.textContent = 'Emitindo...';
+          btn.textContent = 'Emitindo guia...';
           try {
-            const res = await apiPost('/api/curadoria/emit-transfer', { produto_id: pId });
-            showBanner(res.message || 'Guia de transferência emitida com sucesso!');
+            const res = await apiPost('/api/curadoria/emit-transfer', { routeKey: rKey });
+            showBanner(res.message || 'Guia consolidada emitida com sucesso!');
             await loadTransfers();
           } catch (err) {
             showBanner(`Erro ao emitir guia: ${err.message}`, true);
             btn.disabled = false;
-            btn.textContent = '📄 Emitir Guia';
+            btn.textContent = '📄 Emitir Guia Desta Loja';
           }
         });
       });
     }
   }
 
-  // Botão Emitir Todas as Guias Pendentes
+  // Renderizar seção de abatimentos locais sem trânsito (ex: Nesina, Azelan)
+  if (localContainerEl) {
+    if (localCounterDeductions.length > 0) {
+      const totLocalRs = localCounterDeductions.reduce((a, b) => a + Number(b.economia_rs || 0), 0);
+      localContainerEl.innerHTML = `
+        <div style="background:#f8fafc; border:1.5px solid #e2e8f0; border-radius:10px; padding:14px 18px; margin-top:10px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+            <div style="font-size:13.5px; font-weight:700; color:#334155; display:flex; align-items:center; gap:6px;">
+              <span>🏷️ Abatimentos no Balcão Local / Desova Sem Trânsito</span>
+              <span class="badge" style="background:#e2e8f0; color:#334155; font-size:10.5px;">${localCounterDeductions.length} itens</span>
+              <span class="badge badge-accent" style="font-size:10.5px;">Economia: ${brl(totLocalRs)}</span>
+            </div>
+            <div class="muted" style="font-size:11.5px;">Compras externas canceladas para desova interna na própria loja. Não geram rota de veículo.</div>
+          </div>
+          <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:10px;">
+            ${localCounterDeductions.map(ld => `
+              <div style="background:#fff; border:1px solid #cbd5e1; border-radius:8px; padding:10px 14px; font-size:12px;">
+                <div style="font-weight:700; color:#0f172a;">${esc(ld.descricao)}</div>
+                <div class="muted" style="font-size:11px; margin-top:2px;">Cód BIG: ${ld.produto_id} &bull; ${esc(ld.labora || '—')}</div>
+                <div style="margin-top:6px; display:flex; justify-content:space-between; align-items:center;">
+                  <span class="badge badge-success" style="font-size:9.5px;">✓ Balcão Local (Sem Trânsito)</span>
+                  <strong style="color:#047857;">${brl(ld.economia_rs)}</strong>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    } else {
+      localContainerEl.innerHTML = '';
+    }
+  }
+
+  // Botão Emitir Todas as Guias Pendentes Agrupadas
   const btnEmitAll = document.getElementById('btn-emit-all-curadoria-transfers');
   if (btnEmitAll) {
     btnEmitAll.onclick = async () => {
@@ -3699,7 +3845,8 @@ async function loadTransfers() {
             <td class="num"><strong>${num(t.total_unidades)} un</strong></td>
             <td class="num"><strong style="color:#047857;">${brl(t.valor_total_rs)}</strong></td>
             <td>${statusBadge}</td>
-            <td style="display:flex;gap:6px;align-items:center;">
+            <td style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+              <a href="/api/remanejamento/export-excel?transferId=${t.id}" class="btn btn-secondary btn-xs" download style="display:inline-flex;align-items:center;gap:4px;font-weight:700;" title="Baixar Romaneio Excel de Separação">📥 Romaneio Excel</a>
               ${nextActionBtn}
               <button class="btn btn-ghost btn-xs btn-view-transfer-items" data-id="${t.id}" title="Ver itens desta guia">📦 Itens</button>
             </td>
@@ -4434,15 +4581,173 @@ async function loadAndRenderCuradoria() {
 
   try {
     const fId = state.selectedFilial || 'all';
-    const res = await apiGet(`/api/curadoria/opportunities?filial_id=${fId}`);
+    const [res, resHomol] = await Promise.all([
+      apiGet(`/api/curadoria/opportunities?filial_id=${fId}`).catch(() => ({ molecules: [], totalEconomiaRs: 0 })),
+      apiGet('/api/curadoria/homologated').catch(() => ({ decisions: [], count: 0 })),
+    ]);
     const molecules = res.molecules || [];
     const totalEco = res.totalEconomiaRs || 0;
+    const homologatedDecs = resHomol.decisions || [];
 
     const curBadge = document.getElementById('curadoria-tab-count');
     if (curBadge) curBadge.textContent = molecules.length;
 
+    if (!state.curadoriaTab) state.curadoriaTab = 'pending';
+
+    // =========================================================================
+    // ABA: HOMOLOGADOS & AÇÕES FEITAS (DECISÕES DO COMPRADOR NA RODADA)
+    // =========================================================================
+    if (state.curadoriaTab === 'homologated') {
+      const totEcoHomol = homologatedDecs.reduce((a, b) => a + Number(b.economia_rs || 0), 0);
+
+      container.innerHTML = `
+        <!-- SUB-ABAS DE NAVEGAÇÃO -->
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:14px;">
+          <div style="display:flex; gap:8px; align-items:center;">
+            <button id="btn-tab-curad-pending" class="btn btn-secondary btn-sm" type="button" style="font-weight:700;">
+              ⏳ Oportunidades Pendentes (${molecules.length})
+            </button>
+            <button id="btn-tab-curad-homologated" class="btn btn-primary btn-sm" type="button" style="font-weight:700; background:#047857; border-color:#059669;">
+              ✓ Homologados &amp; Ações Feitas (${homologatedDecs.length})
+            </button>
+          </div>
+          <button class="btn btn-secondary btn-sm" type="button" style="font-weight:700; border-color:#86efac; color:#166534;" onclick="switchSkuTab('buy')">
+            🛒 Ir para Sugestão de Compra ➔
+          </button>
+        </div>
+
+        <!-- BARRA EXECUTIVA DE HOMOLOGADOS -->
+        <div style="background:linear-gradient(135deg, #ecfdf5 0%, #f0fdf4 100%); border:1.5px solid #86efac; border-radius:14px; padding:18px 24px; margin-bottom:16px; box-shadow:0 2px 4px rgba(0,0,0,0.03);">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px;">
+            <div>
+              <div style="font-size:16px; font-weight:800; color:#14532d; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                <span>✓ Decisões do Comprador &amp; Ações Homologadas nesta Rodada</span>
+                <span class="badge" style="background:#bbf7d0; color:#14532d; font-size:12px; font-weight:800;">${homologatedDecs.length} Decisões Registradas</span>
+                <span class="badge badge-accent" style="font-size:12px; font-weight:800;">Economia Retida no Caixa: ${brl(totEcoHomol)}</span>
+              </div>
+              <div style="font-size:13px; color:#15803d; margin-top:4px; max-width:850px; line-height:1.4;">
+                Histórico auditável de todas as decisões tomadas pelo comprador nesta rodada (Solução IA 1-Clique, transferências homologadas, deduções e desovas no balcão). Se precisar alterar ou corrigir alguma decisão, basta clicar em <strong>Desfazer Ação</strong> para reabrir o produto imediatamente.
+              </div>
+            </div>
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+              <button class="btn btn-secondary btn-sm" type="button" onclick="loadTransfers(); state.view = 'transfers'; setActiveNav('nav-transfers');">
+                🔄 Ver Guias no Remanejamento
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- TABELA DE DECISÕES HOMOLOGADAS -->
+        <div class="table-wrap" style="box-shadow:0 2px 6px rgba(0,0,0,0.03); border:1px solid var(--border); border-radius:12px; overflow-x:auto;">
+          <table class="data-table" style="font-size:12.5px; margin:0;">
+            <thead>
+              <tr style="background:#f8fafc;">
+                <th style="min-width:240px;">Produto Demandado</th>
+                <th style="min-width:180px;">Molécula Ativa</th>
+                <th style="min-width:160px;">Tipo de Ação Realizada</th>
+                <th style="min-width:160px;">Destino / Rota</th>
+                <th class="num" style="min-width:100px;">Qtd (un)</th>
+                <th class="num" style="min-width:120px;">Economia Caixa</th>
+                <th style="min-width:140px;">Data / Hora</th>
+                <th style="text-align:center; min-width:110px;">Ação</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${homologatedDecs.length === 0 ? '<tr><td colspan="8" class="muted" style="text-align:center;padding:30px;">Nenhuma decisão homologada até o momento nesta rodada.</td></tr>' : homologatedDecs.map(d => {
+                let badgeAction = '<span class="badge" style="background:#ede9fe;color:#5b21b6;font-weight:700;">Ação IA</span>';
+                const acts = d.actions || [];
+                if (acts.includes('EXECUTOU_SOLUCAO_IA_1CLIQUE')) {
+                  badgeAction = '<span class="badge" style="background:#fef3c7;color:#92400e;font-weight:800;">⚡ 1-Clique IA</span>';
+                } else if (acts.includes('DEDUZIU_ESTOQUE_MOLECULA')) {
+                  badgeAction = '<span class="badge" style="background:#dbeafe;color:#1e40af;font-weight:800;">📉 Dedução Estoque</span>';
+                } else if (acts.includes('CANCELOU_COMPRA_FILIAL_INDIVIDUAL')) {
+                  badgeAction = '<span class="badge" style="background:#fee2e2;color:#991b1b;font-weight:800;">✕ Suspensão Balcão</span>';
+                } else if (acts.includes('REMANEJOU_E_CANCELOU_COMPRA_EXTERNA')) {
+                  badgeAction = '<span class="badge" style="background:#dcfce7;color:#15803d;font-weight:800;">🚚 Transfer-First</span>';
+                }
+
+                let routeStr = '<span class="badge badge-success" style="font-size:10px;">🏠 Balcão Local</span>';
+                if (d.transfer_emitted) {
+                  routeStr = `<span class="badge" style="background:#ede9fe;color:#5b21b6;font-weight:800;font-size:10px;">✓ Guia ${esc(d.transfer_emitted.codigo)}</span>`;
+                } else if (d.lojas_doadoras && d.lojas_doadoras.length > 0) {
+                  const donor = d.lojas_doadoras[0];
+                  const dest = d.lojas_canceladas && d.lojas_canceladas.length > 0 ? d.lojas_canceladas[0] : { nome: 'Loja' };
+                  routeStr = `<span class="badge" style="background:#f1f5f9;color:#334155;font-weight:700;font-size:10px;">🚚 ${esc(donor.nome)} ➔ ${esc(dest.nome)}</span>`;
+                }
+
+                return `
+                  <tr>
+                    <td>
+                      <div style="font-weight:700;color:#0f172a;">${esc(d.descricao)}</div>
+                      <div class="muted" style="font-size:11px;">Cód BIG: <strong>${d.produto_id}</strong> ${d.barras ? `&bull; EAN: ${esc(d.barras)}` : ''} &bull; ${esc(d.labora || '—')}</div>
+                    </td>
+                    <td><span class="badge" style="background:#f1f5f9;color:#334155;font-weight:600;font-size:10px;">${esc(d.molecule_key || '—')}</span></td>
+                    <td>${badgeAction}</td>
+                    <td>${routeStr}</td>
+                    <td class="num"><strong style="color:#4c1d95;">${num(d.total_un_abatidas)} un</strong></td>
+                    <td class="num"><strong style="color:#047857;">${brl(d.economia_rs)}</strong></td>
+                    <td><span class="muted" style="font-size:11px;">${d.created_at ? d.created_at.slice(0, 16) : '—'}</span></td>
+                    <td style="text-align:center;">
+                      <button class="btn btn-ghost btn-xs btn-undo-curad" data-pid="${d.produto_id}" data-mol="${esc(d.molecule_key)}" style="color:#dc2626;font-weight:700;" title="Desfazer decisão e reabrir na Curadoria">
+                        ↩️ Desfazer
+                      </button>
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+
+      document.getElementById('btn-tab-curad-pending')?.addEventListener('click', () => {
+        state.curadoriaTab = 'pending';
+        loadAndRenderCuradoria();
+      });
+      document.getElementById('btn-tab-curad-homologated')?.addEventListener('click', () => {
+        state.curadoriaTab = 'homologated';
+        loadAndRenderCuradoria();
+      });
+
+      container.querySelectorAll('.btn-undo-curad').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const pId = Number(btn.dataset.pid);
+          const molKey = btn.dataset.mol;
+          if (!window.confirm('Deseja desfazer esta ação? O produto retornará para as oportunidades pendentes da Curadoria.')) return;
+          btn.disabled = true;
+          try {
+            const resUndo = await apiPost('/api/curadoria/undo-decision', { produto_id: pId, molecule_key: molKey });
+            showBanner(resUndo.message || 'Decisão desfeita com sucesso!');
+            await loadAndRenderCuradoria();
+          } catch (err) {
+            showBanner(`Erro ao desfazer decisão: ${err.message}`, true);
+            btn.disabled = false;
+          }
+        });
+      });
+
+      return;
+    }
+
+    // =========================================================================
+    // ABA: OPORTUNIDADES PENDENTES (PADRÃO)
+    // =========================================================================
     if (molecules.length === 0) {
       container.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:14px;">
+          <div style="display:flex; gap:8px; align-items:center;">
+            <button id="btn-tab-curad-pending" class="btn btn-primary btn-sm" type="button" style="font-weight:700;">
+              ⏳ Oportunidades Pendentes (0)
+            </button>
+            <button id="btn-tab-curad-homologated" class="btn btn-secondary btn-sm" type="button" style="font-weight:700;">
+              ✓ Homologados &amp; Ações Feitas (${homologatedDecs.length})
+            </button>
+          </div>
+          <button class="btn btn-secondary btn-sm" type="button" style="font-weight:700; border-color:#86efac; color:#166534;" onclick="switchSkuTab('buy')">
+            🛒 Ir para Sugestão de Compra ➔
+          </button>
+        </div>
+
         <div class="empty-state-box" style="padding:48px 24px; text-align:center; background:var(--card-bg); border:1.5px solid var(--border); border-radius:14px; margin-top:12px;">
           <div style="font-size:42px; margin-bottom:12px;">🧬✨</div>
           <div style="font-size:18px; font-weight:800; color:var(--text-primary);">Nenhum produto pendente de curadoria de moléculas</div>
@@ -4453,6 +4758,9 @@ async function loadAndRenderCuradoria() {
             <button class="btn btn-primary" type="button" style="font-weight:700;" onclick="switchSkuTab('buy')">
               🛒 Ir para Sugestão de Compra
             </button>
+            <button class="btn btn-secondary" type="button" id="btn-empty-see-homol" style="font-weight:700;">
+              ✓ Ver Homologados &amp; Ações Feitas (${homologatedDecs.length})
+            </button>
             <button class="btn btn-secondary" type="button" onclick="openDesovaItemsModal()">
               📦 Ver Produtos em Desova no Balcão
             </button>
@@ -4462,10 +4770,35 @@ async function loadAndRenderCuradoria() {
           </div>
         </div>
       `;
+
+      document.getElementById('btn-tab-curad-homologated')?.addEventListener('click', () => {
+        state.curadoriaTab = 'homologated';
+        loadAndRenderCuradoria();
+      });
+      document.getElementById('btn-empty-see-homol')?.addEventListener('click', () => {
+        state.curadoriaTab = 'homologated';
+        loadAndRenderCuradoria();
+      });
       return;
     }
 
     container.innerHTML = `
+      <!-- SUB-ABAS DE NAVEGAÇÃO -->
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:14px;">
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button id="btn-tab-curad-pending" class="btn btn-primary btn-sm" type="button" style="font-weight:700;">
+            ⏳ Oportunidades Pendentes (${molecules.length})
+          </button>
+          <button id="btn-tab-curad-homologated" class="btn btn-secondary btn-sm" type="button" style="font-weight:700;">
+            ✓ Homologados &amp; Ações Feitas (${homologatedDecs.length})
+          </button>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button class="btn btn-secondary btn-sm" type="button" style="font-weight:700; border-color:#86efac; color:#166534;" onclick="switchSkuTab('buy')">
+            🛒 Avançar p/ Sugestão de Compra ➔
+          </button>
+        </div>
+      </div>
       <!-- BARRA DE CONTROLE EXECUTIVO DA CURADORIA -->
       <div style="background:linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%); border:1.5px solid #86efac; border-radius:14px; padding:18px 24px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; box-shadow:0 2px 4px rgba(0,0,0,0.03);">
         <div>

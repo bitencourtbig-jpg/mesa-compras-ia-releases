@@ -112,11 +112,22 @@ function getCuradoriaDecisions(clientCode, runId) {
   const logs = db.prepare(`
     SELECT id, filial_id, produto_id, molecule_key, descricao, tipo_evento, motivo, acao_futura, created_at
     FROM buyer_learning_log
-    WHERE client_code = ? AND tipo_evento IN ('DEDUZIU_ESTOQUE_MOLECULA', 'REMANEJOU_E_CANCELOU_COMPRA_EXTERNA', 'CANCELOU_COMPRA_FILIAL_INDIVIDUAL')
+    WHERE client_code = ? AND tipo_evento IN (
+      'DEDUZIU_ESTOQUE_MOLECULA',
+      'REMANEJOU_E_CANCELOU_COMPRA_EXTERNA',
+      'CANCELOU_COMPRA_FILIAL_INDIVIDUAL',
+      'EXECUTOU_SOLUCAO_IA_1CLIQUE'
+    )
     ORDER BY id DESC
   `).all(clientCode);
 
-  if (!logs || logs.length === 0) return [];
+  if (!logs || logs.length === 0) {
+    const empty = [];
+    empty.items = [];
+    empty.storePairTransfers = [];
+    empty.localCounterDeductions = [];
+    return empty;
+  }
 
   const grouped = new Map();
   for (const l of logs) {
@@ -133,22 +144,25 @@ function getCuradoriaDecisions(clientCode, runId) {
     }
     const g = grouped.get(l.produto_id);
     g.actions.push(l);
-    if (l.filial_id > 0) g.lojas_canceladas.add(l.filial_id);
+    if (l.filial_id > 1) g.lojas_canceladas.add(l.filial_id);
     
     const match = (l.motivo || '').match(/(\d+)\s*un/i);
     if (match) {
       const un = Number(match[1]);
-      if (l.tipo_evento === 'DEDUZIU_ESTOQUE_MOLECULA') {
+      if (l.tipo_evento === 'DEDUZIU_ESTOQUE_MOLECULA' || l.tipo_evento === 'EXECUTOU_SOLUCAO_IA_1CLIQUE') {
         g.total_un_abatidas = Math.max(g.total_un_abatidas, un);
       } else if (l.tipo_evento === 'CANCELOU_COMPRA_FILIAL_INDIVIDUAL') {
-        if (!g.actions.some(a => a.tipo_evento === 'DEDUZIU_ESTOQUE_MOLECULA')) {
+        if (!g.actions.some(a => a.tipo_evento === 'DEDUZIU_ESTOQUE_MOLECULA' || a.tipo_evento === 'EXECUTOU_SOLUCAO_IA_1CLIQUE')) {
           g.total_un_abatidas += un;
         }
       }
     }
   }
 
-  const result = [];
+  const items = [];
+  const routesMap = new Map();
+  const localCounterDeductions = [];
+
   for (const [pId, g] of grouped.entries()) {
     const skuInfo = db.prepare(`
       SELECT produto_id, barras, descricao, labora, custo_unit, preco_venda, abc_class
@@ -162,9 +176,9 @@ function getCuradoriaDecisions(clientCode, runId) {
       altStockStores = db.prepare(`
         SELECT filial_id, produto_id, descricao, labora, estoque_atual, abc_class
         FROM engine_sku_results
-        WHERE run_id = ? AND molecule_key = ? AND produto_id <> ? AND estoque_atual > 0
+        WHERE run_id = ? AND molecule_key = ? AND filial_id <> 1 AND estoque_atual > 0
         ORDER BY estoque_atual DESC
-      `).all(runId, g.molecule_key, pId);
+      `).all(runId, g.molecule_key);
     }
 
     const existingTransfer = transfers.find(t => 
@@ -173,15 +187,16 @@ function getCuradoriaDecisions(clientCode, runId) {
     );
 
     const custo = skuInfo?.custo_unit || 0;
-    const economiaRs = Math.round(g.total_un_abatidas * custo * 100) / 100;
+    const qtyAbatida = g.total_un_abatidas > 0 ? g.total_un_abatidas : 1;
+    const economiaRs = Math.round(qtyAbatida * custo * 100) / 100;
 
-    result.push({
+    const itemObj = {
       produto_id: pId,
       descricao: skuInfo?.descricao || g.descricao,
       barras: skuInfo?.barras || '',
       labora: skuInfo?.labora || '',
       molecule_key: g.molecule_key,
-      total_un_abatidas: g.total_un_abatidas,
+      total_un_abatidas: qtyAbatida,
       custo_unit: custo,
       economia_rs: economiaRs,
       lojas_canceladas: Array.from(g.lojas_canceladas).map(fId => ({
@@ -202,10 +217,68 @@ function getCuradoriaDecisions(clientCode, runId) {
         filial_origem: existingTransfer.filial_origem_nome,
         filial_destino: existingTransfer.filial_destino_nome
       } : null,
+      actions: g.actions.map(a => a.tipo_evento),
+      latest_action: g.actions[0]?.tipo_evento,
       created_at: g.created_at
-    });
+    };
+
+    items.push(itemObj);
+
+    // Identificar se há rota inter-filiais (doadora -> receptora)
+    const donor = altStockStores.find(s => !g.lojas_canceladas.has(s.filial_id)) || altStockStores[0];
+    const destFilialId = Array.from(g.lojas_canceladas)[0] || (donor ? (donor.filial_id === 2 ? 3 : 2) : 0);
+
+    if (donor && destFilialId && donor.filial_id !== destFilialId && donor.estoque_atual > 0) {
+      const routeKey = `${donor.filial_id}->${destFilialId}`;
+      if (!routesMap.has(routeKey)) {
+        const routeExistingTrf = transfers.find(t => 
+          Number(t.filial_origem) === Number(donor.filial_id) && 
+          Number(t.filial_destino) === Number(destFilialId)
+        );
+
+        routesMap.set(routeKey, {
+          routeKey,
+          filialOrigem: donor.filial_id,
+          filialOrigemNome: filMap.get(donor.filial_id)?.nome_reduz || `Loja ${donor.filial_id}`,
+          filialDestino: destFilialId,
+          filialDestinoNome: filMap.get(destFilialId)?.nome_reduz || `Loja ${destFilialId}`,
+          totalItens: 0,
+          totalUnidades: 0,
+          valorTotalRs: 0,
+          transferEmitted: routeExistingTrf ? {
+            id: routeExistingTrf.id,
+            codigo: routeExistingTrf.codigo_transferencia,
+            status: routeExistingTrf.status,
+            data_emissao: routeExistingTrf.data_emissao
+          } : null,
+          items: []
+        });
+      }
+
+      const rObj = routesMap.get(routeKey);
+      rObj.totalItens += 1;
+      rObj.totalUnidades += qtyAbatida;
+      rObj.valorTotalRs = Math.round((rObj.valorTotalRs + economiaRs) * 100) / 100;
+      rObj.items.push({
+        produto_id: pId,
+        descricao: skuInfo?.descricao || g.descricao,
+        barras: skuInfo?.barras || '',
+        labora: skuInfo?.labora || '',
+        estoque_doador: donor.estoque_atual,
+        qtd_sugerida: qtyAbatida,
+        custo_unit: custo,
+        valor_total: economiaRs,
+        molecule_key: g.molecule_key
+      });
+    } else {
+      localCounterDeductions.push(itemObj);
+    }
   }
 
+  const result = items;
+  result.items = items;
+  result.storePairTransfers = Array.from(routesMap.values());
+  result.localCounterDeductions = localCounterDeductions;
   return result;
 }
 
@@ -1481,48 +1554,119 @@ const server = http.createServer(async (req, res) => {
     }
 
     
-    // REV-026: Emitir transferência formal a partir de decisão da Curadoria IA
+    // REV-027: Emitir transferência consolidada por rota/loja a partir de decisões da Curadoria IA
     if (pathname === '/api/curadoria/emit-transfer' && req.method === 'POST') {
       const latestRun = getLatestRun(clientCode);
       if (!latestRun) return sendJson(res, 404, { error: 'Nenhuma execucao encontrada.' });
       const body = await readBody(req);
-      const { produto_id, all } = body;
-      const decs = getCuradoriaDecisions(clientCode, latestRun.id);
+      const { produto_id, routeKey, all } = body;
+      const decData = getCuradoriaDecisions(clientCode, latestRun.id);
+      const routes = decData.storePairTransfers || [];
+      const decs = decData.items || [];
 
+      const updDest = db.prepare(`
+        UPDATE engine_sku_results
+        SET sugestao_compra_un = MAX(0, sugestao_compra_un - ?),
+            sugestao_compra_rs = ROUND(MAX(0, sugestao_compra_un - ?) * custo_unit, 2),
+            transito_remanejamento = transito_remanejamento + ?,
+            remanejamento_entrada = remanejamento_entrada + ?
+        WHERE run_id = ? AND filial_id = ? AND produto_id = ?
+      `);
+
+      // 1. Emitir todas as rotas pendentes em guias consolidadas por loja
       if (all) {
         let count = 0;
         const emitted = [];
-        for (const dec of decs) {
-          if (!dec.transfer_emitted && dec.lojas_doadoras && dec.lojas_doadoras.length > 0) {
-            const bestDonor = dec.lojas_doadoras[0];
-            const bestDest = dec.lojas_canceladas[0] || { filial_id: bestDonor.filial_id === 2 ? 3 : 2, nome: bestDonor.filial_id === 2 ? 'Loja 3' : 'Loja 2' };
-            const qty = dec.total_un_abatidas || 1;
+        for (const route of routes) {
+          if (!route.transferEmitted && route.items.length > 0) {
+            const trfItems = route.items.map(it => ({
+              produto_id: it.produto_id,
+              barras: it.barras,
+              descricao: it.descricao,
+              labora: it.labora,
+              qtd_solicitada: it.qtd_sugerida || 1,
+              custo_unit: it.custo_unit,
+              valor_total: it.valor_total,
+              motivo_decisao: `🧬 Curadoria IA • Transfer-First Consolidado (${it.molecule_key || ''})`
+            }));
+
             const resTrf = createMotorTransfer(clientCode, latestRun.id, {
-              filialOrigem: bestDonor.filial_id,
-              filialOrigemNome: bestDonor.nome,
-              filialDestino: bestDest.filial_id,
-              filialDestinoNome: bestDest.nome,
-              items: [{
-                produto_id: dec.produto_id,
-                barras: dec.barras,
-                descricao: dec.descricao,
-                labora: dec.labora,
-                qtd_solicitada: qty,
-                custo_unit: dec.custo_unit,
-                valor_total: dec.economia_rs,
-                motivo_decisao: `🧬 Curadoria IA • Transfer-First (Cancelou compras externas da molécula ${dec.molecule_key || ''})`
-              }],
-              observacao: `🧬 Curadoria IA • Transfer-First (${dec.descricao} • Cancelou compra externa)`
+              filialOrigem: route.filialOrigem,
+              filialOrigemNome: route.filialOrigemNome,
+              filialDestino: route.filialDestino,
+              filialDestinoNome: route.filialDestinoNome,
+              items: trfItems,
+              observacao: `🧬 Curadoria IA • Guia Consolidada da Rota (${route.filialOrigemNome} ➔ ${route.filialDestinoNome} • ${route.totalItens} produtos)`
             });
+
+            // Abater compra externa na loja destino
+            for (const it of route.items) {
+              const q = Number(it.qtd_sugerida || 1);
+              updDest.run(q, q, q, q, latestRun.id, Number(route.filialDestino), Number(it.produto_id));
+            }
+
             count++;
-            emitted.push(resTrf.codigoTransferencia);
+            emitted.push({
+              codigo: resTrf.codigoTransferencia,
+              origem: route.filialOrigemNome,
+              destino: route.filialDestinoNome,
+              itens: route.totalItens,
+              unidades: route.totalUnidades
+            });
           }
         }
-        return sendJson(res, 200, { ok: true, count, emitted, message: `${count} guias de transferência emitidas no motor!` });
+        return sendJson(res, 200, {
+          ok: true,
+          count,
+          emitted,
+          message: count > 0 ? `${count} guias consolidadas por loja emitidas no motor!` : 'Todas as guias desta rodada já foram emitidas anteriormente.'
+        });
       }
 
+      // 2. Emitir uma rota específica agrupada (ex: routeKey "2->3")
+      if (routeKey) {
+        const targetRoute = routes.find(r => r.routeKey === routeKey);
+        if (!targetRoute) return sendJson(res, 404, { error: `Rota ${routeKey} não encontrada nas decisões.` });
+
+        const trfItems = targetRoute.items.map(it => ({
+          produto_id: it.produto_id,
+          barras: it.barras,
+          descricao: it.descricao,
+          labora: it.labora,
+          qtd_solicitada: it.qtd_sugerida || 1,
+          custo_unit: it.custo_unit,
+          valor_total: it.valor_total,
+          motivo_decisao: `🧬 Curadoria IA • Transfer-First Consolidado (${it.molecule_key || ''})`
+        }));
+
+        const resTrf = createMotorTransfer(clientCode, latestRun.id, {
+          filialOrigem: targetRoute.filialOrigem,
+          filialOrigemNome: targetRoute.filialOrigemNome,
+          filialDestino: targetRoute.filialDestino,
+          filialDestinoNome: targetRoute.filialDestinoNome,
+          items: trfItems,
+          observacao: `🧬 Curadoria IA • Guia Consolidada da Rota (${targetRoute.filialOrigemNome} ➔ ${targetRoute.filialDestinoNome} • ${targetRoute.totalItens} produtos)`
+        });
+
+        // Abater compra externa na loja destino
+        for (const it of targetRoute.items) {
+          const q = Number(it.qtd_sugerida || 1);
+          updDest.run(q, q, q, q, latestRun.id, Number(targetRoute.filialDestino), Number(it.produto_id));
+        }
+
+        return sendJson(res, 200, {
+          ok: true,
+          codigoTransferencia: resTrf.codigoTransferencia,
+          totalItens: targetRoute.totalItens,
+          totalUnidades: targetRoute.totalUnidades,
+          valorTotalRs: targetRoute.valorTotalRs,
+          message: `Guia consolidada ${resTrf.codigoTransferencia} emitida com ${targetRoute.totalItens} produtos entre ${targetRoute.filialOrigemNome} ➔ ${targetRoute.filialDestinoNome}!`
+        });
+      }
+
+      // 3. Fallback: emissão por produto_id individual
       const targetDec = decs.find(d => Number(d.produto_id) === Number(produto_id));
-      if (!targetDec) return sendJson(res, 404, { error: 'Decisao nao encontrada.' });
+      if (!targetDec) return sendJson(res, 404, { error: 'Decisão não encontrada.' });
       if (!targetDec.lojas_doadoras || targetDec.lojas_doadoras.length === 0) {
         return sendJson(res, 400, { error: 'Nenhuma loja doadora com estoque alternativo para transferir.' });
       }
@@ -1543,12 +1687,59 @@ const server = http.createServer(async (req, res) => {
           qtd_solicitada: qty,
           custo_unit: targetDec.custo_unit,
           valor_total: targetDec.economia_rs,
-          motivo_decisao: `🧬 Curadoria IA • Transfer-First (Cancelou compras externas da molécula ${targetDec.molecule_key || ''})`
+          motivo_decisao: `🧬 Curadoria IA • Transfer-First (${targetDec.molecule_key || ''})`
         }],
-        observacao: `🧬 Curadoria IA • Transfer-First (${targetDec.descricao} • Cancelou compra externa)`
+        observacao: `🧬 Curadoria IA • Transfer-First (${targetDec.descricao})`
       });
 
+      updDest.run(qty, qty, qty, qty, latestRun.id, Number(dest.filial_id), Number(targetDec.produto_id));
+
       return sendJson(res, 200, { ok: true, codigoTransferencia: resTrf.codigoTransferencia, message: `Guia ${resTrf.codigoTransferencia} emitida com sucesso!` });
+    }
+
+    // REV-027: Desfazer decisão da Curadoria e reabrir produto na lista de oportunidades
+    if (pathname === '/api/curadoria/undo-decision' && req.method === 'POST') {
+      const body = await readBody(req);
+      const pId = Number(body.produto_id);
+      const molKey = body.molecule_key;
+      if (!pId && !molKey) {
+        return sendJson(res, 400, { error: 'produto_id ou molecule_key obrigatório.' });
+      }
+
+      db.prepare('DELETE FROM buyer_learning_log WHERE client_code = ? AND (produto_id = ? OR molecule_key = ?)').run(clientCode, pId, molKey || '');
+      db.prepare('DELETE FROM sku_suspensions WHERE client_code = ? AND (produto_id = ? OR molecule_key = ?) AND origem = ?').run(clientCode, pId, molKey || '', 'CURADORIA_1CLICK_ACTION');
+      
+      return sendJson(res, 200, { ok: true, message: 'Decisão desfeita com sucesso! O produto foi reaberto na Curadoria IA.' });
+    }
+
+    // REV-027: Lista de decisões homologadas / feitas pelo comprador
+    if (pathname === '/api/curadoria/homologated' && req.method === 'GET') {
+      const latestRun = getLatestRun(clientCode);
+      if (!latestRun) return sendJson(res, 200, { ok: true, decisions: [], count: 0, routes: [], localDecisions: [] });
+      const curadData = getCuradoriaDecisions(clientCode, latestRun.id);
+      return sendJson(res, 200, {
+        ok: true,
+        count: curadData.items.length,
+        decisions: curadData.items,
+        routes: curadData.storePairTransfers,
+        localDecisions: curadData.localCounterDeductions
+      });
+    }
+
+    // REV-027: Atalho para download do Romaneio Excel de transferência
+    if (pathname === '/api/transfers/export-excel' && req.method === 'GET') {
+      const transferId = Number(urlObj.searchParams.get('transferId') || urlObj.searchParams.get('id'));
+      if (!transferId) return sendJson(res, 400, { error: 'transferId obrigatorio.' });
+      const transfers = getMotorTransfers(clientCode);
+      const transfer = transfers.find((t) => t.id === transferId);
+      if (!transfer) return sendJson(res, 404, { error: 'Transferencia nao encontrada.' });
+
+      const buffer = await buildTransferPickListExcel({ transfer, items: transfer.itens || [] });
+      res.writeHead(200, {
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'Content-Disposition': `attachment; filename="Romaneio_Transferencia_${transfer.codigo_transferencia}.xlsx"`,
+      });
+      return res.end(buffer);
     }
 
     // REV-026: Ação operacional no lote crítico FEFO
@@ -3009,9 +3200,15 @@ function buildMoleculeMatricialCard(db, runId, molRow, clientCode, filiais, susp
            LIMIT 150`;
       const expParams = hasFilial ? [latestRun.id, fNum] : [latestRun.id];
       const expiringLots = db.prepare(expSql).all(...expParams);
-      const curadoriaDecisions = getCuradoriaDecisions(clientCode, latestRun.id);
+      const curadoriaData = getCuradoriaDecisions(clientCode, latestRun.id);
 
-      return sendJson(res, 200, { transfers, expiringLots, curadoriaDecisions });
+      return sendJson(res, 200, {
+        transfers,
+        expiringLots,
+        curadoriaDecisions: curadoriaData.items,
+        curadoriaRoutes: curadoriaData.storePairTransfers,
+        localCounterDeductions: curadoriaData.localCounterDeductions
+      });
     }
 
     if (pathname === '/api/pbm' && req.method === 'GET') {
