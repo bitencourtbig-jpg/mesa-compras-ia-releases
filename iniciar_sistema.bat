@@ -31,7 +31,7 @@ if errorlevel 1 (
 echo [*] Runtime Node.js validado com sucesso.
 
 rem Se a porta 3456 ja estiver ativa, abre direto sem subir duplicado
-powershell -NoProfile -Command "try { $r = [System.Net.WebRequest]::Create('http://127.0.0.1:3456/api/license/status').GetResponse(); exit 0 } catch { exit 1 }"
+powershell -NoProfile -Command "$t = New-Object Net.Sockets.TcpClient; try { $t.Connect('127.0.0.1', 3456); $t.Close(); exit 0 } catch { exit 1 }"
 if %errorlevel% equ 0 (
     echo [*] Servidor ja esta rodando na porta 3456! Abrindo navegador...
     start "" "http://127.0.0.1:3456"
@@ -42,7 +42,7 @@ echo [*] Iniciando servidor analitico local em segundo plano...
 start "Mesa de Compras IA - Servidor" /min "%NODE_EXEC%" --no-warnings "%~dp0src\server.mjs"
 
 echo [*] Aguardando o servidor ficar pronto na porta 3456...
-powershell -NoProfile -Command "$ready = $false; for ($i=0; $i -lt 90; $i++) { Start-Sleep -Milliseconds 500; try { $r = [System.Net.WebRequest]::Create('http://127.0.0.1:3456/api/license/status').GetResponse(); if ($r) { $ready = $true; break } } catch {} }; if ($ready) { exit 0 } else { exit 1 }"
+powershell -NoProfile -Command "$ready = $false; for ($i=0; $i -lt 60; $i++) { Start-Sleep -Milliseconds 500; try { $t = New-Object Net.Sockets.TcpClient; $t.Connect('127.0.0.1', 3456); $t.Close(); $ready = $true; break } catch {} }; if ($ready) { exit 0 } else { exit 1 }"
 
 if %errorlevel% neq 0 (
     echo.

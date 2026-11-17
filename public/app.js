@@ -1649,7 +1649,10 @@ async function loadSkus() {
     const friendly = formatFriendlyProduct(r);
 
     let molSweepPill = '';
-    if (r.molecule_key) {
+    const isHomologadoComprador = (r.justificativa_ia && r.justificativa_ia.includes('Homologada pelo Comprador'));
+    if (isHomologadoComprador) {
+      molSweepPill = `<div style="margin-top:4px;"><span class="badge" style="background:#ecfdf5;color:#047857;border:1px solid #86efac;font-weight:700;font-size:11px;display:inline-flex;align-items:center;gap:4px;">🛡️ Marca Homologada pelo Comprador</span></div>`;
+    } else if (r.molecule_key) {
       const hasCoveredEx = (r.excecoes || []).includes('MOLECULA_COBERTA_OUTRO_LAB');
       if (hasCoveredEx) {
         molSweepPill = `<div style="margin-top:4px;"><button class="btn-sweep-pill covered btn-trigger-sweep" data-mol-key="${esc(r.molecule_key)}" data-sku-id="${r.produto_id}" data-filial-id="${r.filial_id || ''}" type="button">⚠️ Molécula com Estoque em Outro Lab (Varredura IA)</button></div>`;
@@ -3896,20 +3899,27 @@ async function loadTransfers() {
     if (expiringLots.length === 0) {
       expTbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;padding:20px;">Nenhum lote crítico com vencimento próximo no momento.</td></tr>';
     } else {
-      expTbody.innerHTML = expiringLots.map(l => `
-        <tr>
-          <td><span class="badge badge-neutral">Loja ${l.filial_id}</span></td>
-          <td>
-            <div class="sku-title" style="font-weight:600;">${esc(l.descricao || `Produto ${l.produto_id}`)}</div>
-            <div class="sku-sub">Cód BIG: ${l.produto_id}</div>
-          </td>
-          <td class="num"><code>${l.menor_validade || '—'}</code></td>
-          <td class="num">${num(l.qtd_vencendo_90d)} un</td>
-          <td class="num"><strong style="color:var(--danger);">${num(l.qtd_vencido)} un</strong></td>
-          <td class="num"><strong>${brl(l.valor_risco_rs)}</strong></td>
-          <td class="num">${badgeForException(l.acao_recomendada)}</td>
-        </tr>
-      `).join('');
+      expTbody.innerHTML = expiringLots.map(l => {
+        const menorVal = l.menor_validade || l.lote_menor_validade || '—';
+        const q90 = Number(l.qtd_vencendo_90d ?? l.lote_vencendo_90d_qtd ?? 0);
+        const qVenc = Number(l.qtd_vencido ?? l.lote_vencido_qtd ?? 0);
+        const riscoRs = Number(l.valor_risco_rs ?? l.lote_vencendo_90d_rs ?? (q90 + qVenc) * Number(l.custo_unit || 0));
+        const acao = l.acao_recomendada || (qVenc > 0 ? 'LOTE_VENCIDO' : (q90 > 0 ? 'FEFO_ALERTA' : 'FEFO_MONITORAR'));
+        return `
+          <tr>
+            <td><span class="badge badge-neutral">Loja ${l.filial_id}</span></td>
+            <td>
+              <div class="sku-title" style="font-weight:600;">${esc(l.descricao || `Produto ${l.produto_id}`)}</div>
+              <div class="sku-sub">Cód BIG: ${l.produto_id} &bull; ${esc(l.abc_class ? `Curva ${l.abc_class}` : '')}</div>
+            </td>
+            <td class="num"><code style="font-weight:700; color:${qVenc > 0 ? '#b91c1c' : '#047857'};">${esc(menorVal)}</code></td>
+            <td class="num">${num(q90)} un</td>
+            <td class="num"><strong style="color:var(--danger);">${num(qVenc)} un</strong></td>
+            <td class="num"><strong style="color:${qVenc > 0 ? 'var(--danger)' : '#047857'};">${brl(riscoRs)}</strong></td>
+            <td class="num">${badgeForException(acao)}</td>
+          </tr>
+        `;
+      }).join('');
     }
   }
 
@@ -4674,10 +4684,16 @@ async function loadAndRenderCuradoria() {
                   badgeAction = '<span class="badge" style="background:#dcfce7;color:#15803d;font-weight:800;">🚚 Transfer-First</span>';
                 } else if (acts.includes('HOMOLOGOU_EM_LOTE')) {
                   badgeAction = '<span class="badge" style="background:#e0f2fe;color:#0369a1;font-weight:800;">⚡ Lote Aprovado</span>';
+                } else if (acts.includes('MANTEVE_COMPRA_ORIGINAL')) {
+                  badgeAction = '<span class="badge" style="background:#ecfdf5;color:#047857;border:1px solid #86efac;font-weight:800;">🛡️ Marca Homologada</span>';
+                } else if (acts.includes('TROCOU_MENOR_CUSTO')) {
+                  badgeAction = '<span class="badge" style="background:#fdf4ff;color:#86198f;border:1px solid #f0abfc;font-weight:800;">🔄 Troca Menor Custo</span>';
                 }
 
                 let routeStr = '<span class="badge badge-success" style="font-size:10px;">🏠 Balcão Local</span>';
-                if (d.transfer_emitted) {
+                if (acts.includes('MANTEVE_COMPRA_ORIGINAL')) {
+                  routeStr = '<span class="badge" style="background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;font-size:10px;font-weight:700;">🛒 Sugestão Mantida</span>';
+                } else if (d.transfer_emitted) {
                   routeStr = `<span class="badge" style="background:#ede9fe;color:#5b21b6;font-weight:800;font-size:10px;">✓ Guia ${esc(d.transfer_emitted.codigo)}</span>`;
                 } else if (d.lojas_doadoras && d.lojas_doadoras.length > 0) {
                   const donor = d.lojas_doadoras[0];
@@ -5030,15 +5046,21 @@ function bindCuradoriaActions() {
   }
 }
 
+function closeDynamicModal(id) {
+  const el = document.getElementById(id);
+  if (el) el.remove();
+  syncBodyModalState();
+}
+
 async function openDesovaItemsModal() {
   try {
     const res = await apiGet('/api/curadoria/desova-items');
     const items = res.items || [];
     
     let html = `
-      <div id="modal-desova-backdrop" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(3px);">
-        <div style="background:var(--card-bg); width:90%; max-width:850px; max-height:85vh; border-radius:14px; box-shadow:0 20px 25px -5px rgba(0,0,0,0.2); display:flex; flex-direction:column; overflow:hidden;">
-          <div style="padding:18px 24px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; background:#f8fafc;">
+      <div id="modal-desova-backdrop" class="modal-backdrop modal-overlay" style="z-index:9999;" onclick="if(event.target === this) closeDynamicModal('modal-desova-backdrop')">
+        <div class="modal-card" style="width: min(850px, 94vw); max-height:85vh; border-radius:14px; overflow:hidden;">
+          <div class="modal-head" style="padding:18px 24px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; background:#f8fafc;">
             <div>
               <div style="font-size:16px; font-weight:800; color:#0f172a; display:flex; align-items:center; gap:8px;">
                 <span>📦 Produtos em Desova no Balcão</span>
@@ -5048,9 +5070,9 @@ async function openDesovaItemsModal() {
                 Monitorados automaticamente pela IA: quando o estoque das marcas alternativas cair para &le; 7 dias, a compra reativa sem intervenção.
               </div>
             </div>
-            <button type="button" class="btn btn-sm btn-secondary" onclick="document.getElementById('modal-desova-backdrop').remove()">✕ Fechar</button>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="closeDynamicModal('modal-desova-backdrop')">✕ Fechar</button>
           </div>
-          <div style="padding:20px 24px; overflow-y:auto; flex:1;">
+          <div class="modal-body" style="padding:20px 24px; overflow-y:auto; flex:1; overscroll-behavior:contain;">
             ${items.length === 0 ? '<div class="muted" style="text-align:center; padding:30px;">Nenhum produto em desova no momento.</div>' : `
               <table class="data-table" style="font-size:12px;">
                 <thead>
@@ -5095,6 +5117,7 @@ async function openDesovaItemsModal() {
     const oldM = document.getElementById('modal-desova-backdrop');
     if (oldM) oldM.remove();
     document.body.insertAdjacentHTML('beforeend', html);
+    syncBodyModalState();
 
     document.querySelectorAll('.btn-unsuspend-desova').forEach(btn => {
       btn.addEventListener('click', async () => {
@@ -5126,9 +5149,9 @@ async function openCuradoriaLearningLogModal() {
     const logs = res.logs || [];
 
     let html = `
-      <div id="modal-cur-log-backdrop" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(3px);">
-        <div style="background:var(--card-bg); width:90%; max-width:850px; max-height:85vh; border-radius:14px; box-shadow:0 20px 25px -5px rgba(0,0,0,0.2); display:flex; flex-direction:column; overflow:hidden;">
-          <div style="padding:18px 24px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; background:#f8fafc;">
+      <div id="modal-cur-log-backdrop" class="modal-backdrop modal-overlay" style="z-index:9999;" onclick="if(event.target === this) closeDynamicModal('modal-cur-log-backdrop')">
+        <div class="modal-card" style="width: min(850px, 94vw); max-height:85vh; border-radius:14px; overflow:hidden;">
+          <div class="modal-head" style="padding:18px 24px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; background:#f8fafc;">
             <div>
               <div style="font-size:16px; font-weight:800; color:#0f172a; display:flex; align-items:center; gap:8px;">
                 <span>🧠 Log de Aprendizado da IA (Decisões do Comprador)</span>
@@ -5138,9 +5161,9 @@ async function openCuradoriaLearningLogModal() {
                 A IA utiliza este histórico para respeitar prescrições médicas, marcas cativas e preferências de laboratório.
               </div>
             </div>
-            <button type="button" class="btn btn-sm btn-secondary" onclick="document.getElementById('modal-cur-log-backdrop').remove()">✕ Fechar</button>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="closeDynamicModal('modal-cur-log-backdrop')">✕ Fechar</button>
           </div>
-          <div style="padding:20px 24px; overflow-y:auto; flex:1;">
+          <div class="modal-body" style="padding:20px 24px; overflow-y:auto; flex:1; overscroll-behavior:contain;">
             ${logs.length === 0 ? '<div class="muted" style="text-align:center; padding:30px;">Nenhuma regra customizada aprendida ainda.</div>' : `
               <table class="data-table" style="font-size:12px;">
                 <thead>
@@ -5154,7 +5177,7 @@ async function openCuradoriaLearningLogModal() {
                 </thead>
                 <tbody>
                   ${logs.map(l => {
-                    const isApprove = l.tipo_evento?.includes('APROVOU') || l.tipo_evento?.includes('HOMOLOGOU') || l.tipo_evento?.includes('TROCOU');
+                    const isApprove = l.tipo_evento?.includes('APROVOU') || l.tipo_evento?.includes('HOMOLOGOU') || l.tipo_evento?.includes('TROCOU') || l.tipo_evento?.includes('MANTEVE');
                     const isSuspend = l.tipo_evento?.includes('SUSPENSAO');
                     const badgeClass = isApprove ? 'badge-accent' : (isSuspend ? 'badge-warn' : 'badge-danger');
                     return `
@@ -5181,6 +5204,7 @@ async function openCuradoriaLearningLogModal() {
     const oldM = document.getElementById('modal-cur-log-backdrop');
     if (oldM) oldM.remove();
     document.body.insertAdjacentHTML('beforeend', html);
+    syncBodyModalState();
   } catch (err) {
     showBanner(`Erro ao carregar log de aprendizado: ${err.message}`, true);
   }
@@ -5286,12 +5310,17 @@ function openPbmReplenishmentCheck() {
 function syncBodyModalState() {
   const hasOpen = Array.from(document.querySelectorAll('.modal-backdrop, .modal-overlay')).some((m) => !m.classList.contains('hidden'));
   document.body.classList.toggle('modal-open', hasOpen);
+  document.documentElement.classList.toggle('modal-open', hasOpen);
 }
 
 function closeAllModals() {
   document.querySelectorAll('.modal-backdrop, .modal-overlay').forEach((m) => {
     if (m.id === 'modal-welcome-gate' && isLicenseExpired()) {
       return; // Apenas a janela sobreposta deve permanecer até a ativação da chave!
+    }
+    if (m.id === 'modal-cur-log-backdrop' || m.id === 'modal-desova-backdrop') {
+      m.remove();
+      return;
     }
     m.classList.add('hidden');
   });
@@ -6983,6 +7012,19 @@ async function exportOlDirectFromDashboard(fab) {
     a.click();
     a.remove();
     showBanner(`✓ Planilha de Pedido OL (${fab}) baixada com sucesso!`);
+
+    if (items && items.length > 0 && window.confirm(`Deseja abater os ${items.length} itens deste pedido direto de fábrica (OL ${fab}) da esteira de cotação com distribuidores para evitar duplicidade?`)) {
+      try {
+        await apiPost('/api/ol/mark-ordered', {
+          fabricante: fab,
+          items: items.map(it => ({ produto_id: it.produto_id, filial_id: it.filial_id || 0, quantidade: it.quantidade || it.sugestao_compra_un }))
+        });
+        showBanner(`✓ ${items.length} itens marcados como Pedido OL emitido. Demanda abatida da cotação externa!`);
+        if (state.view === 'cockpit') await loadSkus();
+      } catch (e) {
+        console.warn('Erro ao abater itens OL:', e);
+      }
+    }
   } catch (err) {
     showBanner(`Erro ao exportar pedido OL: ${err.message}`, true);
   }
@@ -7157,6 +7199,19 @@ async function exportOlOrderExcel() {
     window.URL.revokeObjectURL(url);
 
     showBanner(`✓ Planilha do Pedido OL baixada com sucesso: PEDIDO_OL_${fab}.xlsx! Envie ao representante comercial.`);
+
+    if (itemsToExport.length > 0 && window.confirm(`Deseja abater os ${itemsToExport.length} itens deste pedido direto de fábrica (OL ${fab}) da esteira de cotação com distribuidores para evitar duplicidade?`)) {
+      try {
+        await apiPost('/api/ol/mark-ordered', {
+          fabricante: fab,
+          items: itemsToExport.map(it => ({ produto_id: it.produto_id, filial_id: it.filial_id || 0, quantidade: it.quantidade }))
+        });
+        showBanner(`✓ ${itemsToExport.length} itens marcados como Pedido OL emitido. Demanda abatida da cotação externa!`);
+        if (state.view === 'cockpit') await loadSkus();
+      } catch (e) {
+        console.warn('Erro ao abater itens OL:', e);
+      }
+    }
   } catch (err) {
     showBanner(`Erro ao exportar pedido OL: ${err.message}`, true);
   }

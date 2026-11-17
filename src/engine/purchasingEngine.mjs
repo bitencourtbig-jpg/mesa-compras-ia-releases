@@ -1,4 +1,4 @@
-import { getAnalyticsDb, getGroupCoverageConfigs, saveGroupCoverageConfigs, getActiveSkuSuspensions, removeSkuSuspension, recordBuyerLearning } from '../store/analyticsDb.mjs';
+import { getAnalyticsDb, getGroupCoverageConfigs, saveGroupCoverageConfigs, getActiveSkuSuspensions, removeSkuSuspension, recordBuyerLearning, pruneOldEngineRuns } from '../store/analyticsDb.mjs';
 import { getCachedCmedMaps, lookupCmedCascade } from '../services/cmedService.mjs';
 import { buildPresentationSignature } from '../../lib/moleculeNormalizer.mjs';
 
@@ -323,36 +323,9 @@ export function runPurchasingEngine(profile, rawData, { weeksWindow = profile.de
     stockMap.set(`${s.filial_id}|${s.produto_id}`, s);
   }
   const suspendedSet = new Set(rawData.suspendedRows.map((r) => `${r.filial_id}|${r.produto_id}`));
-  // Suspensões registradas exclusivamente no Motor (REV-011 & REV-021: Reativação Inteligente por Cobertura <= 7d)
   const clientCode = profile.code || 'bandeirante';
   const motorSuspensions = getActiveSkuSuspensions(clientCode);
   for (const ms of motorSuspensions) {
-    if (ms.origem === 'CURADORIA_DESOVA' || (ms.motivo && ms.motivo.toLowerCase().includes('desova'))) {
-      const molKey = ms.molecule_key;
-      if (molKey) {
-        // Encontra concorrentes desta molécula no rawData para checar cobertura remanescente
-        const competitors = (rawData.products || []).filter(p => p.molecule_key === molKey && p.produto_id !== ms.produto_id);
-        const compStockTotal = competitors.reduce((acc, p) => acc + (rawData.stockMap?.get(p.produto_id) || 0), 0);
-        const compDdvTotal = competitors.reduce((acc, p) => acc + (rawData.ddvMap?.get(p.produto_id) || 0), 0);
-        const compCoverage = compDdvTotal > 0 ? (compStockTotal / compDdvTotal) : (compStockTotal > 0 ? 999 : 0);
-        const threshold = Number(ms.gatilho_cobertura_limite || 7.0);
-
-        if (compCoverage <= threshold || compStockTotal === 0) {
-          // Gatilho atingido: remove suspensão automaticamente para evitar ruptura na loja
-          removeSkuSuspension(clientCode, ms.filial_id, ms.produto_id);
-          recordBuyerLearning(clientCode, {
-            filial_id: ms.filial_id,
-            produto_id: ms.produto_id,
-            molecule_key: ms.molecule_key,
-            descricao: ms.descricao,
-            tipo_evento: 'REATIVACAO_AUTOMATICA_DESOVA',
-            motivo: `Estoque de marcas concorrentes atingiu ${compCoverage.toFixed(1)}d (limite seguro <= ${threshold}d). Compra reativada automaticamente sem ruptura!`,
-            acao_futura: 'LIBERAR_COMPRA',
-          });
-          continue; // Liberado: não adiciona ao suspendedSet
-        }
-      }
-    }
     suspendedSet.add(`${ms.filial_id}|${ms.produto_id}`);
   }
 
@@ -408,6 +381,46 @@ export function runPurchasingEngine(profile, rawData, { weeksWindow = profile.de
     if (wi >= 0 && wi < 13) obj.weeks[wi] += Number(w.qty || 0);
     obj.rev13 += Number(w.revenue || 0);
     obj.saleDays13 += Number(w.sale_days || 0);
+  }
+
+  // Validação inteligente de reativação de suspensões de desova (REV-021 corrigido)
+  // Utiliza prodMap com moleculeKey resolvida, stockMap real da filial e vendas do salesMap
+  for (const ms of motorSuspensions) {
+    if (ms.origem === 'CURADORIA_DESOVA' || (ms.motivo && ms.motivo.toLowerCase().includes('desova'))) {
+      const molKey = ms.molecule_key;
+      if (molKey) {
+        const competitors = Array.from(prodMap.values()).filter((p) => p.moleculeKey === molKey && p.produto_id !== ms.produto_id);
+        if (competitors.length > 0) {
+          let compStockTotal = 0;
+          let compSales13Total = 0;
+          for (const comp of competitors) {
+            const skKey = `${ms.filial_id}|${comp.produto_id}`;
+            const st = stockMap.get(skKey);
+            const sl = salesMap.get(skKey);
+            compStockTotal += Number(st?.estoque || 0);
+            if (sl) compSales13Total += sl.weeks.reduce((a, b) => a + b, 0);
+          }
+          const compDdvTotal = compSales13Total / (13 * 7);
+          const compCoverage = compDdvTotal > 0 ? (compStockTotal / compDdvTotal) : (compStockTotal > 0 ? 999 : 0);
+          const threshold = Number(ms.gatilho_cobertura_limite || 7.0);
+
+          // Só reativa se o concorrente zerou o estoque físico OU a cobertura caiu para <= limite seguro (ex: 7d)
+          if (compStockTotal === 0 || (compDdvTotal > 0 && compCoverage <= threshold)) {
+            removeSkuSuspension(clientCode, ms.filial_id, ms.produto_id);
+            suspendedSet.delete(`${ms.filial_id}|${ms.produto_id}`);
+            recordBuyerLearning(clientCode, {
+              filial_id: ms.filial_id,
+              produto_id: ms.produto_id,
+              molecule_key: ms.molecule_key,
+              descricao: ms.descricao,
+              tipo_evento: 'REATIVACAO_AUTOMATICA_DESOVA',
+              motivo: `Estoque de marcas concorrentes atingiu ${compCoverage.toFixed(1)}d (limite seguro <= ${threshold}d). Compra reativada automaticamente sem ruptura!`,
+              acao_futura: 'LIBERAR_COMPRA',
+            });
+          }
+        }
+      }
+    }
   }
 
   const yoyMap = new Map(rawData.yoySales.map((r) => [`${r.filial_id}|${r.produto_id}`, r]));
@@ -1286,6 +1299,11 @@ export function runPurchasingEngine(profile, rawData, { weeksWindow = profile.de
     }
 
     db.exec('COMMIT');
+    try {
+      pruneOldEngineRuns(profile.code, 2);
+    } catch (ePrune) {
+      console.warn('[ENGINE] Aviso no expurgo automático de rodadas antigas:', ePrune.message);
+    }
     return { runId, summary };
   } catch (err) {
     db.exec('ROLLBACK');

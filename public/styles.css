@@ -1126,6 +1126,7 @@ input[type="search"] {
   z-index: 100000;
   overflow-y: auto;
   box-sizing: border-box;
+  overscroll-behavior: contain !important;
 }
 
 /* REGRA DE OURO: MODAL OCULTO NUNCA APARECE */
@@ -1138,8 +1139,12 @@ input[type="search"] {
   opacity: 0 !important;
 }
 
+html.modal-open,
 body.modal-open {
   overflow: hidden !important;
+  height: 100vh !important;
+  overscroll-behavior: none !important;
+  touch-action: none !important;
 }
 
 .modal-card {
@@ -1155,6 +1160,7 @@ body.modal-open {
   position: relative;
   margin: auto;
   flex-shrink: 0;
+  overscroll-behavior: contain !important;
 }
 
 @keyframes modalPopIn {
@@ -1208,6 +1214,7 @@ body.modal-open {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  overscroll-behavior: contain !important;
 }
 
 .glossary-sec h3 {

@@ -7,14 +7,29 @@ $ErrorActionPreference = 'SilentlyContinue'
 $RootDir = Resolve-Path "$PSScriptRoot\.."
 Set-Location $RootDir
 
-# 1. Verifica se o servidor ja esta respondendo na porta 3456
-try {
-    $res = Invoke-WebRequest -Uri 'http://127.0.0.1:3456/api/license/status' -UseBasicParsing -TimeoutSec 1
-    if ($res.StatusCode -eq 200 -or $res.StatusCode -eq 403) {
-        Start-Process "http://127.0.0.1:3456"
-        exit 0
+function Test-Port3456 {
+    param([int]$TimeoutMs = 300)
+    try {
+        $tcp = New-Object System.Net.Sockets.TcpClient
+        $iar = $tcp.BeginConnect("127.0.0.1", 3456, $null, $null)
+        $wait = $iar.AsyncWaitHandle.WaitOne($TimeoutMs, $false)
+        if ($wait) {
+            $tcp.EndConnect($iar)
+            $tcp.Close()
+            return $true
+        }
+        $tcp.Close()
+        return $false
+    } catch {
+        return $false
     }
-} catch {}
+}
+
+# 1. Se a porta 3456 ja estiver respondendo ativamente, abre direto o navegador
+if (Test-Port3456 -TimeoutMs 400) {
+    Start-Process "http://127.0.0.1:3456"
+    exit 0
+}
 
 # 2. Localiza o executavel do Node.js
 $nodeExe = "node"
@@ -29,7 +44,7 @@ if (-not (Test-Path "$RootDir\data")) {
 $logOut = "$RootDir\data\servidor_log.txt"
 $logErr = "$RootDir\data\servidor_err.txt"
 
-# 4. Inicia o processo Node de forma 100% desacoplada e oculta
+# 4. Inicia o processo Node em segundo plano (desacoplado e silencioso)
 Start-Process -FilePath $nodeExe `
     -ArgumentList "src\server.mjs" `
     -WorkingDirectory $RootDir `
@@ -37,26 +52,24 @@ Start-Process -FilePath $nodeExe `
     -RedirectStandardOutput $logOut `
     -RedirectStandardError $logErr
 
-# 5. Aguarda ativamente o servidor subir na porta 3456 (ate 90 tentativas de 500ms = 45s)
+# 5. Aguarda ativamente o servidor subir na porta 3456 (ate 60 tentativas de 500ms = 30s)
 $pronto = $false
-for ($i = 0; $i -lt 90; $i++) {
+for ($i = 0; $i -lt 60; $i++) {
     Start-Sleep -Milliseconds 500
-    try {
-        $res = Invoke-WebRequest -Uri 'http://127.0.0.1:3456/api/license/status' -UseBasicParsing -TimeoutSec 1
-        if ($res.StatusCode -eq 200 -or $res.StatusCode -eq 403) {
-            $pronto = $true
-            break
-        }
-    } catch {}
+    if (Test-Port3456 -TimeoutMs 300) {
+        $pronto = $true
+        break
+    }
 }
 
 # 6. Abre o navegador no Cockpit se estiver pronto, ou exibe aviso
 if ($pronto) {
+    Start-Sleep -Milliseconds 300
     Start-Process "http://127.0.0.1:3456"
 } else {
     Add-Type -AssemblyName System.Windows.Forms
     [System.Windows.Forms.MessageBox]::Show(
-        "O servidor demorou mais que o esperado para responder na porta 3456.`n`nVerifique os logs em data\servidor_log.txt",
+        "O servidor demorou mais que o esperado para responder na porta 3456.`n`nVerifique os logs em data\servidor_err.txt",
         "Mesa de Compras IA",
         [System.Windows.Forms.MessageBoxButtons]::OK,
         [System.Windows.Forms.MessageBoxIcon]::Warning

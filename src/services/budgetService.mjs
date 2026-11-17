@@ -534,6 +534,15 @@ export async function calculateBudgetOverview(clientCode, { forceRefresh = false
     }
 
     // 3.9 Constrói e persiste o resumo de cada filial no SQLite
+    if (isConsolidated && allFilialIds.length > 0) {
+      try {
+        const db = getAnalyticsDb();
+        db.prepare(`DELETE FROM budget_filial_summary WHERE client_code = ? AND filial_id NOT IN (${allFiliaisIn})`).run(clientCode);
+      } catch (err) {
+        console.warn('[BUDGET] Aviso ao purgar filiais obsoletas de budget_filial_summary:', err.message);
+      }
+    }
+
     for (const f of allActiveFiliais) {
       const fId = Number(f.filial_id);
       const fSummary = buildBudgetSummaryObject({

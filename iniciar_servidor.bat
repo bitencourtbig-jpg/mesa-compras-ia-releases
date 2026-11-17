@@ -14,7 +14,7 @@ if not exist "%NODE_EXEC%" (
 )
 
 echo [*] Verificando se o servidor ja esta ativo na porta 3456...
-powershell -NoProfile -Command "try { $r = [System.Net.WebRequest]::Create('http://127.0.0.1:3456/api/license/status').GetResponse(); exit 0 } catch { exit 1 }"
+powershell -NoProfile -Command "$t = New-Object Net.Sockets.TcpClient; try { $t.Connect('127.0.0.1', 3456); $t.Close(); exit 0 } catch { exit 1 }"
 if %errorlevel% equ 0 (
   echo [*] Servidor ja esta em execucao! Abrindo Cockpit no navegador...
   start "" "http://127.0.0.1:3456"
@@ -25,7 +25,7 @@ echo [*] Iniciando servidor analitico local em segundo plano...
 start "Mesa de Compras IA - Servidor" /min "%NODE_EXEC%" src\server.mjs
 
 echo [*] Aguardando inicializacao do banco analitico (pode levar 10-15s na primeira vez)...
-powershell -NoProfile -Command "$ready = $false; for ($i=0; $i -lt 90; $i++) { Start-Sleep -Milliseconds 500; try { $r = [System.Net.WebRequest]::Create('http://127.0.0.1:3456/api/license/status').GetResponse(); if ($r) { $ready = $true; break } } catch {} }; if ($ready) { exit 0 } else { exit 1 }"
+powershell -NoProfile -Command "$ready = $false; for ($i=0; $i -lt 60; $i++) { Start-Sleep -Milliseconds 500; try { $t = New-Object Net.Sockets.TcpClient; $t.Connect('127.0.0.1', 3456); $t.Close(); $ready = $true; break } catch {} }; if ($ready) { exit 0 } else { exit 1 }"
 
 if %errorlevel% neq 0 (
   echo.

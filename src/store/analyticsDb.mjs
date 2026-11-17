@@ -539,6 +539,12 @@ function initSchema(db) {
       motivo_decisao TEXT NOT NULL,
       FOREIGN KEY (transferencia_id) REFERENCES motor_transferencias(id) ON DELETE CASCADE
     );
+    CREATE INDEX IF NOT EXISTS idx_mti_transf ON motor_transferencia_itens(transferencia_id);
+    CREATE INDEX IF NOT EXISTS idx_mti_prod ON motor_transferencia_itens(produto_id);
+    CREATE INDEX IF NOT EXISTS idx_mt_client_status ON motor_transferencias(client_code, status);
+    CREATE INDEX IF NOT EXISTS idx_reman_run_route ON engine_remanejamento(run_id, filial_origem, filial_destino);
+    CREATE INDEX IF NOT EXISTS idx_reman_run_tipo ON engine_remanejamento(run_id, tipo);
+    CREATE INDEX IF NOT EXISTS idx_reman_run_prod ON engine_remanejamento(run_id, produto_id);
 
     CREATE TABLE IF NOT EXISTS buyer_learning_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -822,6 +828,9 @@ export function clearClientCalculations(clientCode = null) {
       db.prepare('DELETE FROM client_filial_policies WHERE client_code = ?').run(clientCode);
       db.prepare('DELETE FROM client_sku_suspensions WHERE client_code = ?').run(clientCode);
       db.prepare('DELETE FROM client_group_coverage_config WHERE client_code = ?').run(clientCode);
+      db.prepare('DELETE FROM budget_monthly_summary WHERE client_code = ?').run(clientCode);
+      db.prepare('DELETE FROM budget_filial_summary WHERE client_code = ?').run(clientCode);
+      db.prepare('DELETE FROM engine_run_meta WHERE client_code = ?').run(clientCode);
       try {
         db.prepare('DELETE FROM motor_transferencia_itens WHERE transferencia_id IN (SELECT id FROM motor_transferencias WHERE client_code = ?)').run(clientCode);
         db.prepare('DELETE FROM motor_transferencias WHERE client_code = ?').run(clientCode);
@@ -833,6 +842,9 @@ export function clearClientCalculations(clientCode = null) {
       db.prepare('DELETE FROM client_filial_policies').run();
       db.prepare('DELETE FROM client_sku_suspensions').run();
       db.prepare('DELETE FROM client_group_coverage_config').run();
+      db.prepare('DELETE FROM budget_monthly_summary').run();
+      db.prepare('DELETE FROM budget_filial_summary').run();
+      db.prepare('DELETE FROM engine_run_meta').run();
       try {
         db.prepare('DELETE FROM motor_transferencia_itens').run();
         db.prepare('DELETE FROM motor_transferencias').run();
@@ -843,6 +855,54 @@ export function clearClientCalculations(clientCode = null) {
   } catch (err) {
     db.exec('ROLLBACK');
     throw err;
+  }
+}
+
+/**
+ * Política de retenção automática: Mantém as N últimas rodadas (padrão 2)
+ * e expurga execuções antigas de engine_sku_results para evitar inchaço do SQLite.
+ */
+export function pruneOldEngineRuns(clientCode, keepCount = 2) {
+  const db = getAnalyticsDb();
+  try {
+    const runsToKeep = db.prepare(`
+      SELECT id FROM engine_runs
+      WHERE client_code = ?
+      ORDER BY id DESC
+      LIMIT ?
+    `).all(clientCode, keepCount);
+
+    if (!runsToKeep || runsToKeep.length === 0) return { deletedRuns: 0 };
+    const keepIds = runsToKeep.map((r) => r.id);
+    const placeholders = keepIds.map(() => '?').join(',');
+
+    const runsToDelete = db.prepare(`
+      SELECT id FROM engine_runs
+      WHERE client_code = ? AND id NOT IN (${placeholders})
+    `).all(clientCode, ...keepIds);
+
+    if (runsToDelete.length === 0) return { deletedRuns: 0 };
+
+    const delIds = runsToDelete.map((r) => r.id);
+    const delPlaceholders = delIds.map(() => '?').join(',');
+
+    db.exec('BEGIN TRANSACTION');
+    try {
+      db.prepare(`DELETE FROM engine_sku_results WHERE run_id IN (${delPlaceholders})`).run(...delIds);
+      db.prepare(`DELETE FROM engine_remanejamento WHERE run_id IN (${delPlaceholders})`).run(...delIds);
+      db.prepare(`DELETE FROM engine_molecule_summary WHERE run_id IN (${delPlaceholders})`).run(...delIds);
+      db.prepare(`DELETE FROM engine_runs WHERE id IN (${delPlaceholders})`).run(...delIds);
+      db.exec('COMMIT');
+      console.log(`[RETENTION] Expurgo automático para ${clientCode}: ${delIds.length} rodadas antigas eliminadas (${delIds.join(', ')}).`);
+    } catch (e) {
+      db.exec('ROLLBACK');
+      throw e;
+    }
+
+    return { deletedRuns: delIds.length, prunedIds: delIds };
+  } catch (err) {
+    console.warn('[RETENTION] Aviso ao expurgar rodadas antigas:', err.message);
+    return { deletedRuns: 0, error: err.message };
   }
 }
 
@@ -1418,11 +1478,24 @@ export function getAllFilialBudgetSummaries(clientCode) {
   const rows = db.prepare(`
     SELECT bfs.*, p.nome_loja, p.nome_reduz
     FROM budget_filial_summary bfs
-    LEFT JOIN client_filial_policies p ON p.client_code = bfs.client_code AND p.filial_id = bfs.filial_id
+    INNER JOIN client_filial_policies p ON p.client_code = bfs.client_code AND p.filial_id = bfs.filial_id
     WHERE bfs.client_code = ?
     ORDER BY bfs.filial_id ASC
   `).all(clientCode);
-  return rows.map(r => {
+
+  const profile = getClientProfile(clientCode) || {};
+  let activeSales = [];
+  try {
+    activeSales = typeof profile.active_sales_filials === 'string'
+      ? JSON.parse(profile.active_sales_filials)
+      : (Array.isArray(profile.active_sales_filials) ? profile.active_sales_filials : []);
+  } catch {}
+
+  const filtered = (activeSales && activeSales.length > 0)
+    ? rows.filter(r => activeSales.includes(Number(r.filial_id)))
+    : rows;
+
+  return filtered.map(r => {
     let summary = {};
     try { summary = JSON.parse(r.summary_json); } catch {}
     return {

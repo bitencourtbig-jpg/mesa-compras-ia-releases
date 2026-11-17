@@ -33,7 +33,7 @@ import { syncBigClientData } from './engine/syncClientData.mjs';
 import { runPurchasingEngine } from './engine/purchasingEngine.mjs';
 import { GLOSSARY_SECTIONS, GLOSSARY_TERM_HINTS } from './services/glossaryData.mjs';
 import { buildBuyerDecisionAnalysis } from './services/buyerInterpreter.mjs';
-import { calculateBudgetOverview } from './services/budgetService.mjs';
+import { calculateBudgetOverview, invalidateBudgetCache } from './services/budgetService.mjs';
 import { listOlFabricantes, saveOlFabricante, analyzeOlOpportunity, getOlDashboardOverview } from './services/olService.mjs';
 import { buildExecutiveBi } from './services/biAnalyticsService.mjs';
 import { generateQuotationWorkbook, buildTransferPickListExcel } from './services/excelExportService.mjs';
@@ -126,7 +126,9 @@ function getCuradoriaDecisions(clientCode, runId) {
       'REMANEJOU_E_CANCELOU_COMPRA_EXTERNA',
       'CANCELOU_COMPRA_FILIAL_INDIVIDUAL',
       'EXECUTOU_SOLUCAO_IA_1CLIQUE',
-      'HOMOLOGOU_EM_LOTE'
+      'HOMOLOGOU_EM_LOTE',
+      'MANTEVE_COMPRA_ORIGINAL',
+      'TROCOU_MENOR_CUSTO'
     )
     ORDER BY id DESC
   `).all(clientCode);
@@ -141,9 +143,10 @@ function getCuradoriaDecisions(clientCode, runId) {
 
   const grouped = new Map();
   for (const l of logs) {
-    if (!grouped.has(l.produto_id)) {
-      grouped.set(l.produto_id, {
-        produto_id: l.produto_id,
+    const groupKey = l.produto_id > 0 ? l.produto_id : (l.molecule_key || `log_${l.id}`);
+    if (!grouped.has(groupKey)) {
+      grouped.set(groupKey, {
+        produto_id: l.produto_id || 0,
         descricao: l.descricao,
         molecule_key: l.molecule_key,
         actions: [],
@@ -152,7 +155,7 @@ function getCuradoriaDecisions(clientCode, runId) {
         created_at: l.created_at,
       });
     }
-    const g = grouped.get(l.produto_id);
+    const g = grouped.get(groupKey);
     g.actions.push(l);
     if (l.filial_id > 1) g.lojas_canceladas.add(l.filial_id);
     
@@ -173,32 +176,63 @@ function getCuradoriaDecisions(clientCode, runId) {
   const routesMap = new Map();
   const localCounterDeductions = [];
 
-  for (const [pId, g] of grouped.entries()) {
-    const skuInfo = db.prepare(`
-      SELECT produto_id, barras, descricao, labora, custo_unit, preco_venda, abc_class
-      FROM engine_sku_results
-      WHERE run_id = ? AND produto_id = ?
-      LIMIT 1
-    `).get(runId, pId);
+  const allPids = Array.from(grouped.values()).map(g => g.produto_id).filter(p => typeof p === 'number' && p > 0);
+  const allMols = [...new Set(Array.from(grouped.values()).map(g => g.molecule_key).filter(Boolean))];
 
-    let altStockStores = [];
-    if (g.molecule_key) {
-      altStockStores = db.prepare(`
-        SELECT filial_id, produto_id, descricao, labora, estoque_atual, abc_class
-        FROM engine_sku_results
-        WHERE run_id = ? AND molecule_key = ? AND filial_id <> 1 AND estoque_atual > 0
-        ORDER BY estoque_atual DESC
-      `).all(runId, g.molecule_key);
+  // Otimização de Alta Performance: Pré-busca expressa em lote único (elimina N+1 queries)
+  const skuInfoMap = new Map();
+  if (allPids.length > 0) {
+    const pidPlaceholders = allPids.map(() => '?').join(',');
+    const rows = db.prepare(`
+      SELECT produto_id, barras, descricao, labora, custo_unit, preco_venda, abc_class, sugestao_compra_un, sugestao_compra_rs
+      FROM engine_sku_results
+      WHERE run_id = ? AND produto_id IN (${pidPlaceholders})
+    `).all(runId, ...allPids);
+    for (const r of rows) {
+      if (!skuInfoMap.has(r.produto_id)) skuInfoMap.set(r.produto_id, r);
     }
+  }
+
+  const altStockMap = new Map();
+  if (allMols.length > 0) {
+    const molPlaceholders = allMols.map(() => '?').join(',');
+    const rows = db.prepare(`
+      SELECT filial_id, produto_id, molecule_key, descricao, labora, estoque_atual, abc_class
+      FROM engine_sku_results
+      WHERE run_id = ? AND molecule_key IN (${molPlaceholders}) AND filial_id <> 1 AND estoque_atual > 0
+      ORDER BY estoque_atual DESC
+    `).all(runId, ...allMols);
+    for (const r of rows) {
+      if (!altStockMap.has(r.molecule_key)) altStockMap.set(r.molecule_key, []);
+      altStockMap.get(r.molecule_key).push(r);
+    }
+  }
+
+  for (const [groupKey, g] of grouped.entries()) {
+    let pId = g.produto_id;
+    let skuInfo = pId ? skuInfoMap.get(pId) : null;
+    if (!skuInfo && g.molecule_key) {
+      skuInfo = db.prepare('SELECT produto_id, barras, descricao, labora, custo_unit, preco_venda, abc_class, sugestao_compra_un, sugestao_compra_rs FROM engine_sku_results WHERE run_id = ? AND molecule_key = ? LIMIT 1').get(runId, g.molecule_key);
+      if (skuInfo && !pId) {
+        pId = skuInfo.produto_id;
+        g.produto_id = pId;
+      }
+    }
+    const altStockStores = g.molecule_key ? (altStockMap.get(g.molecule_key) || []) : [];
 
     const existingTransfer = transfers.find(t => 
       (t.itens && t.itens.some(it => it.produto_id === pId)) || 
       (t.observacao && g.molecule_key && t.observacao.includes(g.molecule_key))
     );
 
+    const isManteve = g.actions.some(a => a.tipo_evento === 'MANTEVE_COMPRA_ORIGINAL');
+    const isTrocou = g.actions.some(a => a.tipo_evento === 'TROCOU_MENOR_CUSTO');
+
     const custo = skuInfo?.custo_unit || 0;
-    const qtyAbatida = g.total_un_abatidas > 0 ? g.total_un_abatidas : 1;
-    const economiaRs = Math.round(qtyAbatida * custo * 100) / 100;
+    const qtyAbatida = g.total_un_abatidas > 0 ? g.total_un_abatidas : (skuInfo?.sugestao_compra_un || 1);
+    const economiaRs = isManteve 
+      ? Number((qtyAbatida * custo).toFixed(2)) 
+      : Math.round(qtyAbatida * custo * 100) / 100;
 
     const itemObj = {
       produto_id: pId,
@@ -209,6 +243,8 @@ function getCuradoriaDecisions(clientCode, runId) {
       total_un_abatidas: qtyAbatida,
       custo_unit: custo,
       economia_rs: economiaRs,
+      is_manteve_original: isManteve,
+      is_trocou_menor_custo: isTrocou,
       lojas_canceladas: Array.from(g.lojas_canceladas).map(fId => ({
         filial_id: fId,
         nome: filMap.get(fId)?.nome_reduz || `Loja ${fId}`
@@ -234,11 +270,11 @@ function getCuradoriaDecisions(clientCode, runId) {
 
     items.push(itemObj);
 
-    // Identificar se há rota inter-filiais (doadora -> receptora)
+    // Identificar se há rota inter-filiais (doadora -> receptora) - apenas para remanejamento efetivo
     const donor = altStockStores.find(s => !g.lojas_canceladas.has(s.filial_id)) || altStockStores[0];
     const destFilialId = Array.from(g.lojas_canceladas)[0] || (donor ? (donor.filial_id === 2 ? 3 : 2) : 0);
 
-    if (donor && destFilialId && donor.filial_id !== destFilialId && donor.estoque_atual > 0) {
+    if (!isManteve && donor && destFilialId && donor.filial_id !== destFilialId && donor.estoque_atual > 0) {
       const routeKey = `${donor.filial_id}->${destFilialId}`;
       if (!routesMap.has(routeKey)) {
         const routeExistingTrf = transfers.find(t => 
@@ -782,6 +818,54 @@ const server = http.createServer(async (req, res) => {
           'Content-Length': buffer.length,
         });
         return res.end(buffer);
+      } catch (err) {
+        return sendJson(res, 500, { ok: false, error: err.message });
+      }
+    }
+
+    if (pathname === '/api/ol/mark-ordered' && req.method === 'POST') {
+      try {
+        const body = await readBody(req);
+        const { fabricante, items } = body;
+        const latestRun = getLatestRun(clientCode);
+        if (latestRun && Array.isArray(items) && items.length > 0) {
+          db.exec('BEGIN');
+          try {
+            for (const it of items) {
+              const pId = Number(it.produto_id);
+              const fId = Number(it.filial_id || 0);
+              const whereFid = fId > 0 ? ' AND filial_id = ?' : '';
+              const params = [
+                `📦 Pedido Direto de Fábrica emitido via OL (${fabricante || 'Indústria'})`,
+                latestRun.id,
+                pId
+              ];
+              if (fId > 0) params.push(fId);
+
+              db.prepare(`
+                UPDATE engine_sku_results
+                SET justificativa_ia = ?,
+                    dismissed = 1
+                WHERE run_id = ? AND produto_id = ? ${whereFid}
+              `).run(...params);
+
+              recordBuyerLearning(clientCode, {
+                filial_id: fId,
+                produto_id: pId,
+                descricao: `Pedido OL ${fabricante}`,
+                tipo_evento: 'PEDIDO_OL_EMITIDO',
+                motivo: `Pedido emitido via Operação Logística Direta (${fabricante}) - cotação externa desnecessária`,
+                acao_futura: 'COMPRA_DIRETA_INDUSTRIA'
+              });
+            }
+            db.exec('COMMIT');
+          } catch (e) {
+            db.exec('ROLLBACK');
+            return sendJson(res, 500, { ok: false, error: e.message });
+          }
+        }
+        invalidateOverviewCache();
+        return sendJson(res, 200, { ok: true, message: `${items?.length || 0} produtos marcados com sucesso como Pedido OL emitido!` });
       } catch (err) {
         return sendJson(res, 500, { ok: false, error: err.message });
       }
@@ -3102,16 +3186,28 @@ function buildMoleculeMatricialCard(db, runId, molRow, clientCode, filiais, susp
 
           // 2. Se houver rotas de remanejamento
           for (const r of routes) {
-            const destFId = Number(r.to_filial_id);
+            const destFId = Number(r.to_filial_id || r.filial_destino);
+            const origFId = Number(r.from_filial_id || r.filial_origem);
             const qty = Number(r.qty || 0);
             if (qty > 0) {
               db.prepare(`
                 UPDATE engine_sku_results
                 SET sugestao_compra_un = MAX(0, sugestao_compra_un - ?),
                     sugestao_compra_rs = ROUND(MAX(0, sugestao_compra_un - ?) * custo_unit, 2),
+                    transito_remanejamento = transito_remanejamento + ?,
+                    remanejamento_entrada = remanejamento_entrada + ?,
                     justificativa_ia = ?
                 WHERE run_id = ? AND produto_id = ? AND filial_id = ?
-              `).run(qty, qty, `Suprido via Remanejamento 1-Clique (${qty} un de ${r.from_label}) - Transfer-First`, latestRun.id, pId, destFId);
+              `).run(qty, qty, qty, qty, `Suprido via Remanejamento 1-Clique (${qty} un de ${r.from_label}) - Transfer-First`, latestRun.id, pId, destFId);
+
+              if (origFId) {
+                db.prepare(`
+                  UPDATE engine_sku_results
+                  SET estoque_reserva = estoque_reserva + ?,
+                      remanejamento_saida = remanejamento_saida + ?
+                  WHERE run_id = ? AND produto_id = ? AND filial_id = ?
+                `).run(qty, qty, latestRun.id, pId, origFId);
+              }
             }
           }
 
@@ -3136,6 +3232,48 @@ function buildMoleculeMatricialCard(db, runId, molRow, clientCode, filiais, susp
         } catch (e) {
           db.exec('ROLLBACK');
           throw e;
+        }
+
+        // Emissão consolidada de transferência inter-lojas caso a rota tenha trânsito físico
+        if (routes && routes.length > 0) {
+          const groupedRoutes = new Map();
+          for (const r of routes) {
+            const key = `${r.from_filial_id || r.filial_origem}->${r.to_filial_id || r.filial_destino}`;
+            if (!groupedRoutes.has(key)) {
+              groupedRoutes.set(key, {
+                origem: Number(r.from_filial_id || r.filial_origem),
+                origemNome: r.from_label || `Loja ${r.from_filial_id || r.filial_origem}`,
+                destino: Number(r.to_filial_id || r.filial_destino),
+                destinoNome: r.to_label || `Loja ${r.to_filial_id || r.filial_destino}`,
+                items: [],
+              });
+            }
+            groupedRoutes.get(key).items.push({
+              produto_id: Number(r.produto_id || pId),
+              barras: r.barras || '',
+              descricao: r.produto_desc || descricao,
+              labora: r.labora || '',
+              qtd_solicitada: Number(r.qty || 0),
+              custo_unit: Number(r.custo_unit || 0),
+              valor_total: Number(r.economia_rs || 0),
+              motivo_decisao: `🧬 Curadoria IA • 1-Clique: Transfer-First aprovado pelo comprador (Molécula ${molecule_key})`,
+            });
+          }
+
+          for (const grp of groupedRoutes.values()) {
+            try {
+              createMotorTransfer(clientCode, latestRun.id, {
+                filialOrigem: grp.origem,
+                filialOrigemNome: grp.origemNome,
+                filialDestino: grp.destino,
+                filialDestinoNome: grp.destinoNome,
+                items: grp.items,
+                observacao: `🧬 Curadoria IA • Transfer-First (${descricao} • 1-Clique)`
+              });
+            } catch (errTrf) {
+              console.warn('[CURADORIA] Erro ao registrar guia de transferência do 1-clique:', errTrf.message);
+            }
+          }
         }
 
         recordBuyerLearning(clientCode, {
@@ -3193,9 +3331,33 @@ function buildMoleculeMatricialCard(db, runId, molRow, clientCode, filiais, susp
       }
 
       // Default: KEEP (Manter compra original)
+      const targetPid = Number(produto_id || 0);
+      const targetFid = Number(filial_id || 0);
+
+      if (targetPid > 0 && latestRun) {
+        db.exec('BEGIN');
+        try {
+          const whereFid = targetFid > 0 ? ' AND filial_id = ?' : '';
+          const params = ['✓ Compra Homologada pelo Comprador (Decisão de manter marca original)', latestRun.id, targetPid];
+          if (targetFid > 0) params.push(targetFid);
+
+          db.prepare(`
+            UPDATE engine_sku_results 
+            SET dismissed = 0,
+                justificativa_ia = ?
+            WHERE run_id = ? AND produto_id = ? ${whereFid}
+          `).run(...params);
+
+          db.exec('COMMIT');
+        } catch (e) {
+          db.exec('ROLLBACK');
+          console.warn('[CURADORIA] Erro ao homologar compra do SKU no motor:', e.message);
+        }
+      }
+
       recordBuyerLearning(clientCode, {
-        filial_id: Number(filial_id || 0),
-        produto_id: Number(produto_id || 0),
+        filial_id: targetFid,
+        produto_id: targetPid,
         molecule_key,
         descricao,
         tipo_evento: 'MANTEVE_COMPRA_ORIGINAL',
@@ -3203,7 +3365,7 @@ function buildMoleculeMatricialCard(db, runId, molRow, clientCode, filiais, susp
         acao_futura: 'MANTER_MARCA',
       });
 
-      return sendJson(res, 200, { ok: true, message: 'Compra da marca original homologada e liberada para Sugestão de Compra!' });
+      return sendJson(res, 200, { ok: true, message: 'Compra da marca original homologada e liberada com destaque para a Sugestão de Compra!' });
     }
 
     if (pathname === '/api/curadoria/desova-items' && req.method === 'GET') {
@@ -3532,6 +3694,7 @@ function buildMoleculeMatricialCard(db, runId, molRow, clientCode, filiais, susp
       if (shouldReset) {
         console.log(`[CONFIG] Banco/Host ou Filial alterado (${existing.db_host} -> ${body.db_host}). Limpando dados calculados do cliente ${clientCode}...`);
         clearClientCalculations(clientCode);
+        invalidateBudgetCache();
         _treeCache.clear();
         _rawCache.clear();
 
@@ -3579,6 +3742,13 @@ function buildMoleculeMatricialCard(db, runId, molRow, clientCode, filiais, susp
         db_password: updated.db_password ? '••••••••' : '',
       };
 
+      if (shouldReset) {
+        // Dispara auto-recálculo da dotação orçamentária da nova base para carregar imediatamente
+        calculateBudgetOverview(clientCode, { forceRefresh: true }).catch((err) => {
+          console.warn('[CONFIG] Aviso ao auto-recalcular dotação da nova base:', err.message);
+        });
+      }
+
       return sendJson(res, 200, { ok: true, profile: safeUpdated, dbChanged: shouldReset });
     }
 
@@ -3588,6 +3758,7 @@ function buildMoleculeMatricialCard(db, runId, molRow, clientCode, filiais, susp
         return sendJson(res, 403, { ok: false, error: 'Acesso negado: Somente técnicos autorizados podem limpar dados calculados.' });
       }
       const result = clearClientCalculations(clientCode);
+      invalidateBudgetCache();
       return sendJson(res, 200, { ok: true, message: 'Dados calculados resetados com sucesso.', result });
     }
 
@@ -3708,13 +3879,16 @@ function buildMoleculeMatricialCard(db, runId, molRow, clientCode, filiais, susp
       const selectedKeys = Array.isArray(body.selectedKeys) ? body.selectedKeys : [];
       let rows = [];
       if (selectedKeys.length > 0) {
-        const stmt = db.prepare('SELECT * FROM engine_sku_results WHERE run_id = ? AND filial_id = ? AND produto_id = ?');
+        const pairs = [];
         for (const k of selectedKeys) {
           const [fId, pId] = String(k).split('|').map(Number);
-          if (fId && pId) {
-            const found = stmt.get(latestRun.id, fId, pId);
-            if (found) rows.push(found);
-          }
+          if (fId && pId) pairs.push({ fId, pId });
+        }
+        if (pairs.length > 0) {
+          const conds = pairs.map(() => '(filial_id = ? AND produto_id = ?)').join(' OR ');
+          const params = [];
+          for (const p of pairs) params.push(p.fId, p.pId);
+          rows = db.prepare(`SELECT * FROM engine_sku_results WHERE run_id = ? AND (${conds})`).all(latestRun.id, ...params);
         }
       } else {
         rows = db.prepare('SELECT * FROM engine_sku_results WHERE run_id = ? AND sugestao_compra_un > 0 ORDER BY sugestao_compra_rs DESC LIMIT 500').all(latestRun.id);
@@ -3828,6 +4002,23 @@ function buildMoleculeMatricialCard(db, runId, molRow, clientCode, filiais, susp
     console.error('API error:', err);
     sendJson(res, 500, { error: err.message });
   }
+});
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`[FATAL] Porta ${PORT} ja esta ocupada por outro processo.`);
+  } else {
+    console.error('[FATAL] Erro no servidor HTTP:', err);
+  }
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[RESILIENCE] Excecao nao tratada capturada:', err?.message || err);
+  if (err?.stack) console.error(err.stack);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[RESILIENCE] Rejeicao nao tratada capturada:', reason);
 });
 
 server.listen(PORT, '127.0.0.1', () => {
