@@ -3471,19 +3471,11 @@ async function loadTransfers() {
 
   const queryStr = params.toString() ? `?${params.toString()}` : '';
 
-  const [routesData, remanData] = await Promise.all([
-    apiGet(`/api/remanejamento/routes${queryStr}`).catch(() => ({ routes: [], transfers: [], totalGeralRs: 0, totalGeralUnidades: 0, totalItens: 0, summary: {}, filiais: [] })),
-    apiGet(`/api/remanejamento${state.selectedFilial && state.selectedFilial !== 'all' ? `?filial_id=${state.selectedFilial}` : ''}`).catch(() => ({ transfers: [], expiringLots: [], curadoriaDecisions: [], curadoriaRoutes: [], localCounterDeductions: [] })),
-  ]);
+  const routesData = await apiGet(`/api/remanejamento/routes${queryStr}`).catch(() => ({ routes: [], transfers: [], totalGeralRs: 0, totalGeralUnidades: 0, totalItens: 0, summary: {}, filiais: [] }));
 
   const routes = routesData.routes || [];
   const activeTransfers = routesData.transfers || [];
-  const expiringLots = remanData.expiringLots || [];
-  const curadoriaDecisions = remanData.curadoriaDecisions || [];
-  const curadoriaRoutes = remanData.curadoriaRoutes || curadoriaDecisions.storePairTransfers || [];
-  const localCounterDeductions = remanData.localCounterDeductions || curadoriaDecisions.localCounterDeductions || [];
   currentActiveTransfers = activeTransfers;
-  currentCuradoriaRoutes = curadoriaRoutes;
   const summary = routesData.summary || {};
   const filiaisList = routesData.filiais || [];
 
@@ -3520,8 +3512,7 @@ async function loadTransfers() {
         <div class="kpi-label">Peças a Transferir</div>
         <div class="kpi-val kpi-accent">${num(routesData.totalGeralUnidades || 0)} un</div>
         <div class="kpi-sub">
-          ${summary.curadoriaCount > 0 ? `<span style="color:#7c3aed;font-weight:700;">🧬 ${num(summary.curadoriaCount)} Curadoria IA</span> &bull; ` : ''}
-          ${num(summary.excessoCount || 0)} excessos &bull; ${num(summary.fefoCount || 0)} FEFO
+          ${num(summary.excessoCount || 0)} excessos &bull; ${num(summary.paradoCount || 0)} sem giro
         </div>
       </div>
       <div class="kpi-cell">
@@ -3537,142 +3528,7 @@ async function loadTransfers() {
     `;
   }
 
-  // Renderizar SEÇÃO 1: Decisões da Rodada do Comprador (Consolidadas por Loja Doadora ➔ Receptora)
-  const routesContainerEl = document.getElementById('curadoria-routes-container');
-  const localContainerEl = document.getElementById('curadoria-local-container');
-
-  if (routesContainerEl) {
-    if (curadoriaRoutes.length === 0 && localCounterDeductions.length === 0) {
-      routesContainerEl.innerHTML = `
-        <div class="empty-state-box" style="padding:28px 20px; text-align:center; background:#fff; border:1px dashed #cbd5e1; border-radius:10px;">
-          <div style="font-size:28px; margin-bottom:6px;">🎯✨</div>
-          <div style="font-weight:700; font-size:13.5px; color:#334155;">Nenhuma decisão de curadoria registrada nesta rodada</div>
-          <div class="muted" style="font-size:12px; margin-top:2px;">
-            Ao analisar as moléculas na Pré-Tela e homologar trocas ou remanejamentos, as guias de transferência serão geradas aqui unificadas por loja para envio conjunto.
-          </div>
-        </div>
-      `;
-    } else {
-      routesContainerEl.innerHTML = curadoriaRoutes.map(r => {
-        const isEmitted = Boolean(r.transferEmitted);
-        return `
-          <div class="route-store-card" style="background:#ffffff; border:1.5px solid ${isEmitted ? '#86efac' : '#c4b5fd'}; border-radius:12px; padding:16px 20px; box-shadow:0 2px 6px rgba(0,0,0,0.03); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
-            <div>
-              <div style="font-size:15px; font-weight:800; color:#1e1b4b; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                <span>🚚 Rota: ${esc(r.filialOrigemNome)} ➔ ${esc(r.filialDestinoNome)}</span>
-                ${isEmitted ? `
-                  <span class="badge" style="background:#dcfce7; color:#15803d; font-weight:800; font-size:11px;">
-                    ✓ Guia ${esc(r.transferEmitted.codigo)} (${r.transferEmitted.status})
-                  </span>
-                ` : `
-                  <span class="badge" style="background:#ede9fe; color:#6d28d9; font-weight:800; font-size:11px;">
-                    ⏳ Aguardando Emissão da Guia
-                  </span>
-                `}
-              </div>
-              <div style="font-size:12.5px; color:#475569; margin-top:4px;">
-                <strong>${num(r.totalItens)} produtos agrupados</strong> &bull; <strong>${num(r.totalUnidades)} peças</strong> &bull; Economia Retida no Caixa: <strong style="color:#047857; font-size:13.5px;">${brl(r.valorTotalRs)}</strong>
-              </div>
-            </div>
-            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-              <button class="btn btn-secondary btn-sm btn-audit-route" data-route-key="${r.routeKey}" style="font-weight:700;">
-                🔍 Auditar Produtos (${num(r.totalItens)})
-              </button>
-              ${isEmitted ? `
-                <a href="/api/remanejamento/export-excel?transferId=${r.transferEmitted.id}" class="btn btn-secondary btn-sm" download style="font-weight:700; color:#047857; border-color:#86efac; display:inline-flex; align-items:center; gap:4px;">
-                  📥 Baixar Romaneio Excel
-                </a>
-              ` : `
-                <button class="btn btn-primary btn-sm btn-emit-route-single" data-route-key="${r.routeKey}" style="background:#7c3aed; border-color:#6d28d9; font-weight:700;">
-                  📄 Emitir Guia Desta Loja
-                </button>
-              `}
-            </div>
-          </div>
-        `;
-      }).join('');
-
-      // Eventos para auditar produtos da rota
-      routesContainerEl.querySelectorAll('.btn-audit-route').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const rKey = btn.dataset.routeKey;
-          openAuditPlannedRouteModal(rKey);
-        });
-      });
-
-      // Eventos para emitir guia única da rota
-      routesContainerEl.querySelectorAll('.btn-emit-route-single').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          const rKey = btn.dataset.routeKey;
-          btn.disabled = true;
-          btn.textContent = 'Emitindo guia...';
-          try {
-            const res = await apiPost('/api/curadoria/emit-transfer', { routeKey: rKey });
-            showBanner(res.message || 'Guia consolidada emitida com sucesso!');
-            await loadTransfers();
-          } catch (err) {
-            showBanner(`Erro ao emitir guia: ${err.message}`, true);
-            btn.disabled = false;
-            btn.textContent = '📄 Emitir Guia Desta Loja';
-          }
-        });
-      });
-    }
-  }
-
-  // Renderizar seção de abatimentos locais sem trânsito (ex: Nesina, Azelan)
-  if (localContainerEl) {
-    if (localCounterDeductions.length > 0) {
-      const totLocalRs = localCounterDeductions.reduce((a, b) => a + Number(b.economia_rs || 0), 0);
-      localContainerEl.innerHTML = `
-        <div style="background:#f8fafc; border:1.5px solid #e2e8f0; border-radius:10px; padding:14px 18px; margin-top:10px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
-            <div style="font-size:13.5px; font-weight:700; color:#334155; display:flex; align-items:center; gap:6px;">
-              <span>🏷️ Abatimentos no Balcão Local / Desova Sem Trânsito</span>
-              <span class="badge" style="background:#e2e8f0; color:#334155; font-size:10.5px;">${localCounterDeductions.length} itens</span>
-              <span class="badge badge-accent" style="font-size:10.5px;">Economia: ${brl(totLocalRs)}</span>
-            </div>
-            <div class="muted" style="font-size:11.5px;">Compras externas canceladas para desova interna na própria loja. Não geram rota de veículo.</div>
-          </div>
-          <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:10px;">
-            ${localCounterDeductions.map(ld => `
-              <div style="background:#fff; border:1px solid #cbd5e1; border-radius:8px; padding:10px 14px; font-size:12px;">
-                <div style="font-weight:700; color:#0f172a;">${esc(ld.descricao)}</div>
-                <div class="muted" style="font-size:11px; margin-top:2px;">Cód BIG: ${ld.produto_id} &bull; ${esc(ld.labora || '—')}</div>
-                <div style="margin-top:6px; display:flex; justify-content:space-between; align-items:center;">
-                  <span class="badge badge-success" style="font-size:9.5px;">✓ Balcão Local (Sem Trânsito)</span>
-                  <strong style="color:#047857;">${brl(ld.economia_rs)}</strong>
-                </div>
-              </div>
-            `).join('')}
-          </div>
-        </div>
-      `;
-    } else {
-      localContainerEl.innerHTML = '';
-    }
-  }
-
-  // Botão Emitir Todas as Guias Pendentes Agrupadas
-  const btnEmitAll = document.getElementById('btn-emit-all-curadoria-transfers');
-  if (btnEmitAll) {
-    btnEmitAll.onclick = async () => {
-      btnEmitAll.disabled = true;
-      btnEmitAll.textContent = 'Emitindo guias...';
-      try {
-        const res = await apiPost('/api/curadoria/emit-transfer', { all: true });
-        showBanner(res.message || 'Guias emitidas com sucesso!');
-        await loadTransfers();
-      } catch (err) {
-        showBanner(`Erro ao emitir guias: ${err.message}`, true);
-        btnEmitAll.disabled = false;
-        btnEmitAll.textContent = '🚀 Emitir Guias das Decisões Pendentes';
-      }
-    };
-  }
-
-
-  // Rotas Container com Renderização Leve e Paginação por Rota (REV-025)
+  // Rotas Container com Seleção de Itens pelo Comprador (REV-028)
   const routesContainer = document.getElementById('transfer-routes-container');
   const routesCount = document.getElementById('transfer-routes-count');
   if (routesCount) routesCount.textContent = `${routes.length} rotas (${num(routesData.totalItens || 0)} itens)`;
@@ -3682,43 +3538,41 @@ async function loadTransfers() {
       routesContainer.innerHTML = `
         <div class="empty-state-box" style="padding:36px 20px; text-align:center; background:var(--card-bg); border:1px solid var(--border); border-radius:10px;">
           <div style="font-size:32px; margin-bottom:8px;">🚚✨</div>
-          <div style="font-weight:700; font-size:14px; color:var(--text);">Nenhuma rota encontrada com os filtros selecionados</div>
-          <div class="muted" style="font-size:12px; margin-top:4px;">Tente alterar os filtros de filial, tipo de oportunidade ou zerar o valor mínimo.</div>
+          <div style="font-weight:700; font-size:14px; color:var(--text);">Nenhuma oportunidade de remanejamento com os filtros selecionados</div>
+          <div class="muted" style="font-size:12px; margin-top:4px;">Todas as lojas estão equilibradas ou nenhum item atende aos filtros de valor e curva.</div>
         </div>
       `;
     } else {
       routesContainer.innerHTML = routes.map((r, idx) => {
-        // Exibir os primeiros 25 itens da rota para não travar o DOM
-        const displayLimit = 25;
+        // Exibir até 50 itens por rota com renderização ágil
+        const displayLimit = 50;
         const visibleItems = r.items.slice(0, displayLimit);
         const hasMore = r.items.length > displayLimit;
 
         return `
-          <div class="transfer-route-card" data-route-idx="${idx}" style="background:var(--card-bg); border:1.5px solid var(--border); border-radius:12px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.03);">
+          <div class="transfer-route-card" data-route-idx="${idx}" style="background:var(--card-bg); border:1.5px solid var(--border); border-radius:12px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.03); margin-bottom:16px;">
             <div class="transfer-route-header" style="padding:14px 18px; background:var(--bg-subtle); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; border-bottom:1px solid var(--border);">
               <div>
-                <div class="transfer-route-title" style="display:flex; align-items:center; gap:8px; font-size:14px; font-weight:800; color:#0f172a;">
+                <div class="transfer-route-title" style="display:flex; align-items:center; gap:8px; font-size:14.5px; font-weight:800; color:#0f172a;">
                   <span>🚚 Rota ${idx + 1}: <strong>${esc(r.filialOrigemNome)}</strong></span>
                   <span style="color:#0f766e;font-size:16px;">➔</span>
                   <span><strong>${esc(r.filialDestinoNome)}</strong></span>
                 </div>
                 <div class="transfer-route-meta" style="margin-top:4px; font-size:12px; color:#475569; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                  <span><strong>${num(r.totalItens)} produtos</strong></span> &bull;
+                  <span><strong>${num(r.totalItens)} produtos mapeados</strong></span> &bull;
                   <span><strong>${num(r.totalUnidades)} un a transferir</strong></span> &bull;
-                  <span>Economia de Compra: <strong style="color:#047857;">${brl(r.valorTotalRs)}</strong></span>
-                  <div style="display:flex; gap:4px; margin-left:6px;">
-                    ${r.countCuradoria > 0 ? `<span class="badge" style="background:#ede9fe; color:#5b21b6; font-size:9.5px; font-weight:800;">🧬 ${r.countCuradoria} Curadoria IA</span>` : ''}
-                    ${r.countFefo > 0 ? `<span class="badge" style="background:#fee2e2; color:#991b1b; font-size:9.5px; font-weight:700;">⏳ ${r.countFefo} FEFO</span>` : ''}
-                    ${r.countExcesso > 0 ? `<span class="badge" style="background:#dbeafe; color:#1e40af; font-size:9.5px; font-weight:700;">📦 ${r.countExcesso} Excesso</span>` : ''}
-                  </div>
+                  <span>Economia de Compras: <strong style="color:#047857;">${brl(r.valorTotalRs)}</strong></span>
                 </div>
               </div>
-              <div class="transfer-route-actions" style="display:flex; gap:8px; align-items:center;">
+              <div class="transfer-route-actions" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                <span class="route-sel-summary" data-route-idx="${idx}" style="font-size:11.5px; font-weight:700; color:#0f766e; background:#f0fdf4; border:1px solid #bbf7d0; padding:4px 8px; border-radius:6px;">
+                  Selecionados: ${visibleItems.length} itens (${num(r.totalUnidades)} un • ${brl(r.valorTotalRs)})
+                </span>
                 <a href="/api/remanejamento/export-excel?origem=${r.filialOrigem}&destino=${r.filialDestino}" class="btn btn-secondary btn-sm" style="font-weight:600; font-size:11.5px;" title="Baixar Guia de Separação em Excel desta rota">
-                  📥 Baixar Guia (Excel)
+                  📥 Baixar Romaneio Excel
                 </a>
                 <button class="btn btn-primary btn-sm btn-approve-route" data-route-idx="${idx}" type="button" style="background:#0f766e; border-color:#0f766e; font-weight:700; font-size:11.5px;">
-                  ✓ Aprovar Transferência da Rota
+                  📄 Emitir Guia da Rota
                 </button>
               </div>
             </div>
@@ -3727,22 +3581,28 @@ async function loadTransfers() {
               <table class="data-table" style="font-size:11.5px; margin:0; width:100%;">
                 <thead>
                   <tr style="background:#f8fafc;">
+                    <th style="width:36px; text-align:center;">
+                      <input type="checkbox" class="chk-select-all-route" data-route-idx="${idx}" checked title="Selecionar/Desmarcar todos" />
+                    </th>
                     <th style="min-width:65px;">Código</th>
                     <th style="min-width:95px;">Barras</th>
                     <th style="min-width:220px;">Produto / Descrição</th>
-                    <th style="min-width:140px;">Tipo &amp; Origem</th>
                     <th style="min-width:60px;">Curva</th>
+                    <th class="num" style="min-width:85px; color:#1e40af;">Est. Doadora</th>
+                    <th class="num" style="min-width:85px; color:#b91c1c;">Est. Destino</th>
                     <th class="num" style="min-width:90px;">Qtd Transferir</th>
                     <th class="num" style="min-width:85px;">Custo Unit</th>
                     <th class="num" style="min-width:90px;">Total R$</th>
-                    <th style="min-width:200px;">Motivo Operacional</th>
+                    <th style="min-width:180px;">Motivo Operacional</th>
                   </tr>
                 </thead>
                 <tbody>
-                  ${visibleItems.map((it) => {
-                    const isCuradoriaItem = it.isCuradoria || it.tipo === 'CURADORIA_IA' || (it.motivo && it.motivo.includes('Curadoria'));
+                  ${visibleItems.map((it, itemIdx) => {
                     return `
-                      <tr class="${isCuradoriaItem ? 'reman-curadoria-row' : ''}">
+                      <tr>
+                        <td style="text-align:center;">
+                          <input type="checkbox" class="chk-item-route" data-route-idx="${idx}" data-item-idx="${itemIdx}" checked />
+                        </td>
                         <td><code>${it.produto_id}</code></td>
                         <td><code>${esc(it.barras || '—')}</code></td>
                         <td>
@@ -3750,28 +3610,11 @@ async function loadTransfers() {
                           <div class="sku-sub" style="font-size:10.5px; color:#64748b;">${esc(it.labora || '')}</div>
                         </td>
                         <td>
-                          ${isCuradoriaItem ? `
-                            <span class="badge" style="background:#ede9fe; color:#5b21b6; border:1px solid #ddd6fe; font-weight:800; font-size:9.5px; padding:2px 6px;">
-                              🧬 CURADORIA IA &bull; TRANSFER-FIRST
-                            </span>
-                          ` : it.tipo === 'FEFO_VALIDADE' ? `
-                            <span class="badge" style="background:#fee2e2; color:#991b1b; border:1px solid #fecaca; font-weight:700; font-size:9.5px;">
-                              ⏳ FEFO (${it.validade_prioritaria || 'Curto'})
-                            </span>
-                          ` : it.tipo === 'EXCESSO' ? `
-                            <span class="badge" style="background:#dbeafe; color:#1e40af; border:1px solid #bfdbfe; font-weight:700; font-size:9.5px;">
-                              📦 Doação Excesso
-                            </span>
-                          ` : `
-                            <span class="badge" style="background:#fef3c7; color:#92400e; border:1px solid #fde68a; font-weight:700; font-size:9.5px;">
-                              💤 Estoque Parado
-                            </span>
-                          `}
-                        </td>
-                        <td>
                           <span class="badge badge-neutral" style="font-size:9.5px; font-weight:700;">Curva ${it.abc_class || 'A'}</span>
                         </td>
-                        <td class="num"><strong>${num(it.qtd_sugerida)} un</strong></td>
+                        <td class="num"><span class="badge" style="background:#dbeafe; color:#1e40af; font-weight:700;">${num(it.estoqueOrigem ?? it.estoque_origem ?? 0)} un</span></td>
+                        <td class="num"><span class="badge" style="background:${(it.estoqueDestino ?? it.estoque_destino ?? 0) === 0 ? '#fee2e2' : '#f1f5f9'}; color:${(it.estoqueDestino ?? it.estoque_destino ?? 0) === 0 ? '#b91c1c' : '#475569'}; font-weight:700;">${num(it.estoqueDestino ?? it.estoque_destino ?? 0)} un</span></td>
+                        <td class="num"><strong style="font-size:12px; color:#0f766e;">${num(it.qtd_sugerida)} un</strong></td>
                         <td class="num">${brl(it.custo_unit)}</td>
                         <td class="num"><strong style="color:#047857;">${brl(it.valor_total)}</strong></td>
                         <td class="sku-sub" style="font-size:11px; line-height:1.35; color:#334155;">${esc(it.motivo)}</td>
@@ -3783,7 +3626,7 @@ async function loadTransfers() {
 
               ${hasMore ? `
                 <div style="padding:10px 16px; background:#f8fafc; text-align:center; border-top:1px solid #e2e8f0; font-size:11.5px; color:#64748b;">
-                  Mostrando os 25 itens com maior impacto financeiro desta rota (Total de ${r.items.length} itens). Use os filtros acima para refinar por laboratório ou valor mínimo.
+                  Mostrando os 50 itens com maior impacto financeiro desta rota (Total de ${r.items.length} itens). Use os filtros para refinar por curva, valor mínimo ou produto.
                 </div>
               ` : ''}
             </div>
@@ -3791,51 +3634,127 @@ async function loadTransfers() {
         `;
       }).join('');
 
+      // Função auxiliar para atualizar o contador da rota
+      const updateRouteSelectionSummary = (routeIdx) => {
+        const routeCard = routesContainer.querySelector(`.transfer-route-card[data-route-idx="${routeIdx}"]`);
+        if (!routeCard) return;
+        const route = routes[routeIdx];
+        if (!route) return;
+
+        const itemCheckboxes = routeCard.querySelectorAll('.chk-item-route');
+        let selCount = 0;
+        let selUnidades = 0;
+        let selValor = 0;
+
+        itemCheckboxes.forEach(chk => {
+          if (chk.checked) {
+            const itemIdx = Number(chk.dataset.itemIdx);
+            const item = route.items[itemIdx];
+            if (item) {
+              selCount += 1;
+              selUnidades += Number(item.qtd_sugerida || 0);
+              selValor += Number(item.valor_total || 0);
+            }
+          }
+        });
+
+        const summaryEl = routeCard.querySelector('.route-sel-summary');
+        if (summaryEl) {
+          summaryEl.textContent = `Selecionados: ${selCount} itens (${num(selUnidades)} un • ${brl(selValor)})`;
+        }
+
+        const approveBtn = routeCard.querySelector('.btn-approve-route');
+        if (approveBtn) {
+          approveBtn.disabled = selCount === 0;
+          approveBtn.textContent = selCount === 0 ? 'Nenhum item selecionado' : '📄 Emitir Guia da Rota';
+        }
+      };
+
+      // Checkbox "Selecionar Todos"
+      routesContainer.querySelectorAll('.chk-select-all-route').forEach(masterChk => {
+        masterChk.addEventListener('change', () => {
+          const routeIdx = Number(masterChk.dataset.routeIdx);
+          const routeCard = routesContainer.querySelector(`.transfer-route-card[data-route-idx="${routeIdx}"]`);
+          if (routeCard) {
+            const itemCheckboxes = routeCard.querySelectorAll('.chk-item-route');
+            itemCheckboxes.forEach(chk => { chk.checked = masterChk.checked; });
+            updateRouteSelectionSummary(routeIdx);
+          }
+        });
+      });
+
+      // Checkbox individual por item
+      routesContainer.querySelectorAll('.chk-item-route').forEach(itemChk => {
+        itemChk.addEventListener('change', () => {
+          const routeIdx = Number(itemChk.dataset.routeIdx);
+          const routeCard = routesContainer.querySelector(`.transfer-route-card[data-route-idx="${routeIdx}"]`);
+          if (routeCard) {
+            const masterChk = routeCard.querySelector('.chk-select-all-route');
+            const allItemChks = routeCard.querySelectorAll('.chk-item-route');
+            const allChecked = Array.from(allItemChks).every(c => c.checked);
+            if (masterChk) masterChk.checked = allChecked;
+            updateRouteSelectionSummary(routeIdx);
+          }
+        });
+      });
+
+      // Emissão da guia apenas com os itens selecionados
       routesContainer.querySelectorAll('.btn-approve-route').forEach(btn => {
         btn.addEventListener('click', async () => {
           const rIdx = Number(btn.dataset.routeIdx);
           const route = routes[rIdx];
           if (!route) return;
 
+          const routeCard = routesContainer.querySelector(`.transfer-route-card[data-route-idx="${rIdx}"]`);
+          const checkedItemIdxs = routeCard 
+            ? Array.from(routeCard.querySelectorAll('.chk-item-route:checked')).map(c => Number(c.dataset.itemIdx))
+            : [];
+          
+          const selectedItems = checkedItemIdxs.map(i => route.items[i]).filter(Boolean);
+          if (selectedItems.length === 0) {
+            showBanner('Selecione pelo menos um item para emitir a guia.', true);
+            return;
+          }
+
+          const totUn = selectedItems.reduce((a, b) => a + Number(b.qtd_sugerida || 0), 0);
+
           btn.disabled = true;
-          btn.textContent = 'Aprovando...';
+          btn.textContent = 'Emitindo guia...';
           try {
             const approveRes = await apiPost('/api/remanejamento/approve', {
               filialOrigem: route.filialOrigem,
               filialDestino: route.filialDestino,
               filialOrigemNome: route.filialOrigemNome,
               filialDestinoNome: route.filialDestinoNome,
-              items: route.items,
-              observacao: `Aprovado pelo comprador via Cockpit (${route.totalUnidades} un)`,
+              items: selectedItems,
+              observacao: `Aprovado pelo comprador via Cockpit (${selectedItems.length} itens, ${totUn} un)`,
             });
-            showBanner(`✓ Transferência ${approveRes.codigoTransferencia} criada com sucesso! Sugestão de compra deduzida no motor.`, false);
+            showBanner(`✓ Transferência ${approveRes.codigoTransferencia} emitida com sucesso! Compras externas deduzidas no motor.`, false);
             await loadTransfers();
           } catch (err) {
-            showBanner(`Falha ao aprovar transferência: ${err.message}`, true);
+            showBanner(`Falha ao emitir transferência: ${err.message}`, true);
             btn.disabled = false;
-            btn.textContent = '✓ Aprovar Transferência da Rota';
+            btn.textContent = '📄 Emitir Guia da Rota';
           }
         });
       });
     }
   }
 
-  // Tabela de Guias Emitidas com Sinalização de Curadoria IA (REV-025)
+  // Tabela de Guias Emitidas & Trânsito Interno
   const activeCountEl = document.getElementById('active-transfers-count');
   if (activeCountEl) activeCountEl.textContent = `${activeTransfers.length} guias registradas`;
 
   const motorTbody = document.getElementById('motor-transfers-tbody');
   if (motorTbody) {
     if (activeTransfers.length === 0) {
-      motorTbody.innerHTML = '<tr><td colspan="8" class="muted" style="text-align:center;padding:20px;">Nenhuma transferência emitida ainda. Aprove uma das rotas acima para emitir a guia.</td></tr>';
+      motorTbody.innerHTML = '<tr><td colspan="8" class="muted" style="text-align:center;padding:20px;">Nenhuma transferência emitida ainda. Emita a guia de uma das rotas acima para gerar o romaneio.</td></tr>';
     } else {
       motorTbody.innerHTML = activeTransfers.map((t) => {
         let statusBadge = `<span class="badge badge-warn">${t.status}</span>`;
         if (t.status === 'EM_TRANSITO') statusBadge = '<span class="badge badge-info">🚚 EM TRÂNSITO</span>';
         if (t.status === 'RECEBIDA') statusBadge = '<span class="badge badge-success">✅ RECEBIDA</span>';
         if (t.status === 'CANCELADA') statusBadge = '<span class="badge badge-neutral">✕ CANCELADA</span>';
-
-        const isCuradoriaTransfer = t.observacao && t.observacao.includes('Curadoria IA');
 
         let nextActionBtn = '';
         if (t.status === 'PENDENTE_SEPARACAO') {
@@ -3848,7 +3767,6 @@ async function loadTransfers() {
           <tr>
             <td>
               <code>${esc(t.codigo_transferencia)}</code>
-              ${isCuradoriaTransfer ? `<span class="badge" style="background:#ede9fe; color:#5b21b6; font-size:9px; font-weight:800; display:block; margin-top:2px;">🧬 Curadoria IA</span>` : ''}
             </td>
             <td><strong>${esc(t.filial_origem_nome || `Loja ${t.filial_origem}`)}</strong> ➔ <strong>${esc(t.filial_destino_nome || `Loja ${t.filial_destino}`)}</strong></td>
             <td><span class="muted" style="font-size:11px;">${esc(t.data_emissao ? t.data_emissao.slice(0, 16) : '—')}</span></td>
@@ -3887,39 +3805,6 @@ async function loadTransfers() {
           openTransferItemsModal(tId);
         });
       });
-    }
-  }
-
-  // Tabela FEFO
-  const expiringCountEl = document.getElementById('expiring-count');
-  if (expiringCountEl) expiringCountEl.textContent = `${expiringLots.length} lotes críticos mapeados`;
-
-  const expTbody = document.getElementById('expiring-tbody');
-  if (expTbody) {
-    if (expiringLots.length === 0) {
-      expTbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;padding:20px;">Nenhum lote crítico com vencimento próximo no momento.</td></tr>';
-    } else {
-      expTbody.innerHTML = expiringLots.map(l => {
-        const menorVal = l.menor_validade || l.lote_menor_validade || '—';
-        const q90 = Number(l.qtd_vencendo_90d ?? l.lote_vencendo_90d_qtd ?? 0);
-        const qVenc = Number(l.qtd_vencido ?? l.lote_vencido_qtd ?? 0);
-        const riscoRs = Number(l.valor_risco_rs ?? l.lote_vencendo_90d_rs ?? (q90 + qVenc) * Number(l.custo_unit || 0));
-        const acao = l.acao_recomendada || (qVenc > 0 ? 'LOTE_VENCIDO' : (q90 > 0 ? 'FEFO_ALERTA' : 'FEFO_MONITORAR'));
-        return `
-          <tr>
-            <td><span class="badge badge-neutral">Loja ${l.filial_id}</span></td>
-            <td>
-              <div class="sku-title" style="font-weight:600;">${esc(l.descricao || `Produto ${l.produto_id}`)}</div>
-              <div class="sku-sub">Cód BIG: ${l.produto_id} &bull; ${esc(l.abc_class ? `Curva ${l.abc_class}` : '')}</div>
-            </td>
-            <td class="num"><code style="font-weight:700; color:${qVenc > 0 ? '#b91c1c' : '#047857'};">${esc(menorVal)}</code></td>
-            <td class="num">${num(q90)} un</td>
-            <td class="num"><strong style="color:var(--danger);">${num(qVenc)} un</strong></td>
-            <td class="num"><strong style="color:${qVenc > 0 ? 'var(--danger)' : '#047857'};">${brl(riscoRs)}</strong></td>
-            <td class="num">${badgeForException(acao)}</td>
-          </tr>
-        `;
-      }).join('');
     }
   }
 

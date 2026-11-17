@@ -28,45 +28,144 @@ export function getAnalyticsDb(dbPath = DEFAULT_DB_PATH) {
   return _db;
 }
 
-function initSchema(db) {
-  // Migrações e compatibilidade de colunas para bancos virgens ou existentes
+function safeAddColumn(db, table, column, definition) {
   try {
-    const cols = db.prepare("PRAGMA table_info(cmed_catalog)").all();
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all();
     if (cols && cols.length > 0) {
-      const colNames = new Set(cols.map(c => c.name));
-      if (!colNames.has('sig_key')) db.exec("ALTER TABLE cmed_catalog ADD COLUMN sig_key TEXT;");
-      if (!colNames.has('substancia_raw')) db.exec("ALTER TABLE cmed_catalog ADD COLUMN substancia_raw TEXT;");
-      if (!colNames.has('substancia_norm')) db.exec("ALTER TABLE cmed_catalog ADD COLUMN substancia_norm TEXT;");
-      if (!colNames.has('source_name')) db.exec("ALTER TABLE cmed_catalog ADD COLUMN source_name TEXT DEFAULT 'ANVISA';");
+      const colNames = new Set(cols.map(c => c.name.toLowerCase()));
+      if (!colNames.has(column.toLowerCase())) {
+        db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition};`);
+      }
     }
+  } catch (err) {
+    // Tolerante a falhas individuais para nunca interromper a migração
+  }
+}
+
+function initSchema(db) {
+  // =========================================================================
+  // FASE 1: Migrações defensivas prévias para tabelas existentes
+  // Garante que todas as colunas necessárias existam ANTES de criar tabelas e índices
+  // =========================================================================
+  try {
     const esrCols = db.prepare("PRAGMA table_info(engine_sku_results)").all();
     if (esrCols && esrCols.length > 0) {
-      const colNames = new Set(esrCols.map(c => c.name));
+      const colNames = new Set(esrCols.map(c => c.name.toLowerCase()));
       if (!colNames.has('filial_id')) {
         db.exec("DROP TABLE IF EXISTS engine_sku_results;");
       }
     }
+  } catch (err) {
+    console.warn('Alerta na checagem de engine_sku_results:', err.message);
+  }
+
+  try {
     const erCols = db.prepare("PRAGMA table_info(engine_runs)").all();
     if (erCols && erCols.length > 0) {
-      const colNames = new Set(erCols.map(c => c.name));
+      const colNames = new Set(erCols.map(c => c.name.toLowerCase()));
       if (!colNames.has('client_code')) {
         db.exec("DROP TABLE IF EXISTS engine_runs;");
       }
     }
-    const bmsCols = db.prepare("PRAGMA table_info(budget_monthly_summary)").all();
-    if (bmsCols && bmsCols.length > 0) {
-      const colNames = new Set(bmsCols.map(c => c.name));
-      if (!colNames.has('remanejamento_economizado_rs')) db.exec("ALTER TABLE budget_monthly_summary ADD COLUMN remanejamento_economizado_rs REAL DEFAULT 0;");
-      if (!colNames.has('unoptimized_products_json')) db.exec("ALTER TABLE budget_monthly_summary ADD COLUMN unoptimized_products_json TEXT;");
-    }
-    const suspCols = db.prepare("PRAGMA table_info(client_sku_suspensions)").all();
-    if (suspCols && suspCols.length > 0) {
-      const colNames = new Set(suspCols.map(c => c.name));
-      if (!colNames.has('molecule_key')) db.exec("ALTER TABLE client_sku_suspensions ADD COLUMN molecule_key TEXT;");
-      if (!colNames.has('gatilho_cobertura_limite')) db.exec("ALTER TABLE client_sku_suspensions ADD COLUMN gatilho_cobertura_limite REAL DEFAULT 7.0;");
-    }
-  } catch {}
+  } catch (err) {
+    console.warn('Alerta na migracao de engine_runs:', err.message);
+  }
 
+  try {
+    const remCols = db.prepare('PRAGMA table_info(engine_remanejamento)').all();
+    if (remCols && remCols.length > 0) {
+      const colNames = new Set(remCols.map(c => c.name.toLowerCase()));
+      if (!colNames.has('produto_id')) {
+        db.exec('DROP TABLE IF EXISTS engine_remanejamento;');
+      }
+    }
+  } catch (err) {
+    console.warn('Alerta na migracao de engine_remanejamento:', err.message);
+  }
+
+  try {
+    const molCols = db.prepare('PRAGMA table_info(engine_molecule_summary)').all();
+    if (molCols && molCols.length > 0) {
+      const colNames = new Set(molCols.map(c => c.name.toLowerCase()));
+      if (!colNames.has('molecule_key')) {
+        db.exec('DROP TABLE IF EXISTS engine_molecule_summary;');
+      }
+    }
+  } catch (err) {
+    console.warn('Alerta na migracao de engine_molecule_summary:', err.message);
+  }
+
+  try {
+    const cmedCols = db.prepare('PRAGMA table_info(cmed_catalog)').all();
+    if (cmedCols && cmedCols.length > 0) {
+      const colNames = new Set(cmedCols.map(c => c.name.toLowerCase()));
+      if (!colNames.has('concentracao')) {
+        db.exec('DROP TABLE IF EXISTS cmed_eans;');
+        db.exec('DROP TABLE IF EXISTS cmed_catalog;');
+      }
+    }
+  } catch (err) {
+    console.warn('Alerta na migracao de cmed_catalog:', err.message);
+  }
+
+  // Migrações seguras e isoladas de colunas em engine_sku_results
+  safeAddColumn(db, 'engine_sku_results', 'curva_erp_ranking', 'TEXT');
+  safeAddColumn(db, 'engine_sku_results', 'curva_erp_classe', 'TEXT');
+  safeAddColumn(db, 'engine_sku_results', 'dias_estoque_min', 'INTEGER DEFAULT 0');
+  safeAddColumn(db, 'engine_sku_results', 'dias_estoque_max', 'INTEGER DEFAULT 0');
+  safeAddColumn(db, 'engine_sku_results', 'grupo_pai_nome', 'TEXT');
+  safeAddColumn(db, 'engine_sku_results', 'grupo_filho_nome', 'TEXT');
+  safeAddColumn(db, 'engine_sku_results', 'dismissed', 'INTEGER NOT NULL DEFAULT 0');
+  safeAddColumn(db, 'engine_sku_results', 'pareto_pct', 'REAL DEFAULT 0');
+  safeAddColumn(db, 'engine_sku_results', 'filial_nome', 'TEXT');
+  safeAddColumn(db, 'engine_sku_results', 'filial_reduz', 'TEXT');
+  safeAddColumn(db, 'engine_sku_results', 'transito_remanejamento', 'REAL DEFAULT 0');
+
+  // cmed_catalog
+  safeAddColumn(db, 'cmed_catalog', 'sig_key', 'TEXT');
+  safeAddColumn(db, 'cmed_catalog', 'substancia_raw', 'TEXT');
+  safeAddColumn(db, 'cmed_catalog', 'substancia_norm', 'TEXT');
+  safeAddColumn(db, 'cmed_catalog', 'source_name', "TEXT DEFAULT 'ANVISA'");
+
+  // budget_monthly_summary
+  safeAddColumn(db, 'budget_monthly_summary', 'remanejamento_economizado_rs', 'REAL DEFAULT 0');
+  safeAddColumn(db, 'budget_monthly_summary', 'unoptimized_products_json', 'TEXT');
+
+  // client_sku_suspensions
+  safeAddColumn(db, 'client_sku_suspensions', 'molecule_key', 'TEXT');
+  safeAddColumn(db, 'client_sku_suspensions', 'gatilho_cobertura_limite', 'REAL DEFAULT 7.0');
+
+  // client_profiles
+  safeAddColumn(db, 'client_profiles', 'db_user', "TEXT NOT NULL DEFAULT 'root'");
+  safeAddColumn(db, 'client_profiles', 'db_password', "TEXT NOT NULL DEFAULT ''");
+  safeAddColumn(db, 'client_profiles', 'buyer_cnpj', 'TEXT');
+  safeAddColumn(db, 'client_profiles', 'default_supplier_id', 'INTEGER NOT NULL DEFAULT 10');
+  safeAddColumn(db, 'client_profiles', 'default_supplier_name', 'TEXT');
+  safeAddColumn(db, 'client_profiles', 'operation_mode', "TEXT NOT NULL DEFAULT 'central'");
+  safeAddColumn(db, 'client_profiles', 'target_filial_id', 'INTEGER');
+  safeAddColumn(db, 'client_profiles', 'allow_pack_tolerance', 'INTEGER NOT NULL DEFAULT 1');
+  safeAddColumn(db, 'client_profiles', 'open_order_cutoff_days', 'INTEGER NOT NULL DEFAULT 30');
+  safeAddColumn(db, 'client_profiles', 'recent_entries_limit', 'INTEGER NOT NULL DEFAULT 5');
+  safeAddColumn(db, 'client_profiles', 'default_weeks', 'INTEGER NOT NULL DEFAULT 13');
+  safeAddColumn(db, 'client_profiles', 'service_profile', "TEXT NOT NULL DEFAULT 'equilibrado'");
+  safeAddColumn(db, 'client_profiles', 'active_sales_filials', "TEXT NOT NULL DEFAULT '[2]'");
+  safeAddColumn(db, 'client_profiles', 'ignored_filials', "TEXT NOT NULL DEFAULT '[3]'");
+
+  // client_group_coverage_config
+  safeAddColumn(db, 'client_group_coverage_config', 'codigo', 'TEXT');
+  safeAddColumn(db, 'client_group_coverage_config', 'desc_arvore', 'TEXT');
+  safeAddColumn(db, 'client_group_coverage_config', 'grupo_pai_nome', 'TEXT');
+  safeAddColumn(db, 'client_group_coverage_config', 'grupo_filho_nome', 'TEXT');
+
+  // client_filial_policies
+  safeAddColumn(db, 'client_filial_policies', 'data_inauguracao', 'TEXT');
+  safeAddColumn(db, 'client_filial_policies', 'dias_carencia', 'INTEGER DEFAULT 90');
+  safeAddColumn(db, 'client_filial_policies', 'bloquear_doacao_remanejamento', 'INTEGER DEFAULT 1');
+  safeAddColumn(db, 'client_filial_policies', 'tipo_reposicao', "TEXT DEFAULT 'sellout_1to1'");
+
+  // =========================================================================
+  // FASE 2: Criação de Tabelas e Índices
+  // =========================================================================
   db.exec(`
     CREATE TABLE IF NOT EXISTS system_settings (
       key TEXT PRIMARY KEY,
@@ -175,10 +274,6 @@ function initSchema(db) {
       cmed_id INTEGER NOT NULL,
       FOREIGN KEY (cmed_id) REFERENCES cmed_catalog(id) ON DELETE CASCADE
     );
-
-    CREATE INDEX IF NOT EXISTS idx_cmed_eans_ean ON cmed_eans(ean);
-    CREATE INDEX IF NOT EXISTS idx_cmed_reg ON cmed_catalog(registro);
-    CREATE INDEX IF NOT EXISTS idx_cmed_sig ON cmed_catalog(sig_key);
 
     CREATE TABLE IF NOT EXISTS cmed_imports (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -321,17 +416,6 @@ function initSchema(db) {
       dismissed INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (run_id, filial_id, produto_id)
     );
-
-    CREATE INDEX IF NOT EXISTS idx_esr_run_filial ON engine_sku_results(run_id, filial_id);
-    CREATE INDEX IF NOT EXISTS idx_esr_run_abc ON engine_sku_results(run_id, abc_class);
-    CREATE INDEX IF NOT EXISTS idx_esr_run_mol ON engine_sku_results(run_id, molecule_key);
-    CREATE INDEX IF NOT EXISTS idx_esr_run_mol_prod ON engine_sku_results(run_id, molecule_key, produto_id, filial_id);
-    CREATE INDEX IF NOT EXISTS idx_esr_run_prod ON engine_sku_results(run_id, produto_id);
-    CREATE INDEX IF NOT EXISTS idx_esr_prod ON engine_sku_results(produto_id);
-    CREATE INDEX IF NOT EXISTS idx_esr_run_buy ON engine_sku_results(run_id, dismissed, sugestao_compra_un);
-    CREATE INDEX IF NOT EXISTS idx_esr_run_macro ON engine_sku_results(run_id, macro_categoria);
-    CREATE INDEX IF NOT EXISTS idx_esr_run_grupopai ON engine_sku_results(run_id, grupo_pai_nome);
-    CREATE INDEX IF NOT EXISTS idx_esr_run_labora ON engine_sku_results(run_id, labora);
 
     CREATE TABLE IF NOT EXISTS engine_remanejamento (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -539,12 +623,6 @@ function initSchema(db) {
       motivo_decisao TEXT NOT NULL,
       FOREIGN KEY (transferencia_id) REFERENCES motor_transferencias(id) ON DELETE CASCADE
     );
-    CREATE INDEX IF NOT EXISTS idx_mti_transf ON motor_transferencia_itens(transferencia_id);
-    CREATE INDEX IF NOT EXISTS idx_mti_prod ON motor_transferencia_itens(produto_id);
-    CREATE INDEX IF NOT EXISTS idx_mt_client_status ON motor_transferencias(client_code, status);
-    CREATE INDEX IF NOT EXISTS idx_reman_run_route ON engine_remanejamento(run_id, filial_origem, filial_destino);
-    CREATE INDEX IF NOT EXISTS idx_reman_run_tipo ON engine_remanejamento(run_id, tipo);
-    CREATE INDEX IF NOT EXISTS idx_reman_run_prod ON engine_remanejamento(run_id, produto_id);
 
     CREATE TABLE IF NOT EXISTS buyer_learning_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -562,161 +640,42 @@ function initSchema(db) {
       usuario TEXT DEFAULT 'comprador',
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
-    CREATE INDEX IF NOT EXISTS idx_buyer_learning_prod ON buyer_learning_log(client_code, filial_id, produto_id);
-    CREATE INDEX IF NOT EXISTS idx_buyer_learning_mol ON buyer_learning_log(client_code, filial_id, molecule_key);
   `);
 
-  // Migracoes defensivas para bancos SQLite ja existentes
-  try {
-    const cols = db.prepare('PRAGMA table_info(client_profiles)').all().map((c) => c.name);
-    if (!cols.includes('db_user')) db.exec("ALTER TABLE client_profiles ADD COLUMN db_user TEXT NOT NULL DEFAULT 'root'");
-    if (!cols.includes('db_password')) db.exec("ALTER TABLE client_profiles ADD COLUMN db_password TEXT NOT NULL DEFAULT ''");
-    if (!cols.includes('buyer_cnpj')) db.exec('ALTER TABLE client_profiles ADD COLUMN buyer_cnpj TEXT');
-    if (!cols.includes('default_supplier_id')) db.exec('ALTER TABLE client_profiles ADD COLUMN default_supplier_id INTEGER NOT NULL DEFAULT 10');
-    if (!cols.includes('default_supplier_name')) db.exec('ALTER TABLE client_profiles ADD COLUMN default_supplier_name TEXT');
-    if (!cols.includes('operation_mode')) db.exec("ALTER TABLE client_profiles ADD COLUMN operation_mode TEXT NOT NULL DEFAULT 'central'");
-    if (!cols.includes('target_filial_id')) db.exec('ALTER TABLE client_profiles ADD COLUMN target_filial_id INTEGER');
-    if (!cols.includes('allow_pack_tolerance')) db.exec('ALTER TABLE client_profiles ADD COLUMN allow_pack_tolerance INTEGER NOT NULL DEFAULT 1');
-    if (!cols.includes('open_order_cutoff_days')) db.exec('ALTER TABLE client_profiles ADD COLUMN open_order_cutoff_days INTEGER NOT NULL DEFAULT 30');
-    if (!cols.includes('recent_entries_limit')) db.exec('ALTER TABLE client_profiles ADD COLUMN recent_entries_limit INTEGER NOT NULL DEFAULT 5');
-    if (!cols.includes('default_weeks')) db.exec('ALTER TABLE client_profiles ADD COLUMN default_weeks INTEGER NOT NULL DEFAULT 13');
-    if (!cols.includes('service_profile')) db.exec("ALTER TABLE client_profiles ADD COLUMN service_profile TEXT NOT NULL DEFAULT 'equilibrado'");
-    if (!cols.includes('active_sales_filials')) db.exec("ALTER TABLE client_profiles ADD COLUMN active_sales_filials TEXT NOT NULL DEFAULT '[2]'");
-    if (!cols.includes('ignored_filials')) db.exec("ALTER TABLE client_profiles ADD COLUMN ignored_filials TEXT NOT NULL DEFAULT '[3]'");
-  } catch (err) {
-    console.warn('Alerta na migracao de client_profiles:', err.message);
-  }
+  // =========================================================================
+  // FASE 3: Criação segura de Índices (nunca quebra a inicialização)
+  // =========================================================================
+  const safeIndexes = [
+    'CREATE INDEX IF NOT EXISTS idx_cmed_eans_ean ON cmed_eans(ean);',
+    'CREATE INDEX IF NOT EXISTS idx_cmed_reg ON cmed_catalog(registro);',
+    'CREATE INDEX IF NOT EXISTS idx_cmed_sig ON cmed_catalog(sig_key);',
+    'CREATE INDEX IF NOT EXISTS idx_esr_run_filial ON engine_sku_results(run_id, filial_id);',
+    'CREATE INDEX IF NOT EXISTS idx_esr_run_abc ON engine_sku_results(run_id, abc_class);',
+    'CREATE INDEX IF NOT EXISTS idx_esr_run_mol ON engine_sku_results(run_id, molecule_key);',
+    'CREATE INDEX IF NOT EXISTS idx_esr_run_mol_prod ON engine_sku_results(run_id, molecule_key, produto_id, filial_id);',
+    'CREATE INDEX IF NOT EXISTS idx_esr_run_prod ON engine_sku_results(run_id, produto_id);',
+    'CREATE INDEX IF NOT EXISTS idx_esr_prod ON engine_sku_results(produto_id);',
+    'CREATE INDEX IF NOT EXISTS idx_esr_run_buy ON engine_sku_results(run_id, dismissed, sugestao_compra_un);',
+    'CREATE INDEX IF NOT EXISTS idx_esr_run_macro ON engine_sku_results(run_id, macro_categoria);',
+    'CREATE INDEX IF NOT EXISTS idx_esr_run_grupopai ON engine_sku_results(run_id, grupo_pai_nome);',
+    'CREATE INDEX IF NOT EXISTS idx_esr_run_labora ON engine_sku_results(run_id, labora);',
+    'CREATE INDEX IF NOT EXISTS idx_mti_transf ON motor_transferencia_itens(transferencia_id);',
+    'CREATE INDEX IF NOT EXISTS idx_mti_prod ON motor_transferencia_itens(produto_id);',
+    'CREATE INDEX IF NOT EXISTS idx_mt_client_status ON motor_transferencias(client_code, status);',
+    'CREATE INDEX IF NOT EXISTS idx_reman_run_route ON engine_remanejamento(run_id, filial_origem, filial_destino);',
+    'CREATE INDEX IF NOT EXISTS idx_reman_run_tipo ON engine_remanejamento(run_id, tipo);',
+    'CREATE INDEX IF NOT EXISTS idx_reman_run_prod ON engine_remanejamento(run_id, produto_id);',
+    'CREATE INDEX IF NOT EXISTS idx_buyer_learning_prod ON buyer_learning_log(client_code, filial_id, produto_id);',
+    'CREATE INDEX IF NOT EXISTS idx_buyer_learning_mol ON buyer_learning_log(client_code, filial_id, molecule_key);'
+  ];
 
-  try {
-    const skuCols = db.prepare('PRAGMA table_info(engine_sku_results)').all().map((c) => c.name);
-    if (!skuCols.includes('curva_erp_ranking')) db.exec('ALTER TABLE engine_sku_results ADD COLUMN curva_erp_ranking TEXT');
-    if (!skuCols.includes('curva_erp_classe')) db.exec('ALTER TABLE engine_sku_results ADD COLUMN curva_erp_classe TEXT');
-    if (!skuCols.includes('dias_estoque_min')) db.exec('ALTER TABLE engine_sku_results ADD COLUMN dias_estoque_min INTEGER DEFAULT 0');
-    if (!skuCols.includes('dias_estoque_max')) db.exec('ALTER TABLE engine_sku_results ADD COLUMN dias_estoque_max INTEGER DEFAULT 0');
-    if (!skuCols.includes('grupo_pai_nome')) db.exec('ALTER TABLE engine_sku_results ADD COLUMN grupo_pai_nome TEXT');
-    if (!skuCols.includes('grupo_filho_nome')) db.exec('ALTER TABLE engine_sku_results ADD COLUMN grupo_filho_nome TEXT');
-    if (!skuCols.includes('dismissed')) db.exec('ALTER TABLE engine_sku_results ADD COLUMN dismissed INTEGER NOT NULL DEFAULT 0');
-    if (!skuCols.includes('pareto_pct')) db.exec('ALTER TABLE engine_sku_results ADD COLUMN pareto_pct REAL DEFAULT 0');
-    if (!skuCols.includes('filial_nome')) db.exec('ALTER TABLE engine_sku_results ADD COLUMN filial_nome TEXT');
-    if (!skuCols.includes('filial_reduz')) db.exec('ALTER TABLE engine_sku_results ADD COLUMN filial_reduz TEXT');
-    if (!skuCols.includes('transito_remanejamento')) db.exec('ALTER TABLE engine_sku_results ADD COLUMN transito_remanejamento REAL DEFAULT 0');
-  } catch (err) {
-    console.warn('Alerta na migracao de engine_sku_results:', err.message);
-  }
-
-  try {
-    const grpCols = db.prepare('PRAGMA table_info(client_group_coverage_config)').all().map((c) => c.name);
-    if (!grpCols.includes('codigo')) db.exec('ALTER TABLE client_group_coverage_config ADD COLUMN codigo TEXT');
-    if (!grpCols.includes('desc_arvore')) db.exec('ALTER TABLE client_group_coverage_config ADD COLUMN desc_arvore TEXT');
-    if (!grpCols.includes('grupo_pai_nome')) db.exec('ALTER TABLE client_group_coverage_config ADD COLUMN grupo_pai_nome TEXT');
-    if (!grpCols.includes('grupo_filho_nome')) db.exec('ALTER TABLE client_group_coverage_config ADD COLUMN grupo_filho_nome TEXT');
-  } catch (err) {
-    console.warn('Alerta na migracao de client_group_coverage_config:', err.message);
-  }
-
-  try {
-    const polCols = db.prepare('PRAGMA table_info(client_filial_policies)').all().map((c) => c.name);
-    if (!polCols.includes('data_inauguracao')) db.exec('ALTER TABLE client_filial_policies ADD COLUMN data_inauguracao TEXT');
-    if (!polCols.includes('dias_carencia')) db.exec('ALTER TABLE client_filial_policies ADD COLUMN dias_carencia INTEGER DEFAULT 90');
-    if (!polCols.includes('bloquear_doacao_remanejamento')) db.exec('ALTER TABLE client_filial_policies ADD COLUMN bloquear_doacao_remanejamento INTEGER DEFAULT 1');
-    if (!polCols.includes('tipo_reposicao')) db.exec("ALTER TABLE client_filial_policies ADD COLUMN tipo_reposicao TEXT DEFAULT 'sellout_1to1'");
-  } catch (err) {
-    console.warn('Alerta na migracao de client_filial_policies:', err.message);
-  }
-
-  try {
-    const remCols = db.prepare('PRAGMA table_info(engine_remanejamento)').all().map((c) => c.name);
-    if (remCols.length > 0 && !remCols.includes('produto_id')) {
-      db.exec('DROP TABLE IF EXISTS engine_remanejamento;');
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS engine_remanejamento (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          run_id INTEGER NOT NULL,
-          produto_id INTEGER NOT NULL,
-          descricao TEXT NOT NULL,
-          filial_origem INTEGER NOT NULL,
-          filial_destino INTEGER NOT NULL,
-          tipo TEXT NOT NULL,
-          qtd_sugerida REAL NOT NULL,
-          custo_unit REAL NOT NULL,
-          valor_total REAL NOT NULL,
-          validade_prioritaria TEXT,
-          motivo TEXT NOT NULL
-        );
-      `);
+  for (const idxSql of safeIndexes) {
+    try {
+      db.exec(idxSql);
+    } catch (err) {
+      // Ignora silenciosamente ou loga em debug se tabela/coluna estiver em transição
+      console.warn('Aviso seguro ao criar índice:', err.message);
     }
-  } catch (err) {
-    console.warn('Alerta na migracao de engine_remanejamento:', err.message);
-  }
-
-  try {
-    const molCols = db.prepare('PRAGMA table_info(engine_molecule_summary)').all().map((c) => c.name);
-    if (molCols.length > 0 && !molCols.includes('molecule_key')) {
-      db.exec('DROP TABLE IF EXISTS engine_molecule_summary;');
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS engine_molecule_summary (
-          run_id INTEGER NOT NULL,
-          molecule_key TEXT NOT NULL,
-          substancia TEXT NOT NULL,
-          concentracao TEXT,
-          forma TEXT,
-          pack_bucket TEXT,
-          eh_referencia INTEGER NOT NULL DEFAULT 0,
-          skus_count INTEGER NOT NULL,
-          labs_count INTEGER NOT NULL,
-          estoque_total REAL NOT NULL,
-          transito_total REAL NOT NULL,
-          ddv_proj_total REAL NOT NULL,
-          cobertura_molecula_dias REAL NOT NULL,
-          sugestao_sku_soma REAL NOT NULL,
-          necessidade_liquida_molecula REAL NOT NULL,
-          sugestoes_skus_json TEXT,
-          sugestoes_transf_json TEXT
-        );
-      `);
-    }
-  } catch (err) {
-    console.warn('Alerta na migracao de engine_molecule_summary:', err.message);
-  }
-
-  try {
-    const cmedCols = db.prepare('PRAGMA table_info(cmed_catalog)').all().map((c) => c.name);
-    if (cmedCols.length > 0 && !cmedCols.includes('concentracao')) {
-      db.exec('DROP TABLE IF EXISTS cmed_eans;');
-      db.exec('DROP TABLE IF EXISTS cmed_catalog;');
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS cmed_catalog (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          source_name TEXT NOT NULL,
-          substancia_raw TEXT,
-          substancia_norm TEXT,
-          laboratorio TEXT,
-          registro TEXT,
-          produto TEXT,
-          apresentacao TEXT,
-          classe_terapeutica TEXT,
-          tipo_produto TEXT,
-          tarja TEXT,
-          concentracao TEXT,
-          forma TEXT,
-          pack_exact TEXT,
-          pack_bucket TEXT,
-          sig_key TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS cmed_eans (
-          ean TEXT NOT NULL,
-          cmed_id INTEGER NOT NULL,
-          FOREIGN KEY (cmed_id) REFERENCES cmed_catalog(id) ON DELETE CASCADE
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_cmed_eans_ean ON cmed_eans(ean);
-        CREATE INDEX IF NOT EXISTS idx_cmed_reg ON cmed_catalog(registro);
-        CREATE INDEX IF NOT EXISTS idx_cmed_sig ON cmed_catalog(sig_key);
-      `);
-    }
-  } catch (err) {
-    console.warn('Alerta na migracao de cmed_catalog:', err.message);
   }
 }
 
@@ -1184,8 +1143,8 @@ export function createMotorTransfer(clientCode, runIdOrOpts = {}, maybeOpts = nu
   const codigo = `TRF-${year}-${nextSeq}`;
 
   const totalItens = itens.length;
-  const totalUnidades = itens.reduce((acc, it) => acc + Number(it.qtd_solicitada || it.qtdSugerida || it.qtd_sugerida || 0), 0);
-  const valorTotalRs = itens.reduce((acc, it) => acc + Number(it.valor_total || (Number(it.qtd_solicitada || it.qtdSugerida || it.qtd_sugerida || 0) * Number(it.custo_unit || it.custoUnit || 0))), 0);
+  const totalUnidades = itens.reduce((acc, it) => acc + Number(it.qtd_solicitada || it.qtdSugerida || it.qtd_sugerida || it.qtd || 0), 0);
+  const valorTotalRs = itens.reduce((acc, it) => acc + Number(it.valor_total || (Number(it.qtd_solicitada || it.qtdSugerida || it.qtd_sugerida || it.qtd || 0) * Number(it.custo_unit || it.custoUnit || it.custo || 0))), 0);
   const dataEmissao = new Date().toISOString().replace('T', ' ').slice(0, 19);
 
   db.exec('BEGIN TRANSACTION');
@@ -1210,8 +1169,8 @@ export function createMotorTransfer(clientCode, runIdOrOpts = {}, maybeOpts = nu
     `);
 
     for (const it of itens) {
-      const qtd = Number(it.qtd_solicitada || it.qtdSugerida || it.qtd_sugerida || 0);
-      const custo = Number(it.custo_unit || it.custoUnit || 0);
+      const qtd = Number(it.qtd_solicitada || it.qtdSugerida || it.qtd_sugerida || it.qtd || 0);
+      const custo = Number(it.custo_unit || it.custoUnit || it.custo || 0);
       insItem.run(
         transfId,
         Number(it.produto_id || it.produtoId),
