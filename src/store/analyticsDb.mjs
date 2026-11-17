@@ -318,6 +318,7 @@ function initSchema(db) {
       curva_erp_classe TEXT,
       dias_estoque_min INTEGER DEFAULT 0,
       dias_estoque_max INTEGER DEFAULT 0,
+      dismissed INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (run_id, filial_id, produto_id)
     );
 
