@@ -271,6 +271,21 @@
           </div>
         </div>
 
+        <!-- BANNER DE ESCOPO DE FILIAL NO OTB -->
+        <div id="otb-filial-scope-banner" class="panel" style="display:none;background:#eff6ff;border:1px solid #bfdbfe;padding:10px 16px;border-radius:8px;margin-bottom:14px;align-items:center;justify-content:space-between;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span style="font-size:18px;">🏪</span>
+            <div>
+              <div style="font-size:13px;font-weight:700;color:#1e40af;">Filtrando Loja: <span id="otb-filial-scope-name">—</span></div>
+              <div style="font-size:11px;color:#3b82f6;">Visão orçamentária isolada desta filial operacional</div>
+            </div>
+            <span class="badge badge-accent" style="font-size:10.5px;">Loja Específica</span>
+          </div>
+          <button id="btn-otb-reset-consolidated" class="btn btn-secondary btn-sm" type="button" style="font-size:11.5px;padding:4px 12px;font-weight:600;">
+            🏬 Ver Rede Consolidada
+          </button>
+        </div>
+
         <!-- 4 CARDS SUPERIORES DE GESTÃO ORÇAMENTÁRIA -->
         <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));gap:14px;margin-bottom:16px;">
           
@@ -394,6 +409,43 @@
               </thead>
               <tbody id="otb-dimensions-tbody">
                 <tr><td colspan="12" class="muted" style="text-align:center;padding:24px;">Carregando análise orçamentária...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- TABELA ANÁLISE POR LOJA / FILIAIS (OPEN-TO-BUY MULTI-LOJA) -->
+        <div id="otb-stores-panel" class="panel" style="margin-bottom:16px;">
+          <div class="panel-head" style="display:flex;justify-content:space-between;align-items:center;">
+            <div>
+              <h3 style="font-size:14px;font-weight:700;margin:0;display:flex;align-items:center;gap:8px;">
+                <span>🏬 Desempenho Orçamentário por Loja &bull; Open-to-Buy da Rede</span>
+                <span id="otb-stores-count-badge" class="badge badge-neutral" style="font-size:11px;">Carregando...</span>
+              </h3>
+              <p class="muted" style="margin:2px 0 0 0;font-size:11.5px;">Comparativo de teto, compras consumidas, saldo livre e assertividade de compras (IEC) em cada filial da rede</p>
+            </div>
+            <div style="font-size:11.5px;color:var(--muted);">
+              Clique em qualquer loja para filtrar os indicadores e compras não otimizadas
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table" style="font-size:12px;">
+              <thead>
+                <tr>
+                  <th>Loja / Filial</th>
+                  <th class="num">Dotação Teto</th>
+                  <th class="num">Consumido (R$)</th>
+                  <th class="num" style="min-width:130px;">% Consumido</th>
+                  <th class="num" style="color:#059669;font-weight:700;">Saldo Livre OTB</th>
+                  <th class="num">Fat. Líquido (Mês)</th>
+                  <th class="num">Compra x Venda</th>
+                  <th class="num" style="color:#dc2626;">Não Otimizadas</th>
+                  <th class="num" style="color:#7c3aed;">IEC Eficiência</th>
+                  <th style="text-align:center;">Ver Detalhes</th>
+                </tr>
+              </thead>
+              <tbody id="otb-stores-tbody">
+                <tr><td colspan="10" class="muted" style="text-align:center;padding:24px;">Carregando lojas da rede...</td></tr>
               </tbody>
             </table>
           </div>

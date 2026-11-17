@@ -347,6 +347,14 @@ function initSchema(db) {
       motivo TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS engine_run_meta (
+      run_id INTEGER PRIMARY KEY,
+      client_code TEXT NOT NULL,
+      filters_meta_json TEXT NOT NULL,
+      filial_kpis_json TEXT NOT NULL,
+      updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+    );
+
     CREATE TABLE IF NOT EXISTS engine_molecule_summary (
       run_id INTEGER NOT NULL,
       molecule_key TEXT NOT NULL,
@@ -460,6 +468,26 @@ function initSchema(db) {
       created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
       UNIQUE(client_code, reference_month)
     );
+
+    CREATE TABLE IF NOT EXISTS budget_filial_summary (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_code TEXT NOT NULL,
+      filial_id INTEGER NOT NULL,
+      reference_month TEXT NOT NULL,
+      reference_date TEXT NOT NULL,
+      dotacao_ajustada REAL NOT NULL DEFAULT 0,
+      consumido_compras_rs REAL NOT NULL DEFAULT 0,
+      saldo_livre_rs REAL NOT NULL DEFAULT 0,
+      consumido_pct REAL NOT NULL DEFAULT 0,
+      faturamento_liquido_mes REAL NOT NULL DEFAULT 0,
+      compra_x_venda_pct REAL NOT NULL DEFAULT 0,
+      compras_nao_otimizadas_rs REAL NOT NULL DEFAULT 0,
+      iec_eficiencia_pct REAL NOT NULL DEFAULT 0,
+      summary_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+      UNIQUE(client_code, filial_id, reference_month)
+    );
+    CREATE INDEX IF NOT EXISTS idx_bfs_client_filial ON budget_filial_summary(client_code, filial_id, reference_month);
 
     CREATE TABLE IF NOT EXISTS ol_fabricantes (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1312,6 +1340,141 @@ export function getLatestBudgetSummary(clientCode) {
     dimensions: row.dimensions_json ? JSON.parse(row.dimensions_json) : [],
     filiais: row.filiais_json ? JSON.parse(row.filiais_json) : []
   };
+}
+
+/**
+ * Recupera o resumo orçamentário específico de uma filial do SQLite (< 1ms).
+ */
+export function getFilialBudgetSummary(clientCode, filialId) {
+  const db = getAnalyticsDb();
+  const fId = Number(filialId);
+  if (!fId) return null;
+  const row = db.prepare(`
+    SELECT * FROM budget_filial_summary
+    WHERE client_code = ? AND filial_id = ?
+    ORDER BY reference_month DESC, id DESC
+    LIMIT 1
+  `).get(clientCode, fId);
+  if (!row) return null;
+  try {
+    const summary = JSON.parse(row.summary_json);
+    return summary;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Salva ou atualiza o resumo orçamentário de uma filial no SQLite.
+ */
+export function upsertFilialBudgetSummary(clientCode, filialId, summary) {
+  const db = getAnalyticsDb();
+  const fId = Number(filialId);
+  if (!fId || !summary) return;
+  db.prepare(`
+    INSERT INTO budget_filial_summary (
+      client_code, filial_id, reference_month, reference_date,
+      dotacao_ajustada, consumido_compras_rs, saldo_livre_rs, consumido_pct,
+      faturamento_liquido_mes, compra_x_venda_pct, compras_nao_otimizadas_rs, iec_eficiencia_pct,
+      summary_json, updated_at
+    ) VALUES (
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime')
+    )
+    ON CONFLICT(client_code, filial_id, reference_month) DO UPDATE SET
+      reference_date = excluded.reference_date,
+      dotacao_ajustada = excluded.dotacao_ajustada,
+      consumido_compras_rs = excluded.consumido_compras_rs,
+      saldo_livre_rs = excluded.saldo_livre_rs,
+      consumido_pct = excluded.consumido_pct,
+      faturamento_liquido_mes = excluded.faturamento_liquido_mes,
+      compra_x_venda_pct = excluded.compra_x_venda_pct,
+      compras_nao_otimizadas_rs = excluded.compras_nao_otimizadas_rs,
+      iec_eficiencia_pct = excluded.iec_eficiencia_pct,
+      summary_json = excluded.summary_json,
+      updated_at = datetime('now', 'localtime')
+  `).run(
+    clientCode,
+    fId,
+    summary.reference_month || new Date().toISOString().slice(0, 7),
+    summary.reference_date || new Date().toISOString().slice(0, 10),
+    Number(summary.dotacao_ajustada || 0),
+    Number(summary.consumido_compras_rs || 0),
+    Number(summary.saldo_livre_rs || 0),
+    Number(summary.consumido_pct || 0),
+    Number(summary.faturamento_liquido_mes || 0),
+    Number(summary.compra_x_venda_pct || 0),
+    Number(summary.compras_nao_otimizadas_rs || 0),
+    Number(summary.iec_eficiencia_pct || 0),
+    JSON.stringify(summary)
+  );
+}
+
+/**
+ * Retorna todos os resumos de filiais para a tabela de desempenho por loja do OTB.
+ */
+export function getAllFilialBudgetSummaries(clientCode) {
+  const db = getAnalyticsDb();
+  const rows = db.prepare(`
+    SELECT bfs.*, p.nome_loja, p.nome_reduz
+    FROM budget_filial_summary bfs
+    LEFT JOIN client_filial_policies p ON p.client_code = bfs.client_code AND p.filial_id = bfs.filial_id
+    WHERE bfs.client_code = ?
+    ORDER BY bfs.filial_id ASC
+  `).all(clientCode);
+  return rows.map(r => {
+    let summary = {};
+    try { summary = JSON.parse(r.summary_json); } catch {}
+    return {
+      filial_id: r.filial_id,
+      nome_loja: r.nome_loja || summary.nome_loja || `Filial ${r.filial_id}`,
+      nome_reduz: r.nome_reduz || summary.nome_reduz || `L${r.filial_id}`,
+      reference_month: r.reference_month,
+      reference_date: r.reference_date,
+      dotacao_ajustada: r.dotacao_ajustada,
+      consumido_compras_rs: r.consumido_compras_rs,
+      saldo_livre_rs: r.saldo_livre_rs,
+      consumido_pct: r.consumido_pct,
+      faturamento_liquido_mes: r.faturamento_liquido_mes,
+      compra_x_venda_pct: r.compra_x_venda_pct,
+      compras_nao_otimizadas_rs: r.compras_nao_otimizadas_rs,
+      iec_eficiencia_pct: r.iec_eficiencia_pct
+    };
+  });
+}
+
+/**
+ * Recupera os metadados calculados da rodada (macros, laboratorios, kpis de filiais)
+ * direto de SQLite sem reprocessar 150 mil registros (< 1ms).
+ */
+export function getRunOverviewMeta(runId) {
+  const db = getAnalyticsDb();
+  if (!runId) return null;
+  const row = db.prepare('SELECT filters_meta_json, filial_kpis_json FROM engine_run_meta WHERE run_id = ?').get(runId);
+  if (!row) return null;
+  try {
+    return {
+      filtersMeta: JSON.parse(row.filters_meta_json),
+      filialKpis: JSON.parse(row.filial_kpis_json)
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Salva os metadados agregados da rodada em SQLite para boot instantâneo no /api/overview.
+ */
+export function saveRunOverviewMeta(runId, clientCode, filtersMeta, filialKpis) {
+  const db = getAnalyticsDb();
+  if (!runId) return;
+  db.prepare(`
+    INSERT INTO engine_run_meta (run_id, client_code, filters_meta_json, filial_kpis_json, updated_at)
+    VALUES (?, ?, ?, ?, datetime('now', 'localtime'))
+    ON CONFLICT(run_id) DO UPDATE SET
+      filters_meta_json = excluded.filters_meta_json,
+      filial_kpis_json = excluded.filial_kpis_json,
+      updated_at = datetime('now', 'localtime')
+  `).run(runId, clientCode, JSON.stringify(filtersMeta), JSON.stringify(filialKpis));
 }
 
 // ========================================================

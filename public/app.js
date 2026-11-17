@@ -999,6 +999,14 @@ async function saveFiliaisPolicies() {
 async function loadOverview() {
   const data = await apiGet('/api/overview');
   state.overview = data;
+  try {
+    if (data.filiaisPolicies && data.filiaisPolicies.length > 0) {
+      localStorage.setItem('linx_farma_multiloja_cache', JSON.stringify({
+        filiaisPolicies: data.filiaisPolicies,
+        profile: data.profile
+      }));
+    }
+  } catch {}
   renderMultilojaBar();
   const { profile, latestRun, cmedImport } = data;
 
@@ -6323,6 +6331,10 @@ async function saveDirectToBigDb() {
 
 async function loadBudget(forceRefresh = false) {
   const tbody = document.getElementById('otb-dimensions-tbody');
+  const tbodyStores = document.getElementById('otb-stores-tbody');
+  if (tbody) tbody.style.opacity = '0.5';
+  if (tbodyStores) tbodyStores.style.opacity = '0.5';
+
   if (tbody && forceRefresh) {
     tbody.innerHTML = '<tr><td colspan="12" class="muted" style="text-align:center;padding:24px;">🔄 Recalculando dotação orçamentária no Linx BIG...</td></tr>';
   }
@@ -6342,6 +6354,31 @@ async function loadBudget(forceRefresh = false) {
 
     const d = res.data || res;
     state.budgetSummary = d;
+
+    // Banner de escopo de filial no OTB
+    const scopeBanner = document.getElementById('otb-filial-scope-banner');
+    const scopeName = document.getElementById('otb-filial-scope-name');
+    if (scopeBanner && scopeName) {
+      if (state.selectedFilial && state.selectedFilial !== 'all') {
+        const pol = (state.overview?.filiaisPolicies || []).find(p => String(p.filial_id) === String(state.selectedFilial));
+        const label = pol ? formatFilialTag(pol.filial_id, pol.nome_reduz, pol.nome_loja) : (d.nome_reduz || d.nome_loja || `Loja ${state.selectedFilial}`);
+        scopeName.textContent = label;
+        scopeBanner.style.display = 'flex';
+      } else {
+        scopeBanner.style.display = 'none';
+      }
+    }
+
+    const btnResetScope = document.getElementById('btn-otb-reset-consolidated');
+    if (btnResetScope && !btnResetScope._bound) {
+      btnResetScope._bound = true;
+      btnResetScope.addEventListener('click', () => {
+        state.selectedFilial = 'all';
+        renderMultilojaBar();
+        renderKpiStrip('all');
+        loadBudget();
+      });
+    }
 
     // Campos normalizados do resumo
     const mesRef = d.reference_month || d.mes_referencia || '—';
@@ -6483,6 +6520,9 @@ async function loadBudget(forceRefresh = false) {
       }
     }
 
+    // Renderiza tabela comparativa de desempenho por loja (OTB multi-loja)
+    renderBudgetFiliaisTable(d.filiais_summary);
+
     // Atualiza também a pílula de saldo de dotação no cockpit
     updateCockpitBudgetPill(d);
 
@@ -6502,7 +6542,93 @@ async function loadBudget(forceRefresh = false) {
     if (tbody) tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;color:#ef4444;padding:24px;">Erro ao carregar dotação: ${err.message}</td></tr>`;
   } finally {
     if (btnRefresh) btnRefresh.disabled = false;
+    if (tbody) tbody.style.opacity = '1';
+    if (tbodyStores) tbodyStores.style.opacity = '1';
   }
+}
+
+async function renderBudgetFiliaisTable(filiaisList) {
+  const tbody = document.getElementById('otb-stores-tbody');
+  const badge = document.getElementById('otb-stores-count-badge');
+  if (!tbody) return;
+
+  let list = filiaisList;
+  if (!list || list.length === 0) {
+    try {
+      const res = await apiGet('/api/budget/filiais');
+      if (res && res.ok && Array.isArray(res.filiais)) {
+        list = res.filiais;
+      }
+    } catch {}
+  }
+
+  if (badge) {
+    badge.textContent = list && list.length ? `${list.length} Lojas` : '0 Lojas';
+  }
+
+  if (!list || list.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="10" class="muted" style="text-align:center;padding:20px;">Nenhuma filial operacional com movimentação registrada.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = list.map(f => {
+    const isSelected = String(state.selectedFilial) === String(f.filial_id);
+    const dotacao = Number(f.dotacao_ajustada || 0);
+    const consumido = Number(f.consumido_compras_rs || 0);
+    const saldo = Number(f.saldo_livre_rs || Math.max(0, dotacao - consumido));
+    const pct = Number(f.consumido_pct || (dotacao > 0 ? (consumido / dotacao) * 100 : 0));
+    const fat = Number(f.faturamento_liquido_mes || 0);
+    const cvPct = Number(f.compra_x_venda_pct || (fat > 0 ? (consumido / fat) * 100 : 0));
+    const naoOtim = Number(f.compras_nao_otimizadas_rs || 0);
+    const iec = Number(f.iec_eficiencia_pct || 0);
+
+    const barColor = pct > 100 ? '#dc2626' : (pct > 80 ? '#d97706' : '#2563eb');
+    const saldoColor = saldo >= 0 ? '#059669' : '#dc2626';
+    const tag = formatFilialTag(f.filial_id, f.nome_reduz, f.nome_loja);
+
+    return `
+      <tr style="${isSelected ? 'background:#f0fdf4;font-weight:600;' : ''}">
+        <td>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span>🏪</span>
+            <span style="font-weight:700;color:var(--text-primary);">${esc(tag)}</span>
+            ${isSelected ? '<span class="badge badge-success" style="font-size:10px;padding:1px 5px;">Visualizando</span>' : ''}
+          </div>
+        </td>
+        <td class="num" style="font-weight:700;color:#1e40af;">${brl(dotacao)}</td>
+        <td class="num">${brl(consumido)}</td>
+        <td class="num">
+          <div style="display:flex;align-items:center;gap:6px;justify-content:flex-end;">
+            <div style="background:#e2e8f0;border-radius:3px;height:6px;width:50px;overflow:hidden;display:inline-block;">
+              <div style="background:${barColor};height:100%;width:${Math.min(100, Math.max(0, pct))}%;"></div>
+            </div>
+            <strong style="color:${pct > 100 ? '#dc2626' : 'inherit'};">${num(pct, 1)}%</strong>
+          </div>
+        </td>
+        <td class="num" style="font-weight:800;color:${saldoColor};">${brl(saldo)}</td>
+        <td class="num">${brl(fat)}</td>
+        <td class="num"><span class="badge badge-neutral" style="font-size:11px;">${num(cvPct, 1)}%</span></td>
+        <td class="num" style="color:#dc2626;">${brl(naoOtim)}</td>
+        <td class="num" style="font-weight:700;color:#7c3aed;">${num(iec, 1)}%</td>
+        <td style="text-align:center;">
+          <button class="btn btn-secondary btn-sm btn-select-budget-store" data-filial="${f.filial_id}" style="padding:3px 8px;font-size:11px;" title="Ver detalhes de OTB desta filial">
+            ${isSelected ? '✓ Selecionada' : '🔍 Ver Loja'}
+          </button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  tbody.querySelectorAll('.btn-select-budget-store').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const fId = btn.dataset.filial;
+      state.selectedFilial = String(fId);
+      renderMultilojaBar();
+      renderKpiStrip(state.selectedFilial);
+      loadBudget();
+    });
+  });
+}
 }
 
 
@@ -8615,7 +8741,19 @@ function bindEvents() {
 (async function init() {
   bindEvents();
 
-  // Pré-carrega o status da licença com prioridade máxima antes de renderizar a home
+  // 1. Tenta restaurar cache local de lojas/políticas para que a barra de filiais apareça INSTANTANEAMENTE no Frame 0
+  try {
+    const rawLocal = localStorage.getItem('linx_farma_multiloja_cache');
+    if (rawLocal) {
+      const parsed = JSON.parse(rawLocal);
+      if (parsed && Array.isArray(parsed.filiaisPolicies) && parsed.filiaisPolicies.length > 0) {
+        state.overview = { ...state.overview, ...parsed };
+        renderMultilojaBar();
+      }
+    }
+  } catch {}
+
+  // 2. Pré-carrega o status da licença com prioridade máxima antes de renderizar a home
   // Evita qualquer falso positivo de expirado por renderização assíncrona
   try {
     const licRes = await apiGet('/api/license/status');
@@ -8635,11 +8773,6 @@ function bindEvents() {
 
   if (targetFilial) {
     state.selectedFilial = targetFilial;
-    renderMultilojaBar();
-    renderKpiStrip(state.selectedFilial);
-    if (typeof updateCockpitBudgetPillForFilial === 'function') {
-      updateCockpitBudgetPillForFilial(state.selectedFilial);
-    }
   }
 
   // Se uma sub-aba específica foi informada na URL, define no state antes da primeira renderização
@@ -8650,9 +8783,20 @@ function bindEvents() {
     tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === targetTab));
   }
 
+  // 3. Carrega Glossary e Overview PRIMEIRO (ambos levam ~20ms em RAM/SQLite)
+  // Isso garante que todas as 8 lojas e dados de profile estão 100% prontos no state
+  await Promise.all([loadGlossary(), loadOverview()]);
+
+  // Garante renderização das lojas com dados frescos da rede
+  renderMultilojaBar();
+  renderKpiStrip(state.selectedFilial);
+  if (typeof updateCockpitBudgetPillForFilial === 'function') {
+    updateCockpitBudgetPillForFilial(state.selectedFilial);
+  }
+
+  // 4. Agora chaveia para a view solicitada (carrega loadBudget ou loadSkus UMA ÚNICA VEZ sem duplicação)
   switchView(targetView);
 
-  await Promise.all([loadGlossary(), loadOverview(), loadBudget().catch(() => {})]);
   try {
     const res = await apiGet('/api/curadoria/opportunities');
     const el = document.getElementById('curadoria-tab-count');

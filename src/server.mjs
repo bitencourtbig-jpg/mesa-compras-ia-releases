@@ -24,6 +24,9 @@ import {
   recordBuyerLearning,
   getBuyerLearningLog,
   getBuyerActivePreferences,
+  getAllFilialBudgetSummaries,
+  getRunOverviewMeta,
+  saveRunOverviewMeta,
 } from './store/analyticsDb.mjs';
 import { getCachedCmedMaps, importOfficialCmedToSqlite } from './services/cmedService.mjs';
 import { syncBigClientData } from './engine/syncClientData.mjs';
@@ -593,61 +596,69 @@ const server = http.createServer(async (req, res) => {
         filtersMeta = cachedOverview.filtersMeta;
         filialKpis = cachedOverview.filialKpis;
       } else {
-        filtersMeta = latestRun
-          ? {
-              macros: db
-                .prepare('SELECT macro_categoria, COUNT(*) AS cnt, ROUND(SUM(sugestao_compra_rs), 2) AS sug_rs FROM engine_sku_results WHERE run_id = ? GROUP BY macro_categoria ORDER BY cnt DESC')
-                .all(latestRun.id),
-              gruposPai: db
-                .prepare("SELECT COALESCE(grupo_pai_nome, 'OUTROS') AS nome, COUNT(*) AS cnt, ROUND(SUM(CASE WHEN sugestao_compra_un > 0 AND dismissed = 0 THEN sugestao_compra_rs ELSE 0 END), 2) AS sug_rs, SUM(CASE WHEN sugestao_compra_un > 0 AND dismissed = 0 THEN 1 ELSE 0 END) AS buy_skus FROM engine_sku_results WHERE run_id = ? GROUP BY nome ORDER BY sug_rs DESC, cnt DESC")
-                .all(latestRun.id),
-              laboratorios: db
-                .prepare("SELECT labora, COUNT(*) AS cnt FROM engine_sku_results WHERE run_id = ? AND labora IS NOT NULL AND TRIM(labora) <> '' GROUP BY labora ORDER BY cnt DESC LIMIT 70")
-                .all(latestRun.id),
-              dismissedCount: db
-                .prepare('SELECT COUNT(*) AS cnt FROM engine_sku_results WHERE run_id = ? AND dismissed = 1')
-                .get(latestRun.id)?.cnt || 0,
-              pbmCount: db
-                .prepare('SELECT COUNT(*) AS cnt FROM engine_sku_results WHERE run_id = ? AND ddv_pbm_auto > 0 AND dismissed = 0')
-                .get(latestRun.id)?.cnt || 0,
-            }
-          : { macros: [], gruposPai: [], dismissedCount: 0, pbmCount: 0 };
-
-        // KPIs granulares por filial (ou 'all' consolidado) para sincronismo perfeito nos filtros
-        filialKpis = {};
-        if (latestRun) {
-          filialKpis['all'] = latestRun.summary;
-          const stats = db.prepare(`
-            SELECT filial_id,
-                   COUNT(*) AS totalSkus,
-                   SUM(CASE WHEN abc_class = 'A' AND estoque_atual <= 0 THEN 1 ELSE 0 END) AS rupturasCurvaA,
-                   SUM(CASE WHEN abc_class = 'B' AND estoque_atual <= 0 THEN 1 ELSE 0 END) AS rupturasCurvaB,
-                   ROUND(SUM(venda_perdida_est_rs), 2) AS vendaPerdidaEstimadaRs91d,
-                   SUM(CASE WHEN sugestao_compra_un > 0 AND dismissed = 0 THEN 1 ELSE 0 END) AS skusSugestaoCompra,
-                   ROUND(SUM(CASE WHEN dismissed = 0 THEN sugestao_compra_rs ELSE 0 END), 2) AS totalSugestaoCompraRs,
-                   ROUND(SUM(CASE WHEN estoque_max > 0 AND estoque_atual > estoque_max THEN (estoque_atual - estoque_max) * custo_unit ELSE 0 END), 2) AS capitalExcessoAcimaMaxRs,
-                   ROUND(SUM(CASE WHEN abc_class = 'D' AND estoque_atual > 0 THEN estoque_atual * custo_unit ELSE 0 END), 2) AS capitalParadoCurvaDRs,
-                   ROUND(SUM(lote_vencendo_90d_rs), 2) AS lotesVencendo90dRs,
-                   ROUND(SUM(lote_vencido_qtd * custo_unit), 2) AS lotesVencidosRs,
-                   SUM(CASE WHEN excecoes_json <> '[]' THEN 1 ELSE 0 END) AS skusComExcecao
-            FROM engine_sku_results
-            WHERE run_id = ?
-            GROUP BY filial_id
-          `).all(latestRun.id);
-
-          for (const s of stats) {
-            filialKpis[String(s.filial_id)] = {
-              ...s,
-              referenceDate: latestRun.summary?.referenceDate,
-              weeksWindow: latestRun.summary?.weeksWindow,
-              economiaMoleculaRs: latestRun.summary?.economiaMoleculaRs || 0,
-              economiaMoleculaUn: latestRun.summary?.economiaMoleculaUn || 0,
-            };
-          }
-        }
-
-        if (latestRun) {
+        const sqliteMeta = latestRun ? getRunOverviewMeta(latestRun.id) : null;
+        if (sqliteMeta && sqliteMeta.filtersMeta && sqliteMeta.filialKpis) {
+          filtersMeta = sqliteMeta.filtersMeta;
+          filialKpis = sqliteMeta.filialKpis;
           _overviewCache.set(cacheKey, { filtersMeta, filialKpis });
+        } else {
+          filtersMeta = latestRun
+            ? {
+                macros: db
+                  .prepare('SELECT macro_categoria, COUNT(*) AS cnt, ROUND(SUM(sugestao_compra_rs), 2) AS sug_rs FROM engine_sku_results WHERE run_id = ? GROUP BY macro_categoria ORDER BY cnt DESC')
+                  .all(latestRun.id),
+                gruposPai: db
+                  .prepare("SELECT COALESCE(grupo_pai_nome, 'OUTROS') AS nome, COUNT(*) AS cnt, ROUND(SUM(CASE WHEN sugestao_compra_un > 0 AND dismissed = 0 THEN sugestao_compra_rs ELSE 0 END), 2) AS sug_rs, SUM(CASE WHEN sugestao_compra_un > 0 AND dismissed = 0 THEN 1 ELSE 0 END) AS buy_skus FROM engine_sku_results WHERE run_id = ? GROUP BY nome ORDER BY sug_rs DESC, cnt DESC")
+                  .all(latestRun.id),
+                laboratorios: db
+                  .prepare("SELECT labora, COUNT(*) AS cnt FROM engine_sku_results WHERE run_id = ? AND labora IS NOT NULL AND TRIM(labora) <> '' GROUP BY labora ORDER BY cnt DESC LIMIT 70")
+                  .all(latestRun.id),
+                dismissedCount: db
+                  .prepare('SELECT COUNT(*) AS cnt FROM engine_sku_results WHERE run_id = ? AND dismissed = 1')
+                  .get(latestRun.id)?.cnt || 0,
+                pbmCount: db
+                  .prepare('SELECT COUNT(*) AS cnt FROM engine_sku_results WHERE run_id = ? AND ddv_pbm_auto > 0 AND dismissed = 0')
+                  .get(latestRun.id)?.cnt || 0,
+              }
+            : { macros: [], gruposPai: [], dismissedCount: 0, pbmCount: 0 };
+
+          // KPIs granulares por filial (ou 'all' consolidado) para sincronismo perfeito nos filtros
+          filialKpis = {};
+          if (latestRun) {
+            filialKpis['all'] = latestRun.summary;
+            const stats = db.prepare(`
+              SELECT filial_id,
+                     COUNT(*) AS totalSkus,
+                     SUM(CASE WHEN abc_class = 'A' AND estoque_atual <= 0 THEN 1 ELSE 0 END) AS rupturasCurvaA,
+                     SUM(CASE WHEN abc_class = 'B' AND estoque_atual <= 0 THEN 1 ELSE 0 END) AS rupturasCurvaB,
+                     ROUND(SUM(venda_perdida_est_rs), 2) AS vendaPerdidaEstimadaRs91d,
+                     SUM(CASE WHEN sugestao_compra_un > 0 AND dismissed = 0 THEN 1 ELSE 0 END) AS skusSugestaoCompra,
+                     ROUND(SUM(CASE WHEN dismissed = 0 THEN sugestao_compra_rs ELSE 0 END), 2) AS totalSugestaoCompraRs,
+                     ROUND(SUM(CASE WHEN estoque_max > 0 AND estoque_atual > estoque_max THEN (estoque_atual - estoque_max) * custo_unit ELSE 0 END), 2) AS capitalExcessoAcimaMaxRs,
+                     ROUND(SUM(CASE WHEN abc_class = 'D' AND estoque_atual > 0 THEN estoque_atual * custo_unit ELSE 0 END), 2) AS capitalParadoCurvaDRs,
+                     ROUND(SUM(lote_vencendo_90d_rs), 2) AS lotesVencendo90dRs,
+                     ROUND(SUM(lote_vencido_qtd * custo_unit), 2) AS lotesVencidosRs,
+                     SUM(CASE WHEN excecoes_json <> '[]' THEN 1 ELSE 0 END) AS skusComExcecao
+              FROM engine_sku_results
+              WHERE run_id = ?
+              GROUP BY filial_id
+            `).all(latestRun.id);
+
+            for (const s of stats) {
+              filialKpis[String(s.filial_id)] = {
+                ...s,
+                referenceDate: latestRun.summary?.referenceDate,
+                weeksWindow: latestRun.summary?.weeksWindow,
+                economiaMoleculaRs: latestRun.summary?.economiaMoleculaRs || 0,
+                economiaMoleculaUn: latestRun.summary?.economiaMoleculaUn || 0,
+              };
+            }
+          }
+
+          if (latestRun) {
+            saveRunOverviewMeta(latestRun.id, clientCode, filtersMeta, filialKpis);
+            _overviewCache.set(cacheKey, { filtersMeta, filialKpis });
+          }
         }
       }
 
@@ -689,6 +700,15 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { ok: true, data: budget, budget, ...budget });
       } catch (err) {
         return sendJson(res, 500, { ok: false, error: `Erro ao recalcular dotação: ${err.message}` });
+      }
+    }
+
+    if (pathname === '/api/budget/filiais' && req.method === 'GET') {
+      try {
+        const filiais = getAllFilialBudgetSummaries(clientCode);
+        return sendJson(res, 200, { ok: true, filiais });
+      } catch (err) {
+        return sendJson(res, 500, { ok: false, error: `Erro ao listar dotação das filiais: ${err.message}` });
       }
     }
 
