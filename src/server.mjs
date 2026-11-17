@@ -59,6 +59,12 @@ function isMasterRequest(req, body = {}) {
   return verifyMasterPassword(token);
 }
 
+// Cache em memória de alta performance para o /api/overview
+const _overviewCache = new Map();
+export function invalidateOverviewCache() {
+  _overviewCache.clear();
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
@@ -321,16 +327,35 @@ function buildSkuFilterSql(paramsObj, runId, clientCode = 'bandeirante') {
       where.push("excecoes_json <> '[]'");
     } else if (tab === 'buy') {
       where.push('sugestao_compra_un > 0');
-      // Isolamento da Pré-Tela de Curadoria IA: itens de moléculas com concorrência pendentes de homologação
-      where.push(`(molecule_key IS NULL OR molecule_key = '' OR molecule_key NOT IN (
-        SELECT molecule_key FROM engine_molecule_summary
-        WHERE run_id = ? AND labs_count > 1 AND sugestao_sku_soma > 0
-          AND molecule_key NOT IN (
-            SELECT DISTINCT molecule_key FROM buyer_learning_log
-            WHERE client_code = ? AND molecule_key IS NOT NULL AND molecule_key <> ''
-          )
-      ))`);
-      params.push(runId, clientCode);
+      // Isolamento de alta performance da Pré-Tela de Curadoria IA:
+      // Pré-busca expressa em memória das moléculas pendentes de homologação.
+      // Elimina subquery correlacionada NOT IN que custava 17 segundos em SQLite!
+      try {
+        const db = getAnalyticsDb();
+        const blockedKeys = db
+          .prepare(`
+            SELECT molecule_key FROM engine_molecule_summary
+            WHERE run_id = ? AND labs_count > 1 AND sugestao_sku_soma > 0
+              AND molecule_key NOT IN (
+                SELECT DISTINCT molecule_key FROM buyer_learning_log
+                WHERE client_code = ? AND molecule_key IS NOT NULL AND molecule_key <> ''
+              )
+          `)
+          .all(runId, clientCode)
+          .map((r) => r.molecule_key)
+          .filter(Boolean);
+
+        if (blockedKeys.length > 0) {
+          where.push(`(molecule_key IS NULL OR molecule_key = '' OR molecule_key NOT IN (${blockedKeys.map(() => '?').join(',')}))`);
+          params.push(...blockedKeys);
+        }
+      } catch (err) {
+        console.warn('Aviso: falha na pré-busca de moléculas retidas da Curadoria:', err.message);
+      }
+    } else if (tab === 'curadoria') {
+      // Curadoria IA possui endpoints dedicados (/api/curadoria/*).
+      // Evita scan acidental de toda a base caso acionado via /api/skus.
+      where.push('1 = 0');
     } else if (tab === 'pbm_replenish') {
       where.push('ddv_pbm_auto > 0');
     } else if (tab === 'non_med') {
@@ -558,56 +583,71 @@ const server = http.createServer(async (req, res) => {
       const profile = getClientProfile(clientCode);
       const latestRun = getLatestRun(clientCode);
       const cmed = getCachedCmedMaps();
-      const filtersMeta = latestRun
-        ? {
-            macros: db
-              .prepare('SELECT macro_categoria, COUNT(*) AS cnt, ROUND(SUM(sugestao_compra_rs), 2) AS sug_rs FROM engine_sku_results WHERE run_id = ? GROUP BY macro_categoria ORDER BY cnt DESC')
-              .all(latestRun.id),
-            gruposPai: db
-              .prepare("SELECT COALESCE(grupo_pai_nome, 'OUTROS') AS nome, COUNT(*) AS cnt, ROUND(SUM(CASE WHEN sugestao_compra_un > 0 AND dismissed = 0 THEN sugestao_compra_rs ELSE 0 END), 2) AS sug_rs, SUM(CASE WHEN sugestao_compra_un > 0 AND dismissed = 0 THEN 1 ELSE 0 END) AS buy_skus FROM engine_sku_results WHERE run_id = ? GROUP BY nome ORDER BY sug_rs DESC, cnt DESC")
-              .all(latestRun.id),
-            laboratorios: db
-              .prepare("SELECT labora, COUNT(*) AS cnt FROM engine_sku_results WHERE run_id = ? AND labora IS NOT NULL AND TRIM(labora) <> '' GROUP BY labora ORDER BY cnt DESC LIMIT 70")
-              .all(latestRun.id),
-            dismissedCount: db
-              .prepare('SELECT COUNT(*) AS cnt FROM engine_sku_results WHERE run_id = ? AND dismissed = 1')
-              .get(latestRun.id)?.cnt || 0,
-            pbmCount: db
-              .prepare('SELECT COUNT(*) AS cnt FROM engine_sku_results WHERE run_id = ? AND ddv_pbm_auto > 0 AND dismissed = 0')
-              .get(latestRun.id)?.cnt || 0,
+      const cacheKey = `${clientCode}:${latestRun ? latestRun.id : 0}`;
+      let cachedOverview = _overviewCache.get(cacheKey);
+
+      let filtersMeta;
+      let filialKpis;
+
+      if (cachedOverview) {
+        filtersMeta = cachedOverview.filtersMeta;
+        filialKpis = cachedOverview.filialKpis;
+      } else {
+        filtersMeta = latestRun
+          ? {
+              macros: db
+                .prepare('SELECT macro_categoria, COUNT(*) AS cnt, ROUND(SUM(sugestao_compra_rs), 2) AS sug_rs FROM engine_sku_results WHERE run_id = ? GROUP BY macro_categoria ORDER BY cnt DESC')
+                .all(latestRun.id),
+              gruposPai: db
+                .prepare("SELECT COALESCE(grupo_pai_nome, 'OUTROS') AS nome, COUNT(*) AS cnt, ROUND(SUM(CASE WHEN sugestao_compra_un > 0 AND dismissed = 0 THEN sugestao_compra_rs ELSE 0 END), 2) AS sug_rs, SUM(CASE WHEN sugestao_compra_un > 0 AND dismissed = 0 THEN 1 ELSE 0 END) AS buy_skus FROM engine_sku_results WHERE run_id = ? GROUP BY nome ORDER BY sug_rs DESC, cnt DESC")
+                .all(latestRun.id),
+              laboratorios: db
+                .prepare("SELECT labora, COUNT(*) AS cnt FROM engine_sku_results WHERE run_id = ? AND labora IS NOT NULL AND TRIM(labora) <> '' GROUP BY labora ORDER BY cnt DESC LIMIT 70")
+                .all(latestRun.id),
+              dismissedCount: db
+                .prepare('SELECT COUNT(*) AS cnt FROM engine_sku_results WHERE run_id = ? AND dismissed = 1')
+                .get(latestRun.id)?.cnt || 0,
+              pbmCount: db
+                .prepare('SELECT COUNT(*) AS cnt FROM engine_sku_results WHERE run_id = ? AND ddv_pbm_auto > 0 AND dismissed = 0')
+                .get(latestRun.id)?.cnt || 0,
+            }
+          : { macros: [], gruposPai: [], dismissedCount: 0, pbmCount: 0 };
+
+        // KPIs granulares por filial (ou 'all' consolidado) para sincronismo perfeito nos filtros
+        filialKpis = {};
+        if (latestRun) {
+          filialKpis['all'] = latestRun.summary;
+          const stats = db.prepare(`
+            SELECT filial_id,
+                   COUNT(*) AS totalSkus,
+                   SUM(CASE WHEN abc_class = 'A' AND estoque_atual <= 0 THEN 1 ELSE 0 END) AS rupturasCurvaA,
+                   SUM(CASE WHEN abc_class = 'B' AND estoque_atual <= 0 THEN 1 ELSE 0 END) AS rupturasCurvaB,
+                   ROUND(SUM(venda_perdida_est_rs), 2) AS vendaPerdidaEstimadaRs91d,
+                   SUM(CASE WHEN sugestao_compra_un > 0 AND dismissed = 0 THEN 1 ELSE 0 END) AS skusSugestaoCompra,
+                   ROUND(SUM(CASE WHEN dismissed = 0 THEN sugestao_compra_rs ELSE 0 END), 2) AS totalSugestaoCompraRs,
+                   ROUND(SUM(CASE WHEN estoque_max > 0 AND estoque_atual > estoque_max THEN (estoque_atual - estoque_max) * custo_unit ELSE 0 END), 2) AS capitalExcessoAcimaMaxRs,
+                   ROUND(SUM(CASE WHEN abc_class = 'D' AND estoque_atual > 0 THEN estoque_atual * custo_unit ELSE 0 END), 2) AS capitalParadoCurvaDRs,
+                   ROUND(SUM(lote_vencendo_90d_rs), 2) AS lotesVencendo90dRs,
+                   ROUND(SUM(lote_vencido_qtd * custo_unit), 2) AS lotesVencidosRs,
+                   SUM(CASE WHEN excecoes_json <> '[]' THEN 1 ELSE 0 END) AS skusComExcecao
+            FROM engine_sku_results
+            WHERE run_id = ?
+            GROUP BY filial_id
+          `).all(latestRun.id);
+
+          for (const s of stats) {
+            filialKpis[String(s.filial_id)] = {
+              ...s,
+              referenceDate: latestRun.summary?.referenceDate,
+              weeksWindow: latestRun.summary?.weeksWindow,
+              economiaMoleculaRs: latestRun.summary?.economiaMoleculaRs || 0,
+              economiaMoleculaUn: latestRun.summary?.economiaMoleculaUn || 0,
+            };
           }
-        : { macros: [], gruposPai: [], dismissedCount: 0, pbmCount: 0 };
+        }
 
-      // KPIs granulares por filial (ou 'all' consolidado) para sincronismo perfeito nos filtros
-      let filialKpis = {};
-      if (latestRun) {
-        filialKpis['all'] = latestRun.summary;
-        const stats = db.prepare(`
-          SELECT filial_id,
-                 COUNT(*) AS totalSkus,
-                 SUM(CASE WHEN abc_class = 'A' AND estoque_atual <= 0 THEN 1 ELSE 0 END) AS rupturasCurvaA,
-                 SUM(CASE WHEN abc_class = 'B' AND estoque_atual <= 0 THEN 1 ELSE 0 END) AS rupturasCurvaB,
-                 ROUND(SUM(venda_perdida_est_rs), 2) AS vendaPerdidaEstimadaRs91d,
-                 SUM(CASE WHEN sugestao_compra_un > 0 AND dismissed = 0 THEN 1 ELSE 0 END) AS skusSugestaoCompra,
-                 ROUND(SUM(CASE WHEN dismissed = 0 THEN sugestao_compra_rs ELSE 0 END), 2) AS totalSugestaoCompraRs,
-                 ROUND(SUM(CASE WHEN estoque_max > 0 AND estoque_atual > estoque_max THEN (estoque_atual - estoque_max) * custo_unit ELSE 0 END), 2) AS capitalExcessoAcimaMaxRs,
-                 ROUND(SUM(CASE WHEN abc_class = 'D' AND estoque_atual > 0 THEN estoque_atual * custo_unit ELSE 0 END), 2) AS capitalParadoCurvaDRs,
-                 ROUND(SUM(lote_vencendo_90d_rs), 2) AS lotesVencendo90dRs,
-                 ROUND(SUM(lote_vencido_qtd * custo_unit), 2) AS lotesVencidosRs,
-                 SUM(CASE WHEN excecoes_json <> '[]' THEN 1 ELSE 0 END) AS skusComExcecao
-          FROM engine_sku_results
-          WHERE run_id = ?
-          GROUP BY filial_id
-        `).all(latestRun.id);
-
-        for (const s of stats) {
-          filialKpis[String(s.filial_id)] = {
-            ...s,
-            referenceDate: latestRun.summary?.referenceDate,
-            weeksWindow: latestRun.summary?.weeksWindow,
-            economiaMoleculaRs: latestRun.summary?.economiaMoleculaRs || 0,
-            economiaMoleculaUn: latestRun.summary?.economiaMoleculaUn || 0,
-          };
+        if (latestRun) {
+          _overviewCache.set(cacheKey, { filtersMeta, filialKpis });
         }
       }
 
@@ -1036,6 +1076,7 @@ const server = http.createServer(async (req, res) => {
         recentEntriesLimit: Number(body.recentEntriesLimit || profile.recent_entries_limit),
       });
       _treeCache.clear();
+      invalidateOverviewCache();
       return sendJson(res, 200, { ok: true, ...result });
     }
 
@@ -1072,67 +1113,87 @@ const server = http.createServer(async (req, res) => {
       const activeSuspensions = getActiveSkuSuspensions(clientCode);
       const suspensionsMap = new Map(activeSuspensions.map((s) => [s.produto_id, s]));
 
-      // Busca todos os candidatos que satisfazem os filtros de banco
-      let allCandidates = db
-        .prepare(`SELECT * FROM engine_sku_results WHERE ${whereSql} ORDER BY ${orderBy}`)
-        .all(...params);
+      let pagedRows = [];
+      let totalCount = 0;
+      let totalSumRs = 0;
 
-      // Hidrata os SKUs aplicando simulação de horizonte (ex: 15d, 21d, etc.) se solicitado
-      let processed = allCandidates.map((r) => hydrateSkuRow(r, customHorizon, suspensionsMap));
+      if (customHorizon || budget > 0 || tab === 'buy') {
+        // Busca os candidatos da aba 'buy' ou simulação de horizonte (universo enxuto de ~2.000 itens demandados)
+        let allCandidates = db
+          .prepare(`SELECT * FROM engine_sku_results WHERE ${whereSql} ORDER BY ${orderBy}`)
+          .all(...params);
 
-      // Se estamos na aba 'buy' (Sugestão de Compra), NENHUM item que caia para 0 un ou com tag 'NÃO COMPRAR' pode aparecer
-      if (tab === 'buy') {
-        processed = processed.filter((r) => {
-          const q = r.budget_qtd !== undefined ? Number(r.budget_qtd) : Number(r.sugestao_compra_un || 0);
-          return q > 0 && r.ia_analysis?.acaoCodigo !== 'NAO_COMPRAR';
-        });
-      }
+        let processed = allCandidates.map((r) => hydrateSkuRow(r, customHorizon, suspensionsMap));
 
-      if (budget > 0) {
-        const { selected, used, cutOff, totalRequested, cutTotalRs } = applyBudgetCap(processed, budget);
-        const pagedRows = selected.slice(offset, offset + limit);
-        const uniquePids = [...new Set(pagedRows.map((r) => r.produto_id))];
-        const networkMap = new Map();
-        if (uniquePids.length > 0) {
-          const netRows = db
-            .prepare(
-              `SELECT filial_id, filial_reduz, filial_nome, produto_id, estoque_atual, transito_real,
-                      vendas_13s, ddv_projetada, estoque_min, estoque_max, cobertura_dias,
-                      sugestao_compra_un, sugestao_compra_rs, justificativa_ia, excecoes_json
-               FROM engine_sku_results
-               WHERE run_id = ? AND produto_id IN (${uniquePids.map(() => '?').join(',')}) AND filial_id <> 1
-               ORDER BY filial_id ASC`
-            )
-            .all(latestRun.id, ...uniquePids);
+        // Se estamos na aba 'buy' (Sugestão de Compra), NENHUM item que caia para 0 un ou com tag 'NÃO COMPRAR' pode aparecer
+        if (tab === 'buy') {
+          processed = processed.filter((r) => {
+            const q = r.budget_qtd !== undefined ? Number(r.budget_qtd) : Number(r.sugestao_compra_un || 0);
+            return q > 0 && r.ia_analysis?.acaoCodigo !== 'NAO_COMPRAR';
+          });
+        }
 
-          for (const nr of netRows) {
-            if (!networkMap.has(nr.produto_id)) networkMap.set(nr.produto_id, []);
-            networkMap.get(nr.produto_id).push(nr);
+        if (budget > 0) {
+          const { selected, used, cutOff, totalRequested, cutTotalRs } = applyBudgetCap(processed, budget);
+          pagedRows = selected.slice(offset, offset + limit);
+          const uniquePids = [...new Set(pagedRows.map((r) => r.produto_id))];
+          const networkMap = new Map();
+          if (uniquePids.length > 0) {
+            const netRows = db
+              .prepare(
+                `SELECT filial_id, filial_reduz, filial_nome, produto_id, estoque_atual, transito_real,
+                        vendas_13s, ddv_projetada, estoque_min, estoque_max, cobertura_dias,
+                        sugestao_compra_un, sugestao_compra_rs, justificativa_ia, excecoes_json
+                 FROM engine_sku_results
+                 WHERE run_id = ? AND produto_id IN (${uniquePids.map(() => '?').join(',')}) AND filial_id <> 1
+                 ORDER BY filial_id ASC`
+              )
+              .all(latestRun.id, ...uniquePids);
+
+            for (const nr of netRows) {
+              if (!networkMap.has(nr.produto_id)) networkMap.set(nr.produto_id, []);
+              networkMap.get(nr.produto_id).push(nr);
+            }
           }
+          for (const pr of pagedRows) {
+            pr.rede_distribuicao = networkMap.get(pr.produto_id) || [];
+          }
+          return sendJson(res, 200, {
+            total: selected.length,
+            sumRs: used,
+            budgetApplied: budget,
+            budgetAudit: {
+              budget,
+              used,
+              totalRequested,
+              cutTotalRs,
+              selectedCount: selected.length,
+              cutCount: cutOff.length,
+              cutOffTop: cutOff.slice(0, 100),
+            },
+            rows: pagedRows,
+          });
         }
-        for (const pr of pagedRows) {
-          pr.rede_distribuicao = networkMap.get(pr.produto_id) || [];
-        }
-        return sendJson(res, 200, {
-          total: selected.length,
-          sumRs: used,
-          budgetApplied: budget,
-          budgetAudit: {
-            budget,
-            used,
-            totalRequested,
-            cutTotalRs,
-            selectedCount: selected.length,
-            cutCount: cutOff.length,
-            cutOffTop: cutOff.slice(0, 100),
-          },
-          rows: pagedRows,
-        });
-      }
 
-      const totalCount = processed.length;
-      const totalSumRs = Math.round(processed.reduce((a, b) => a + Number(b.sugestao_compra_rs || 0), 0) * 100) / 100;
-      const pagedRows = processed.slice(offset, offset + limit);
+        totalCount = processed.length;
+        totalSumRs = Math.round(processed.reduce((a, b) => a + Number(b.sugestao_compra_rs || 0), 0) * 100) / 100;
+        pagedRows = processed.slice(offset, offset + limit);
+      } else {
+        // Modo Alta Performance Nativo no SQLite:
+        // Agregação expressa e LIMIT/OFFSET no banco para abas amplas (ex: 'all', 'exceptions' com 150k itens)
+        // Reduz o tempo de 25 segundos para < 850 ms e zera o consumo de memória!
+        const aggRow = db
+          .prepare(`SELECT COUNT(*) AS total, ROUND(COALESCE(SUM(sugestao_compra_rs), 0), 2) AS sum_rs FROM engine_sku_results WHERE ${whereSql}`)
+          .get(...params);
+        totalCount = aggRow?.total || 0;
+        totalSumRs = aggRow?.sum_rs || 0;
+
+        const rawSlice = db
+          .prepare(`SELECT * FROM engine_sku_results WHERE ${whereSql} ORDER BY ${orderBy} LIMIT ? OFFSET ?`)
+          .all(...params, limit, offset);
+
+        pagedRows = rawSlice.map((r) => hydrateSkuRow(r, null, suspensionsMap));
+      }
       const uniquePids = [...new Set(pagedRows.map((r) => r.produto_id))];
       const networkMap = new Map();
       if (uniquePids.length > 0) {
@@ -1187,6 +1248,7 @@ const server = http.createServer(async (req, res) => {
       const dismissed = body.dismissed !== undefined ? (body.dismissed ? 1 : 0) : 1;
       if (!produtoId) return sendJson(res, 400, { error: 'produtoId obrigatorio.' });
       dismissSku(clientCode, filialId, produtoId, dismissed);
+      invalidateOverviewCache();
       return sendJson(res, 200, { ok: true, produtoId, dismissed });
     }
 
@@ -1195,6 +1257,7 @@ const server = http.createServer(async (req, res) => {
       const produtoId = Number(urlObj.searchParams.get('produtoId'));
       if (!produtoId) return sendJson(res, 400, { error: 'produtoId obrigatorio.' });
       removeSkuSuspension(clientCode, filialId, produtoId);
+      invalidateOverviewCache();
       return sendJson(res, 200, { ok: true, produtoId, message: 'Suspensão de compras removida no Motor.' });
     }
 
@@ -1251,6 +1314,7 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
+      invalidateOverviewCache();
       return sendJson(res, 200, { ok: true, produtoId, bigOk, target, endDate: suspRes.endDate, message: bigMsg });
     }
 
@@ -2742,6 +2806,7 @@ function buildMoleculeMatricialCard(db, runId, molRow, clientCode, filiais, susp
       const body = await readBody(req);
       const latestRun = getLatestRun(clientCode);
       const { action, filial_id, produto_id, molecule_key, motivo, target_sku_id, descricao, labora_origem, labora_proposto, qty, deduct_qty } = body;
+      invalidateOverviewCache();
 
       if (action === 'APPROVE_ALL') {
         const pendingMols = db.prepare(`

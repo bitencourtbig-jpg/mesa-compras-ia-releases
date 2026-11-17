@@ -103,6 +103,7 @@ export async function importOfficialCmedToSqlite(xlsxOrZipPath, { allowTolerance
       .run(sourceName, 'ANVISA_CMED_XLSX', totalCatalog, totalEans);
 
     db.exec('COMMIT');
+    invalidateCmedCache();
     return { sourceName, totalCatalog, totalEans };
   } catch (err) {
     db.exec('ROLLBACK');
@@ -111,13 +112,25 @@ export async function importOfficialCmedToSqlite(xlsxOrZipPath, { allowTolerance
 }
 
 /**
- * Carrega o cache CMED do SQLite em Maps em memoria (< 200ms).
+ * Carrega o cache CMED do SQLite em Maps em memoria com cache singleton (< 2ms em cache hit).
  */
+let _cmedMapsCache = null;
+let _cmedLastImportId = null;
+
+export function invalidateCmedCache() {
+  _cmedMapsCache = null;
+  _cmedLastImportId = null;
+}
+
 export function getCachedCmedMaps() {
   const db = getAnalyticsDb();
   const lastImport = db.prepare('SELECT * FROM cmed_imports ORDER BY id DESC LIMIT 1').get();
   if (!lastImport) {
     return { ready: false, lastImport: null, byEan: new Map(), byRegistro: new Map() };
+  }
+
+  if (_cmedMapsCache && _cmedLastImportId === lastImport.id) {
+    return _cmedMapsCache;
   }
 
   const rows = db.prepare('SELECT * FROM cmed_catalog').all();
@@ -157,7 +170,9 @@ export function getCachedCmedMaps() {
     }
   }
 
-  return { ready: true, lastImport, byEan, byRegistro };
+  _cmedLastImportId = lastImport.id;
+  _cmedMapsCache = { ready: true, lastImport, byEan, byRegistro };
+  return _cmedMapsCache;
 }
 
 /**

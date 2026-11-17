@@ -8642,6 +8642,14 @@ function bindEvents() {
     }
   }
 
+  // Se uma sub-aba específica foi informada na URL, define no state antes da primeira renderização
+  // Evita requisição duplicada pesada de carregar 'buy' e imediatamente recarregar outra aba
+  if (targetTab && targetView === 'cockpit') {
+    state.tab = targetTab;
+    const tabs = document.querySelectorAll('#sku-tabs .tab');
+    tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === targetTab));
+  }
+
   switchView(targetView);
 
   await Promise.all([loadGlossary(), loadOverview(), loadBudget().catch(() => {})]);
@@ -8650,9 +8658,6 @@ function bindEvents() {
     const el = document.getElementById('curadoria-tab-count');
     if (el && res && res.count !== undefined) el.textContent = res.count;
   } catch {}
-  if (targetTab && targetView === 'cockpit') {
-    switchSkuTab(targetTab);
-  }
 
   if (openSweep && targetTab === 'curadoria') {
     const delay = openSweep === 'now' ? 0 : 500;

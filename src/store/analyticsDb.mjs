@@ -20,6 +20,9 @@ export function getAnalyticsDb(dbPath = DEFAULT_DB_PATH) {
   const db = new DatabaseSync(dbPath);
   db.exec('PRAGMA journal_mode = WAL;');
   db.exec('PRAGMA synchronous = NORMAL;');
+  db.exec('PRAGMA cache_size = -64000;'); // 64 MB de cache de páginas em memória RAM
+  db.exec('PRAGMA temp_store = MEMORY;');
+  db.exec('PRAGMA busy_timeout = 8000;'); // 8s de tolerância para concorrência sem bloqueio fatal
   initSchema(db);
   _db = db;
   return _db;
@@ -324,6 +327,10 @@ function initSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_esr_run_mol_prod ON engine_sku_results(run_id, molecule_key, produto_id, filial_id);
     CREATE INDEX IF NOT EXISTS idx_esr_run_prod ON engine_sku_results(run_id, produto_id);
     CREATE INDEX IF NOT EXISTS idx_esr_prod ON engine_sku_results(produto_id);
+    CREATE INDEX IF NOT EXISTS idx_esr_run_buy ON engine_sku_results(run_id, dismissed, sugestao_compra_un);
+    CREATE INDEX IF NOT EXISTS idx_esr_run_macro ON engine_sku_results(run_id, macro_categoria);
+    CREATE INDEX IF NOT EXISTS idx_esr_run_grupopai ON engine_sku_results(run_id, grupo_pai_nome);
+    CREATE INDEX IF NOT EXISTS idx_esr_run_labora ON engine_sku_results(run_id, labora);
 
     CREATE TABLE IF NOT EXISTS engine_remanejamento (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -364,6 +371,8 @@ function initSchema(db) {
       detalhe_skus_json TEXT,
       PRIMARY KEY (run_id, molecule_key, eh_referencia)
     );
+
+    CREATE INDEX IF NOT EXISTS idx_ems_run_labs ON engine_molecule_summary(run_id, labs_count, sugestao_sku_soma);
 
     CREATE TABLE IF NOT EXISTS pbm_audit_rows (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
