@@ -6629,8 +6629,6 @@ async function renderBudgetFiliaisTable(filiaisList) {
     });
   });
 }
-}
-
 
 async function updateCockpitBudgetPillForFilial(filialId = 'all') {
   try {
