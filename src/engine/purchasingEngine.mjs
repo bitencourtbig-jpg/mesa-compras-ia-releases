@@ -862,8 +862,13 @@ export function runPurchasingEngine(profile, rawData, { weeksWindow = profile.de
       const deficits = list.filter((x) => x.necessidadeBruta > 0).sort((a, b) => b.necessidadeBruta - a.necessidadeBruta);
       if (deficits.length === 0) continue;
 
-      // Doadores: prioridade 1 = lote curto (FEFO) / parado (demanda 0); prioridade 2 = excesso acima do maximo
-      // Lojas em carência com trava de doação NUNCA podem ceder seu estoque de abertura
+      // Doadores: prioridade 1 = lote curto (FEFO); prioridade 2 = sem giro (PARADO); prioridade 3 = excesso acima do maximo
+      // Lojas em carência com trava de doação NUNCA podem ceder seu estoque de abertura.
+      // REGRA DE PROTEÇÃO DE SORTIMENTO DA DOADORA:
+      // Se a doadora for loja de vendas ativa (`isSalesFilial`), ela NUNCA deve ser zerada automaticamente
+      // (a menos que tenha lote em risco de perda por vencimento FEFO < 90 dias).
+      // A loja doadora DEVE preservar no mínimo seu estoque mínimo (ou ao menos 1 unidade para vitrine/balcão)
+      // para não perder possíveis vendas futuras na sua própria região.
       const donors = list
         .map((x) => {
           const isProtectedDonor = x.emCarencia || x.bloquearDoacao || (x.diasOperacao <= (x.diasCarencia || 90));
@@ -871,9 +876,29 @@ export function runPurchasingEngine(profile, rawData, { weeksWindow = profile.de
             return { x, excesso: 0, isParado: false, hasShortLot: false };
           }
           const livre = Math.max(0, x.estoqueAtual - x.estoqueReserva - x.remanSaida);
+          const hasShortLot = x.loteVencendo90dQtd > 0;
           const isParado = !x.isSalesFilial || x.ddvProjetada <= 0;
-          const excesso = isParado ? livre : Math.max(0, livre - x.estoqueMax);
-          return { x, excesso, isParado, hasShortLot: x.loteVencendo90dQtd > 0 };
+
+          // Retenção de segurança na doadora para proteger vendas
+          let retencaoSegura = 0;
+          if (x.isSalesFilial && !hasShortLot) {
+            retencaoSegura = Math.max(Number(x.estoqueMin || 0), 1);
+          }
+
+          let excesso = 0;
+          if (hasShortLot) {
+            // FEFO: o objetivo principal é evitar descarte e perda total de mercadoria
+            excesso = livre;
+          } else if (isParado) {
+            // Sem venda na janela: doa o que exceder a retenção de segurança da loja
+            excesso = Math.max(0, livre - retencaoSegura);
+          } else {
+            // Com giro: doa apenas o excesso que ultrapassar o estoque máximo e a retenção segura
+            const tetoRetencao = Math.max(Number(x.estoqueMax || 0), retencaoSegura);
+            excesso = Math.max(0, livre - tetoRetencao);
+          }
+
+          return { x, excesso, isParado, hasShortLot };
         })
         .filter((d) => d.excesso > 0)
         .sort((a, b) => Number(b.hasShortLot) - Number(a.hasShortLot) || Number(b.isParado) - Number(a.isParado) || b.excesso - a.excesso);
@@ -892,6 +917,7 @@ export function runPurchasingEngine(profile, rawData, { weeksWindow = profile.de
           missing -= qtd;
 
           const tipo = d.hasShortLot ? 'FEFO_VALIDADE' : d.isParado ? 'PARADO' : 'EXCESSO';
+          const saldoRestanteDoadora = Math.max(0, d.x.estoqueAtual - d.x.remanSaida);
           remanejamentos.push({
             produtoId,
             descricao: dest.p.descricao,
@@ -906,8 +932,8 @@ export function runPurchasingEngine(profile, rawData, { weeksWindow = profile.de
               tipo === 'FEFO_VALIDADE'
                 ? `Lote curto (${d.x.loteMenorValidade}) na filial ${d.x.filialId} transferido para giro na filial ${dest.filialId}`
                 : tipo === 'PARADO'
-                  ? `Estoque parado na filial ${d.x.filialId} resgatado antes da compra`
-                  : `Excesso acima do maximo na filial ${d.x.filialId}`,
+                  ? `Estoque sem giro na filial ${d.x.filialId} transferido para suprir falta na filial ${dest.filialId} (origem preserva ${saldoRestanteDoadora} un de segurança)`
+                  : `Excesso acima do máximo na filial ${d.x.filialId} transferido para filial ${dest.filialId} (origem preserva ${saldoRestanteDoadora} un)`,
           });
         }
       }

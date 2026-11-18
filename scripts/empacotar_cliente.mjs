@@ -470,6 +470,9 @@ try {
 // 8. Criar Instalador Web / Atualizador e Scripts de Entrega
 console.log('[8/8] Gerando instaladores unificados (Web Google Drive & Offline)...');
 
+const pkgData = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+const appVersion = pkgData.version || '1.2.3';
+
 // A. Arquivo config_nuvem.ini
 const configNuvem = `# ==============================================================================
 # CONFIGURAÇÃO DE NUVEM • MESA DE COMPRAS IA (FSCONSULTORIA)
@@ -477,7 +480,7 @@ const configNuvem = `# =========================================================
 # Exemplo de Link: https://drive.google.com/file/d/1aBcDeFgHiJkLmNoPqRsTuVwXyZ/view?usp=sharing
 # ==============================================================================
 GOOGLE_DRIVE_ID=
-VERSAO=1.1.3
+VERSAO=${appVersion}
 CONTATO_SUPORTE=(17) 98120-5660
 `;
 writeWindowsFile(path.join(PASTA_ENTREGA, 'config_nuvem.ini'), configNuvem);

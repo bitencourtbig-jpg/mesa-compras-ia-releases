@@ -3456,7 +3456,7 @@ function openAuditPlannedRouteModal(routeKey) {
 
 async function loadTransfers() {
   if (!state.remanFilters) {
-    state.remanFilters = { search: '', tipo: 'ALL', curva: 'ALL', origem: 'ALL', destino: 'ALL', minValor: 0 };
+    state.remanFilters = { search: '', tipo: 'ALL', curva: 'ALL', laboratorio: 'ALL', origem: 'ALL', destino: 'ALL', minValor: 0, transito: 'ALL' };
   }
 
   const rf = state.remanFilters;
@@ -3466,18 +3466,37 @@ async function loadTransfers() {
   if (rf.destino && rf.destino !== 'ALL') params.append('destino', rf.destino);
   if (rf.tipo && rf.tipo !== 'ALL') params.append('tipo', rf.tipo);
   if (rf.curva && rf.curva !== 'ALL') params.append('curva', rf.curva);
+  if (rf.laboratorio && rf.laboratorio !== 'ALL') params.append('laboratorio', rf.laboratorio);
   if (rf.minValor && Number(rf.minValor) > 0) params.append('min_valor', rf.minValor);
   if (rf.search && rf.search.trim()) params.append('search', rf.search.trim());
 
   const queryStr = params.toString() ? `?${params.toString()}` : '';
 
-  const routesData = await apiGet(`/api/remanejamento/routes${queryStr}`).catch(() => ({ routes: [], transfers: [], totalGeralRs: 0, totalGeralUnidades: 0, totalItens: 0, summary: {}, filiais: [] }));
+  const routesData = await apiGet(`/api/remanejamento/routes${queryStr}`).catch(() => ({ routes: [], transfers: [], totalGeralRs: 0, totalGeralUnidades: 0, totalItens: 0, summary: {}, filiais: [], laboratorios: [] }));
 
-  const routes = routesData.routes || [];
+  let routes = routesData.routes || [];
+  if (rf.transito && rf.transito !== 'ALL') {
+    routes = routes.map(r => {
+      const filteredItems = r.items.filter(it => {
+        const hasTransit = Boolean(it.transitoInfo && it.transitoInfo.temPendencias);
+        return rf.transito === 'WITH_TRANSIT' ? hasTransit : !hasTransit;
+      });
+      if (filteredItems.length === 0) return null;
+      return {
+        ...r,
+        items: filteredItems,
+        totalItens: filteredItems.length,
+        totalUnidades: filteredItems.reduce((acc, x) => acc + Number(x.qtd_sugerida || 0), 0),
+        valorTotalRs: Math.round(filteredItems.reduce((acc, x) => acc + Number(x.valor_total || 0), 0) * 100) / 100,
+      };
+    }).filter(Boolean);
+  }
+
   const activeTransfers = routesData.transfers || [];
   currentActiveTransfers = activeTransfers;
   const summary = routesData.summary || {};
   const filiaisList = routesData.filiais || [];
+  const labsList = routesData.laboratorios || [];
 
   // Popular dropdowns de filiais caso ainda não estejam populados
   const selOrigem = document.getElementById('reman-filter-origem');
@@ -3489,6 +3508,13 @@ async function loadTransfers() {
   if (selDestino && selDestino.options.length <= 1 && filiaisList.length > 0) {
     selDestino.innerHTML = '<option value="ALL">Loja Destino (Receptora): Todas</option>' + filiaisList.map((f) => `<option value="${f.filial_id}">${esc(f.label || f.short || `Loja ${f.filial_id}`)}</option>`).join('');
     selDestino.value = rf.destino || 'ALL';
+  }
+
+  // Popular dropdown de laboratórios
+  const selLab = document.getElementById('reman-filter-laboratorio');
+  if (selLab && selLab.options.length <= 1 && labsList.length > 0) {
+    selLab.innerHTML = '<option value="ALL">Laboratório: Todos</option>' + labsList.map(lab => `<option value="${esc(lab)}">${esc(lab)}</option>`).join('');
+    selLab.value = rf.laboratorio || 'ALL';
   }
 
   // Atualizar resumo do filtro
@@ -3512,7 +3538,7 @@ async function loadTransfers() {
         <div class="kpi-label">Peças a Transferir</div>
         <div class="kpi-val kpi-accent">${num(routesData.totalGeralUnidades || 0)} un</div>
         <div class="kpi-sub">
-          ${num(summary.excessoCount || 0)} excessos &bull; ${num(summary.paradoCount || 0)} sem giro
+          ${num(summary.rupturasDestinoCount || summary.excessoCount || 0)} urgentes &bull; ${num(summary.curadoriaIaCount || 0)} Curadoria IA
         </div>
       </div>
       <div class="kpi-cell">
@@ -3528,7 +3554,7 @@ async function loadTransfers() {
     `;
   }
 
-  // Rotas Container com Seleção de Itens pelo Comprador (REV-028)
+  // Rotas Container com Seleção de Itens pelo Comprador (REV-028/030)
   const routesContainer = document.getElementById('transfer-routes-container');
   const routesCount = document.getElementById('transfer-routes-count');
   if (routesCount) routesCount.textContent = `${routes.length} rotas (${num(routesData.totalItens || 0)} itens)`;
@@ -3539,15 +3565,17 @@ async function loadTransfers() {
         <div class="empty-state-box" style="padding:36px 20px; text-align:center; background:var(--card-bg); border:1px solid var(--border); border-radius:10px;">
           <div style="font-size:32px; margin-bottom:8px;">🚚✨</div>
           <div style="font-weight:700; font-size:14px; color:var(--text);">Nenhuma oportunidade de remanejamento com os filtros selecionados</div>
-          <div class="muted" style="font-size:12px; margin-top:4px;">Todas as lojas estão equilibradas ou nenhum item atende aos filtros de valor e curva.</div>
+          <div class="muted" style="font-size:12px; margin-top:4px;">Todas as lojas estão equilibradas ou nenhum item atende aos filtros de valor, curva e trânsito.</div>
         </div>
       `;
     } else {
       routesContainer.innerHTML = routes.map((r, idx) => {
-        // Exibir até 50 itens por rota com renderização ágil
         const displayLimit = 50;
         const visibleItems = r.items.slice(0, displayLimit);
         const hasMore = r.items.length > displayLimit;
+
+        const hasRouteTransit = r.items.some(it => it.transitoInfo && it.transitoInfo.temPendencias);
+        const totalTransitUn = r.items.reduce((acc, it) => acc + Number(it.transitoInfo?.qtdPendenteDistribuidora || 0), 0);
 
         return `
           <div class="transfer-route-card" data-route-idx="${idx}" style="background:var(--card-bg); border:1.5px solid var(--border); border-radius:12px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.03); margin-bottom:16px;">
@@ -3577,6 +3605,17 @@ async function loadTransfers() {
               </div>
             </div>
 
+            ${hasRouteTransit ? `
+              <div class="route-transit-banner" data-route-idx="${idx}" style="background:#fffbeb; border-bottom:1px solid #fef3c7; border-left:4px solid #f59e0b; padding:8px 18px; font-size:11.5px; color:#92400e; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+                <div>
+                  <strong>⚠️ Alerta de Trânsito Linx:</strong> Foram detectadas <strong>${num(totalTransitUn)} un</strong> faturadas ou em pedidos de compra a caminho desta filial destino.
+                </div>
+                <button type="button" class="btn btn-xs btn-deduct-route-transit" data-route-idx="${idx}" style="background:#f59e0b; color:#fff; border:none; font-weight:700; border-radius:4px; padding:4px 10px; cursor:pointer;" title="Abate automaticamente as quantidades com NFe faturada">
+                  ⚡ Deduzir NFes Pendentes
+                </button>
+              </div>
+            ` : ''}
+
             <div class="transfer-items-table" style="overflow-x:auto;">
               <table class="data-table" style="font-size:11.5px; margin:0; width:100%;">
                 <thead>
@@ -3585,19 +3624,56 @@ async function loadTransfers() {
                       <input type="checkbox" class="chk-select-all-route" data-route-idx="${idx}" checked title="Selecionar/Desmarcar todos" />
                     </th>
                     <th style="min-width:65px;">Código</th>
-                    <th style="min-width:95px;">Barras</th>
-                    <th style="min-width:220px;">Produto / Descrição</th>
-                    <th style="min-width:60px;">Curva</th>
-                    <th class="num" style="min-width:85px; color:#1e40af;">Est. Doadora</th>
-                    <th class="num" style="min-width:85px; color:#b91c1c;">Est. Destino</th>
-                    <th class="num" style="min-width:90px;">Qtd Transferir</th>
-                    <th class="num" style="min-width:85px;">Custo Unit</th>
-                    <th class="num" style="min-width:90px;">Total R$</th>
-                    <th style="min-width:180px;">Motivo Operacional</th>
+                    <th style="min-width:90px;">Barras</th>
+                    <th style="min-width:210px;">Produto / Descrição</th>
+                    <th style="min-width:70px;">Curva Dest.</th>
+                    <th style="min-width:80px;">Situação</th>
+                    <th class="num" style="min-width:80px; color:#1e40af;">Est. Doadora</th>
+                    <th class="num" style="min-width:80px; color:#b91c1c;">Est. Destino</th>
+                    <th class="num" style="min-width:95px;">Qtd Transferir</th>
+                    <th class="num" style="min-width:75px;">Restam Doadora</th>
+                    <th style="min-width:145px;">Auditoria Linx / NFe</th>
+                    <th class="num" style="min-width:75px;">Custo Unit</th>
+                    <th class="num" style="min-width:85px;">Total R$</th>
+                    <th style="min-width:160px;">Motivo Operacional</th>
                   </tr>
                 </thead>
                 <tbody>
                   ${visibleItems.map((it, itemIdx) => {
+                    const estDest = Number(it.estoqueDestino ?? it.estoque_destino ?? 0);
+                    const estOrig = Number(it.estoqueOrigem ?? it.estoque_origem ?? 0);
+                    const qtdSugerida = Number(it.qtd_solicitada || it.qtd_sugerida || 0);
+                    const restamOrig = Math.max(0, estOrig - qtdSugerida);
+                    const curvaDest = (it.abc_destino || it.abc_class || 'C').toUpperCase();
+                    const tInfo = it.transitoInfo || { temPendencias: false, alertMsgs: [] };
+
+                    let curvaBadge = `<span class="badge badge-neutral" style="font-size:10px; font-weight:700;">Curva ${curvaDest}</span>`;
+                    if (curvaDest === 'A') curvaBadge = `<span class="badge" style="background:#fee2e2; color:#991b1b; font-weight:800; font-size:10px;">Curva A</span>`;
+                    else if (curvaDest === 'B') curvaBadge = `<span class="badge" style="background:#fef3c7; color:#92400e; font-weight:700; font-size:10px;">Curva B</span>`;
+
+                    let situacaoBadge = `<span class="badge" style="background:#e0f2fe; color:#0369a1; font-size:10px; font-weight:700;">📦 Excesso</span>`;
+                    if (estDest === 0) {
+                      situacaoBadge = `<span class="badge" style="background:#fee2e2; color:#b91c1c; font-weight:800; font-size:10px; border:1px solid #fca5a5;">🚨 Ruptura</span>`;
+                    } else if (it.tipo === 'PARADO' || (it.motivo && it.motivo.includes('Sem venda'))) {
+                      situacaoBadge = `<span class="badge" style="background:#f1f5f9; color:#475569; font-size:10px;">💤 Parado</span>`;
+                    } else if (it.isCuradoriaIa) {
+                      situacaoBadge = `<span class="badge" style="background:#ede9fe; color:#6d28d9; font-weight:700; font-size:10px;">🧬 IA</span>`;
+                    }
+
+                    let auditCellHtml = '';
+                    if (tInfo.temPendencias) {
+                      const tooltip = (tInfo.alertMsgs || []).join('\n');
+                      const leadAlert = tInfo.alertMsgs[0] || 'NFe pendente';
+                      auditCellHtml = `
+                        <div style="cursor:help;" title="${esc(tooltip)}">
+                          <span class="badge" style="background:#fef3c7; color:#92400e; border:1px solid #fde68a; font-weight:700; font-size:10px;">⚠️ ${esc(leadAlert)}</span>
+                          ${tInfo.qtdPendenteDistribuidora > 0 ? `<div style="font-size:10px; color:#b45309; font-weight:600; margin-top:2px;">🚚 NFe pendente: +${tInfo.qtdPendenteDistribuidora} un</div>` : ''}
+                        </div>
+                      `;
+                    } else {
+                      auditCellHtml = `<span class="badge" style="background:#f0fdf4; color:#166534; font-size:10px;">✅ Sem NFe pendente</span>`;
+                    }
+
                     return `
                       <tr>
                         <td style="text-align:center;">
@@ -3609,14 +3685,21 @@ async function loadTransfers() {
                           <div class="sku-title" style="font-weight:700; font-size:12px; color:#0f172a;">${esc(it.descricao)}</div>
                           <div class="sku-sub" style="font-size:10.5px; color:#64748b;">${esc(it.labora || '')}</div>
                         </td>
-                        <td>
-                          <span class="badge badge-neutral" style="font-size:9.5px; font-weight:700;">Curva ${it.abc_class || 'A'}</span>
+                        <td>${curvaBadge}</td>
+                        <td>${situacaoBadge}</td>
+                        <td class="num"><span class="badge" style="background:#dbeafe; color:#1e40af; font-weight:700;">${num(estOrig)} un</span></td>
+                        <td class="num"><span class="badge" style="background:${estDest === 0 ? '#fee2e2' : '#f1f5f9'}; color:${estDest === 0 ? '#b91c1c' : '#475569'}; font-weight:700;">${num(estDest)} un</span></td>
+                        <td class="num">
+                          <input type="number" min="1" max="${Math.max(1, estOrig)}" value="${qtdSugerida}" class="input-route-qtd" data-route-idx="${idx}" data-item-idx="${itemIdx}" style="width:62px; font-weight:800; text-align:center; padding:3px; border:1px solid #cbd5e1; border-radius:5px; color:#0f766e; background:#fff;" />
                         </td>
-                        <td class="num"><span class="badge" style="background:#dbeafe; color:#1e40af; font-weight:700;">${num(it.estoqueOrigem ?? it.estoque_origem ?? 0)} un</span></td>
-                        <td class="num"><span class="badge" style="background:${(it.estoqueDestino ?? it.estoque_destino ?? 0) === 0 ? '#fee2e2' : '#f1f5f9'}; color:${(it.estoqueDestino ?? it.estoque_destino ?? 0) === 0 ? '#b91c1c' : '#475569'}; font-weight:700;">${num(it.estoqueDestino ?? it.estoque_destino ?? 0)} un</span></td>
-                        <td class="num"><strong style="font-size:12px; color:#0f766e;">${num(it.qtd_sugerida)} un</strong></td>
+                        <td class="num cell-restam-orig" data-route-idx="${idx}" data-item-idx="${itemIdx}">
+                          <span class="badge" style="background:${restamOrig <= 0 ? '#fee2e2' : '#f0fdf4'}; color:${restamOrig <= 0 ? '#b91c1c' : '#166534'}; font-weight:700;">${num(restamOrig)} un</span>
+                        </td>
+                        <td>${auditCellHtml}</td>
                         <td class="num">${brl(it.custo_unit)}</td>
-                        <td class="num"><strong style="color:#047857;">${brl(it.valor_total)}</strong></td>
+                        <td class="num cell-total-rs" data-route-idx="${idx}" data-item-idx="${itemIdx}">
+                          <strong style="color:#047857;">${brl(it.valor_total)}</strong>
+                        </td>
                         <td class="sku-sub" style="font-size:11px; line-height:1.35; color:#334155;">${esc(it.motivo)}</td>
                       </tr>
                     `;
@@ -3626,7 +3709,7 @@ async function loadTransfers() {
 
               ${hasMore ? `
                 <div style="padding:10px 16px; background:#f8fafc; text-align:center; border-top:1px solid #e2e8f0; font-size:11.5px; color:#64748b;">
-                  Mostrando os 50 itens com maior impacto financeiro desta rota (Total de ${r.items.length} itens). Use os filtros para refinar por curva, valor mínimo ou produto.
+                  Mostrando os 50 itens com maior impacto financeiro desta rota (Total de ${r.items.length} itens). Use os filtros para refinar por curva, laboratório ou valor mínimo.
                 </div>
               ` : ''}
             </div>
@@ -3669,6 +3752,82 @@ async function loadTransfers() {
           approveBtn.textContent = selCount === 0 ? 'Nenhum item selecionado' : '📄 Emitir Guia da Rota';
         }
       };
+
+      // Edição direta de quantidade no input da tabela
+      routesContainer.querySelectorAll('.input-route-qtd').forEach(input => {
+        input.addEventListener('input', () => {
+          const rIdx = Number(input.dataset.routeIdx);
+          const iIdx = Number(input.dataset.itemIdx);
+          const route = routes[rIdx];
+          if (!route) return;
+          const item = route.items[iIdx];
+          if (!item) return;
+
+          let val = Math.max(1, parseInt(input.value || 1, 10));
+          item.qtd_sugerida = val;
+          item.qtd_solicitada = val;
+          item.valor_total = Math.round(val * Number(item.custo_unit || 0) * 100) / 100;
+
+          const row = input.closest('tr');
+          if (row) {
+            const restamEl = row.querySelector('.cell-restam-orig');
+            const estOrig = Number(item.estoqueOrigem ?? item.estoque_origem ?? 0);
+            const restam = Math.max(0, estOrig - val);
+            if (restamEl) {
+              restamEl.innerHTML = `<span class="badge" style="background:${restam <= 0 ? '#fee2e2' : '#f0fdf4'}; color:${restam <= 0 ? '#b91c1c' : '#166534'}; font-weight:700;">${num(restam)} un</span>`;
+            }
+            const totalEl = row.querySelector('.cell-total-rs');
+            if (totalEl) {
+              totalEl.innerHTML = `<strong style="color:#047857;">${brl(item.valor_total)}</strong>`;
+            }
+          }
+          updateRouteSelectionSummary(rIdx);
+        });
+      });
+
+      // Botão para deduzir trânsito pendente da rota
+      routesContainer.querySelectorAll('.btn-deduct-route-transit').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const rIdx = Number(btn.dataset.routeIdx);
+          const route = routes[rIdx];
+          if (!route) return;
+
+          const routeCard = routesContainer.querySelector(`.transfer-route-card[data-route-idx="${rIdx}"]`);
+          if (!routeCard) return;
+
+          let adjustedCount = 0;
+          route.items.forEach((item, iIdx) => {
+            const pend = Number(item.transitoInfo?.qtdPendenteDistribuidora || 0);
+            if (pend > 0) {
+              const novaQtd = Math.max(1, (item.qtd_sugerida || 0) - pend);
+              item.qtd_sugerida = novaQtd;
+              item.qtd_solicitada = novaQtd;
+              item.valor_total = Math.round(novaQtd * Number(item.custo_unit || 0) * 100) / 100;
+              adjustedCount++;
+
+              const input = routeCard.querySelector(`.input-route-qtd[data-item-idx="${iIdx}"]`);
+              if (input) input.value = novaQtd;
+
+              const row = input ? input.closest('tr') : null;
+              if (row) {
+                const restamEl = row.querySelector('.cell-restam-orig');
+                const estOrig = Number(item.estoqueOrigem ?? item.estoque_origem ?? 0);
+                const restam = Math.max(0, estOrig - novaQtd);
+                if (restamEl) {
+                  restamEl.innerHTML = `<span class="badge" style="background:${restam <= 0 ? '#fee2e2' : '#f0fdf4'}; color:${restam <= 0 ? '#b91c1c' : '#166534'}; font-weight:700;">${num(restam)} un</span>`;
+                }
+                const totalEl = row.querySelector('.cell-total-rs');
+                if (totalEl) {
+                  totalEl.innerHTML = `<strong style="color:#047857;">${brl(item.valor_total)}</strong>`;
+                }
+              }
+            }
+          });
+
+          updateRouteSelectionSummary(rIdx);
+          showBanner(`✓ ${adjustedCount} produtos ajustados subtraindo as NFes de distribuidores a caminho!`);
+        });
+      });
 
       // Checkbox "Selecionar Todos"
       routesContainer.querySelectorAll('.chk-select-all-route').forEach(masterChk => {
@@ -3763,6 +3922,10 @@ async function loadTransfers() {
           nextActionBtn = `<button class="btn btn-secondary btn-xs btn-change-status" data-id="${t.id}" data-status="RECEBIDA" style="color:#047857;font-weight:700;">✅ Receber</button>`;
         }
 
+        const cancelBtn = (t.status !== 'RECEBIDA' && t.status !== 'CANCELADA')
+          ? `<button class="btn btn-ghost btn-xs btn-cancel-transfer" data-id="${t.id}" style="color:#b91c1c;font-weight:600;" title="Cancelar guia e reverter compras">✕ Cancelar</button>`
+          : '';
+
         return `
           <tr>
             <td>
@@ -3778,6 +3941,7 @@ async function loadTransfers() {
               <a href="/api/remanejamento/export-excel?transferId=${t.id}" class="btn btn-secondary btn-xs" download style="display:inline-flex;align-items:center;gap:4px;font-weight:700;" title="Baixar Romaneio Excel de Separação">📥 Romaneio Excel</a>
               ${nextActionBtn}
               <button class="btn btn-ghost btn-xs btn-view-transfer-items" data-id="${t.id}" title="Ver itens desta guia">📦 Itens</button>
+              ${cancelBtn}
             </td>
           </tr>
         `;
@@ -3794,6 +3958,22 @@ async function loadTransfers() {
             await loadTransfers();
           } catch (err) {
             showBanner(`Erro ao atualizar status: ${err.message}`, true);
+            btn.disabled = false;
+          }
+        });
+      });
+
+      motorTbody.querySelectorAll('.btn-cancel-transfer').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const tId = Number(btn.dataset.id);
+          if (!confirm('Deseja realmente cancelar esta guia de transferência? As compras correspondentes voltarão para a esteira de pedidos externos.')) return;
+          btn.disabled = true;
+          try {
+            await apiPost('/api/remanejamento/status', { id: tId, status: 'CANCELADA' });
+            showBanner('Guia de transferência cancelada com sucesso!');
+            await loadTransfers();
+          } catch (err) {
+            showBanner(`Erro ao cancelar guia: ${err.message}`, true);
             btn.disabled = false;
           }
         });
@@ -3820,10 +4000,13 @@ function bindRemanFilterEvents() {
   const searchInput = document.getElementById('reman-search-input');
   const selTipo = document.getElementById('reman-filter-tipo');
   const selCurva = document.getElementById('reman-filter-curva');
+  const selLab = document.getElementById('reman-filter-laboratorio');
   const selOrigem = document.getElementById('reman-filter-origem');
   const selDestino = document.getElementById('reman-filter-destino');
   const selMinVal = document.getElementById('reman-filter-min-val');
+  const selTransito = document.getElementById('reman-filter-transito');
   const btnClear = document.getElementById('btn-reman-clear-filters');
+  const btnConsolidate = document.getElementById('btn-reman-consolidate-guides');
 
   let debounceTimer = null;
   if (searchInput) {
@@ -3839,28 +4022,51 @@ function bindRemanFilterEvents() {
   const triggerReload = () => {
     if (selTipo) state.remanFilters.tipo = selTipo.value;
     if (selCurva) state.remanFilters.curva = selCurva.value;
+    if (selLab) state.remanFilters.laboratorio = selLab.value;
     if (selOrigem) state.remanFilters.origem = selOrigem.value;
     if (selDestino) state.remanFilters.destino = selDestino.value;
     if (selMinVal) state.remanFilters.minValor = Number(selMinVal.value || 0);
+    if (selTransito) state.remanFilters.transito = selTransito.value;
     loadTransfers();
   };
 
   if (selTipo) selTipo.addEventListener('change', triggerReload);
   if (selCurva) selCurva.addEventListener('change', triggerReload);
+  if (selLab) selLab.addEventListener('change', triggerReload);
   if (selOrigem) selOrigem.addEventListener('change', triggerReload);
   if (selDestino) selDestino.addEventListener('change', triggerReload);
   if (selMinVal) selMinVal.addEventListener('change', triggerReload);
+  if (selTransito) selTransito.addEventListener('change', triggerReload);
 
   if (btnClear) {
     btnClear.addEventListener('click', () => {
-      state.remanFilters = { search: '', tipo: 'ALL', curva: 'ALL', origem: 'ALL', destino: 'ALL', minValor: 0 };
+      state.remanFilters = { search: '', tipo: 'ALL', curva: 'ALL', laboratorio: 'ALL', origem: 'ALL', destino: 'ALL', minValor: 0, transito: 'ALL' };
       if (searchInput) searchInput.value = '';
       if (selTipo) selTipo.value = 'ALL';
       if (selCurva) selCurva.value = 'ALL';
+      if (selLab) selLab.value = 'ALL';
       if (selOrigem) selOrigem.value = 'ALL';
       if (selDestino) selDestino.value = 'ALL';
       if (selMinVal) selMinVal.value = '0';
+      if (selTransito) selTransito.value = 'ALL';
       loadTransfers();
+    });
+  }
+
+  if (btnConsolidate) {
+    btnConsolidate.addEventListener('click', async () => {
+      btnConsolidate.disabled = true;
+      btnConsolidate.textContent = 'Consolidando...';
+      try {
+        const res = await apiPost('/api/remanejamento/consolidate-routes', {});
+        showBanner(res.message || 'Guias consolidadas com sucesso!', false);
+        await loadTransfers();
+      } catch (err) {
+        showBanner(`Erro ao consolidar guias: ${err.message}`, true);
+      } finally {
+        btnConsolidate.disabled = false;
+        btnConsolidate.textContent = '⚡ Consolidar Guias por Rota';
+      }
     });
   }
 }

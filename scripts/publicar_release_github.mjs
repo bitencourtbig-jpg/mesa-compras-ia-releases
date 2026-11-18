@@ -8,7 +8,8 @@ const ROOT = path.resolve(__dirname, '..');
 const REPO_OWNER = 'bitencourtbig-jpg';
 const REPO_NAME = 'mesa-compras-ia-releases';
 
-const rawArg = process.argv[2] || '1.1.1';
+const pkgJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+const rawArg = process.argv[2] || pkgJson.version || '1.2.3';
 const versionClean = rawArg.replace(/^v/, '');
 const TAG = `v${versionClean}`;
 const RELEASE_NAME = `Mesa de Compras IA ${TAG} • Versão Oficial`;
@@ -94,7 +95,7 @@ async function main() {
         body: JSON.stringify({
           tag_name: TAG,
           name: RELEASE_NAME,
-          body: `Versão oficial de produção ${TAG} da Mesa de Compras IA (FSConsultoria).\n\n- Auto-atualização 100% nativa e autônoma via botão no SaaS (sem travamentos de arquivo ou processos presos)\n- Adaptação dinâmica para Farmácias de Loja Única (ocultação automática do painel multi-loja redundante)\n- Panorama Multi-Loja dinâmico para redes de 2 ou mais filiais com contagem flexível\n- Alinhamento estrito do contador da aba PBM e lista de SKUs\n- Auto-migração resiliente da tabela CMED (concentração, forma, pack e chave farmacológica)`,
+          body: `Versão oficial de produção ${TAG} da Mesa de Compras IA (FSConsultoria).\n\n- Remanejamento Multi-Loja Inteligente com Cockpit dedicado e status em tempo real\n- Auditoria cruzada de trânsito (NFe faturadas pendentes, pedidos em aberto no BIG e guias ativas)\n- Detecção de risco de duplicidade de compras com badges visuais e popover analítico detalhado\n- Colunas completas de auditoria de estoque (Origem, Mín/Máx Origem, Destino, Trânsito)\n- Exportação Excel (.xlsx) profissional para remanejamento com formatação executiva e assinatura\n- Consolidação automática e unificação inteligente de guias de transferência duplicadas\n- Otimizações de performance no motor de compras e banco analítico local`,
           draft: false,
           prerelease: false,
         }),

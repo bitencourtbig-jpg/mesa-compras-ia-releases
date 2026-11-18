@@ -1130,62 +1130,252 @@ export function createMotorTransfer(clientCode, runIdOrOpts = {}, maybeOpts = nu
     runId = opts.runId || opts.run_id || 0;
   }
 
-  const filialOrigem = opts.filialOrigem || opts.filial_origem;
+  const filialOrigem = Number(opts.filialOrigem || opts.filial_origem);
   const filialOrigemNome = opts.filialOrigemNome || opts.filial_origem_nome;
-  const filialDestino = opts.filialDestino || opts.filial_destino;
+  const filialDestino = Number(opts.filialDestino || opts.filial_destino);
   const filialDestinoNome = opts.filialDestinoNome || opts.filial_destino_nome;
   const itens = opts.itens || opts.items || [];
   const observacao = opts.observacao || '';
+  const forceNew = Boolean(opts.forceNew);
 
-  const year = new Date().getFullYear();
-  const countRow = db.prepare('SELECT COUNT(*) as count FROM motor_transferencias WHERE client_code = ?').get(clientCode);
-  const nextSeq = String((countRow?.count || 0) + 1).padStart(4, '0');
-  const codigo = `TRF-${year}-${nextSeq}`;
-
-  const totalItens = itens.length;
-  const totalUnidades = itens.reduce((acc, it) => acc + Number(it.qtd_solicitada || it.qtdSugerida || it.qtd_sugerida || it.qtd || 0), 0);
-  const valorTotalRs = itens.reduce((acc, it) => acc + Number(it.valor_total || (Number(it.qtd_solicitada || it.qtdSugerida || it.qtd_sugerida || it.qtd || 0) * Number(it.custo_unit || it.custoUnit || it.custo || 0))), 0);
-  const dataEmissao = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  if (!filialOrigem || !filialDestino || !Array.isArray(itens) || itens.length === 0) {
+    throw new Error('filialOrigem, filialDestino e itens são obrigatórios para emissão de transferência.');
+  }
 
   db.exec('BEGIN TRANSACTION');
   try {
-    const res = db.prepare(`
-      INSERT INTO motor_transferencias (
-        client_code, codigo_transferencia, run_id, filial_origem, filial_origem_nome,
-        filial_destino, filial_destino_nome, status, total_itens, total_unidades, valor_total_rs,
-        data_emissao, observacao
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDENTE_SEPARACAO', ?, ?, ?, ?, ?)
-    `).run(
-      clientCode, codigo, Number(runId || 0), Number(filialOrigem), filialOrigemNome || `Loja ${filialOrigem}`,
-      Number(filialDestino), filialDestinoNome || `Loja ${filialDestino}`,
-      totalItens, totalUnidades, Number(valorTotalRs.toFixed(2)), dataEmissao, observacao
-    );
+    // REV-029: Consolidação inteligente por rota (Origem ➔ Destino)
+    // Se já existir uma guia PENDENTE_SEPARACAO para este par de lojas, agrupa nela em vez de fragmentar
+    let transf = null;
+    if (!forceNew) {
+      transf = db.prepare(`
+        SELECT * FROM motor_transferencias
+        WHERE client_code = ? AND filial_origem = ? AND filial_destino = ? AND status = 'PENDENTE_SEPARACAO'
+        ORDER BY id ASC LIMIT 1
+      `).get(clientCode, filialOrigem, filialDestino);
+    }
 
-    const transfId = res.lastInsertRowid;
+    let transfId;
+    let codigo;
+    let isConsolidated = false;
+
+    if (transf) {
+      transfId = transf.id;
+      codigo = transf.codigo_transferencia;
+      isConsolidated = true;
+    } else {
+      const year = new Date().getFullYear();
+      const countRow = db.prepare('SELECT COUNT(*) as count FROM motor_transferencias WHERE client_code = ?').get(clientCode);
+      const nextSeq = String((countRow?.count || 0) + 1).padStart(4, '0');
+      codigo = `TRF-${year}-${nextSeq}`;
+      const dataEmissao = new Date().toISOString().replace('T', ' ').slice(0, 19);
+
+      const res = db.prepare(`
+        INSERT INTO motor_transferencias (
+          client_code, codigo_transferencia, run_id, filial_origem, filial_origem_nome,
+          filial_destino, filial_destino_nome, status, total_itens, total_unidades, valor_total_rs,
+          data_emissao, observacao
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDENTE_SEPARACAO', 0, 0, 0, ?, ?)
+      `).run(
+        clientCode, codigo, Number(runId || 0), filialOrigem, filialOrigemNome || `Loja ${filialOrigem}`,
+        filialDestino, filialDestinoNome || `Loja ${filialDestino}`,
+        dataEmissao, observacao
+      );
+      transfId = res.lastInsertRowid;
+    }
+
+    const selItem = db.prepare('SELECT id, qtd_solicitada, custo_unit FROM motor_transferencia_itens WHERE transferencia_id = ? AND produto_id = ?');
     const insItem = db.prepare(`
       INSERT INTO motor_transferencia_itens (
         transferencia_id, produto_id, barras, descricao, labora, qtd_solicitada, custo_unit, valor_total, motivo_decisao
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
+    const updItem = db.prepare(`
+      UPDATE motor_transferencia_itens
+      SET qtd_solicitada = qtd_solicitada + ?,
+          valor_total = ROUND((qtd_solicitada + ?) * custo_unit, 2),
+          motivo_decisao = ?
+      WHERE id = ?
+    `);
 
     for (const it of itens) {
+      const pId = Number(it.produto_id || it.produtoId);
       const qtd = Number(it.qtd_solicitada || it.qtdSugerida || it.qtd_sugerida || it.qtd || 0);
       const custo = Number(it.custo_unit || it.custoUnit || it.custo || 0);
-      insItem.run(
-        transfId,
-        Number(it.produto_id || it.produtoId),
-        it.barras || '',
-        it.descricao || '',
-        it.labora || '',
-        qtd,
-        custo,
-        Number((qtd * custo).toFixed(2)),
-        it.motivo || it.motivo_decisao || 'Remanejamento sugerido pelo Motor'
-      );
+      const motivo = it.motivo || it.motivo_decisao || 'Remanejamento sugerido pelo Motor';
+
+      if (qtd <= 0 || !pId) continue;
+
+      const existing = selItem.get(transfId, pId);
+      if (existing) {
+        updItem.run(qtd, qtd, motivo, existing.id);
+      } else {
+        insItem.run(
+          transfId,
+          pId,
+          it.barras || '',
+          it.descricao || '',
+          it.labora || '',
+          qtd,
+          custo,
+          Number((qtd * custo).toFixed(2)),
+          motivo
+        );
+      }
+    }
+
+    // Recalcular totais consolidados da guia
+    const agg = db.prepare(`
+      SELECT 
+        COUNT(DISTINCT produto_id) as total_itens,
+        COALESCE(SUM(qtd_solicitada), 0) as total_unidades,
+        COALESCE(SUM(valor_total), 0) as valor_total_rs
+      FROM motor_transferencia_itens
+      WHERE transferencia_id = ?
+    `).get(transfId);
+
+    const totalItens = Number(agg?.total_itens || 0);
+    const totalUnidades = Number(agg?.total_unidades || 0);
+    const valorTotalRs = Number((agg?.valor_total_rs || 0).toFixed(2));
+
+    let updatedObs = transf ? (transf.observacao || '') : observacao;
+    if (isConsolidated && observacao && !updatedObs.includes(observacao)) {
+      updatedObs = `${updatedObs} | ${observacao}`.slice(0, 500);
+    }
+
+    db.prepare(`
+      UPDATE motor_transferencias
+      SET total_itens = ?, total_unidades = ?, valor_total_rs = ?, observacao = ?
+      WHERE id = ?
+    `).run(totalItens, totalUnidades, valorTotalRs, updatedObs, transfId);
+
+    db.exec('COMMIT');
+    return {
+      ok: true,
+      transferenciaId: transfId,
+      codigoTransferencia: codigo,
+      totalItens,
+      totalUnidades,
+      valorTotalRs,
+      consolidated: isConsolidated
+    };
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/**
+ * Consolida todas as transferências abertas (PENDENTE_SEPARACAO) que pertencem à mesma rota
+ */
+export function consolidateOpenTransfers(clientCode) {
+  const db = getAnalyticsDb();
+  const openTransfers = db.prepare(`
+    SELECT * FROM motor_transferencias
+    WHERE client_code = ? AND status = 'PENDENTE_SEPARACAO'
+    ORDER BY filial_origem, filial_destino, id ASC
+  `).all(clientCode);
+
+  if (openTransfers.length <= 1) return { ok: true, consolidatedCount: 0, openCount: openTransfers.length };
+
+  const groups = new Map();
+  for (const t of openTransfers) {
+    const key = `${t.filial_origem}_${t.filial_destino}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(t);
+  }
+
+  let consolidatedCount = 0;
+  db.exec('BEGIN TRANSACTION');
+  try {
+    for (const [key, trfs] of groups.entries()) {
+      if (trfs.length <= 1) continue;
+      const master = trfs[0];
+      const secondaries = trfs.slice(1);
+
+      for (const sec of secondaries) {
+        const secItems = db.prepare('SELECT * FROM motor_transferencia_itens WHERE transferencia_id = ?').all(sec.id);
+        for (const item of secItems) {
+          const existing = db.prepare('SELECT id, qtd_solicitada, custo_unit FROM motor_transferencia_itens WHERE transferencia_id = ? AND produto_id = ?').get(master.id, item.produto_id);
+          if (existing) {
+            const newQtd = existing.qtd_solicitada + item.qtd_solicitada;
+            const newTot = Number((newQtd * existing.custo_unit).toFixed(2));
+            db.prepare('UPDATE motor_transferencia_itens SET qtd_solicitada = ?, valor_total = ? WHERE id = ?').run(newQtd, newTot, existing.id);
+          } else {
+            db.prepare(`
+              INSERT INTO motor_transferencia_itens (
+                transferencia_id, produto_id, barras, descricao, labora, qtd_solicitada, custo_unit, valor_total, motivo_decisao
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              master.id, item.produto_id, item.barras, item.descricao, item.labora,
+              item.qtd_solicitada, item.custo_unit, item.valor_total, item.motivo_decisao
+            );
+          }
+        }
+        db.prepare('DELETE FROM motor_transferencia_itens WHERE transferencia_id = ?').run(sec.id);
+        db.prepare('DELETE FROM motor_transferencias WHERE id = ?').run(sec.id);
+        consolidatedCount++;
+      }
+
+      const agg = db.prepare(`
+        SELECT COUNT(DISTINCT produto_id) as total_itens,
+               COALESCE(SUM(qtd_solicitada), 0) as total_unidades,
+               COALESCE(SUM(valor_total), 0) as valor_total_rs
+        FROM motor_transferencia_itens WHERE transferencia_id = ?
+      `).get(master.id);
+
+      db.prepare(`
+        UPDATE motor_transferencias
+        SET total_itens = ?, total_unidades = ?, valor_total_rs = ?,
+            observacao = observacao || ' [Consolidado]'
+        WHERE id = ?
+      `).run(agg?.total_itens || 0, agg?.total_unidades || 0, Number((agg?.valor_total_rs || 0).toFixed(2)), master.id);
     }
 
     db.exec('COMMIT');
-    return { ok: true, transferenciaId: transfId, codigoTransferencia: codigo, totalItens, totalUnidades, valorTotalRs };
+    return { ok: true, consolidatedCount };
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/**
+ * Cancela uma transferência e reverte o estoque/trânsito no motor
+ */
+export function cancelMotorTransfer(clientCode, transferId) {
+  const db = getAnalyticsDb();
+  const trf = db.prepare('SELECT * FROM motor_transferencias WHERE id = ? AND client_code = ?').get(Number(transferId), clientCode);
+  if (!trf) throw new Error('Transferência não encontrada.');
+  if (trf.status === 'RECEBIDA') throw new Error('Não é possível cancelar uma transferência já recebida na filial destino.');
+
+  db.exec('BEGIN TRANSACTION');
+  try {
+    const items = db.prepare('SELECT * FROM motor_transferencia_itens WHERE transferencia_id = ?').all(Number(transferId));
+
+    if (trf.run_id) {
+      const revDest = db.prepare(`
+        UPDATE engine_sku_results
+        SET transito_remanejamento = MAX(0, transito_remanejamento - ?),
+            remanejamento_entrada = MAX(0, remanejamento_entrada - ?),
+            sugestao_compra_un = sugestao_compra_un + ?,
+            sugestao_compra_rs = ROUND((sugestao_compra_un + ?) * custo_unit, 2)
+        WHERE run_id = ? AND filial_id = ? AND produto_id = ?
+      `);
+      const revOrig = db.prepare(`
+        UPDATE engine_sku_results
+        SET remanejamento_saida = MAX(0, remanejamento_saida - ?)
+        WHERE run_id = ? AND filial_id = ? AND produto_id = ?
+      `);
+      for (const it of items) {
+        revDest.run(it.qtd_solicitada, it.qtd_solicitada, it.qtd_solicitada, it.qtd_solicitada, trf.run_id, trf.filial_destino, it.produto_id);
+        revOrig.run(it.qtd_solicitada, trf.run_id, trf.filial_origem, it.produto_id);
+      }
+    }
+
+    db.prepare("UPDATE motor_transferencias SET status = 'CANCELADA' WHERE id = ?").run(Number(transferId));
+    db.exec('COMMIT');
+    return { ok: true, transferId: Number(transferId), status: 'CANCELADA' };
   } catch (err) {
     db.exec('ROLLBACK');
     throw err;

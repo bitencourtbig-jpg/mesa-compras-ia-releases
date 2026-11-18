@@ -877,20 +877,28 @@
                 <input type="text" id="reman-search-input" placeholder="Buscar produto, código BIG, EAN, laboratório..." style="border:none; outline:none; background:transparent; width:100%; font-size:12px; color:var(--text);" />
               </div>
 
-              <!-- Filtro de Motivo -->
+              <!-- Filtro de Motivo / Situação Operacional -->
               <select id="reman-filter-tipo" class="select-sm" style="font-size:12px; font-weight:700; min-width:180px;">
-                <option value="ALL">📦 Todos os Motivos</option>
+                <option value="ALL">📦 Todas as Situações</option>
+                <option value="RUPTURA_DESTINO">🚨 Ruptura na Loja Destino (Estoque = 0)</option>
                 <option value="EXCESSO">📦 Excesso de Estoque (Acima do Teto)</option>
                 <option value="PARADO">💤 Estoque Parado sem Venda</option>
+                <option value="FEFO_VALIDADE">⏳ FEFO / Validade Crítica</option>
+                <option value="CURADORIA_IA">🧬 Sugeridos pela Curadoria IA</option>
               </select>
 
               <!-- Filtro de Curva ABC -->
               <select id="reman-filter-curva" class="select-sm" style="font-size:12px; font-weight:600;">
                 <option value="ALL">Curva ABC: Todas</option>
-                <option value="A">Curva A (Alto Giro)</option>
+                <option value="A">Curva A (Alto Giro no Destino)</option>
                 <option value="B">Curva B (Médio Giro)</option>
                 <option value="C">Curva C (Baixo Giro)</option>
                 <option value="D">Curva D (Giro Crítico)</option>
+              </select>
+
+              <!-- Filtro de Laboratório / Fabricante -->
+              <select id="reman-filter-laboratorio" class="select-sm" style="font-size:12px; font-weight:600; min-width:170px;">
+                <option value="ALL">Laboratório: Todos</option>
               </select>
 
               <!-- Filtro de Filial Origem (Doadora) -->
@@ -909,6 +917,13 @@
                 <option value="20">&ge; R$ 20,00 por item</option>
                 <option value="50">&ge; R$ 50,00 (Alto Impacto)</option>
                 <option value="100">&ge; R$ 100,00 (Prioridade Carga)</option>
+              </select>
+
+              <!-- Filtro de Auditoria de Trânsito / NFe -->
+              <select id="reman-filter-transito" class="select-sm" style="font-size:12px; font-weight:700;">
+                <option value="ALL">Auditoria Trânsito: Todos</option>
+                <option value="WITH_TRANSIT">⚠️ Com NFe/Pedido Pendente</option>
+                <option value="WITHOUT_TRANSIT">✅ Sem NFe Pendente</option>
               </select>
 
               <!-- Botão Limpar Filtros -->
@@ -931,12 +946,17 @@
         <!-- SEÇÃO 2: GUIAS DE TRANSFERÊNCIA & ROMANEIOS EMITIDOS (TRÂNSITO NO MOTOR)  -->
         <!-- ========================================================================= -->
         <div class="panel" style="margin-bottom:24px;">
-          <div class="panel-head" style="display:flex; justify-content:space-between; align-items:center;">
+          <div class="panel-head" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
             <h3 style="margin:0;font-size:14px;font-weight:700;display:flex;align-items:center;gap:6px;">
               <span>📋 Guias de Transferência &amp; Romaneios Emitidos</span>
               <span class="badge badge-accent">Trânsito Interno</span>
             </h3>
-            <span id="active-transfers-count" class="muted" style="font-size:12px;"></span>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <button id="btn-reman-consolidate-guides" class="btn btn-secondary btn-sm" type="button" style="font-size:11.5px; font-weight:700; border-color:#0f766e; color:#0f766e;" title="Agrupar todas as guias abertas de mesma rota em um único romaneio consolidado">
+                ⚡ Consolidar Guias por Rota
+              </button>
+              <span id="active-transfers-count" class="muted" style="font-size:12px;"></span>
+            </div>
           </div>
           <div class="table-wrap">
             <table class="data-table">
@@ -2089,7 +2109,7 @@
     </div>
   </div>
 
-  <script src="/app.js?v=1.2.2"></script>
+  <script src="/app.js?v=1.2.3"></script>
 </body>
 </html>
 

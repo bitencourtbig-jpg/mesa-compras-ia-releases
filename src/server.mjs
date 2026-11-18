@@ -18,6 +18,8 @@ import {
   getFilialPolicies,
   upsertFilialPolicy,
   createMotorTransfer,
+  consolidateOpenTransfers,
+  cancelMotorTransfer,
   getMotorTransfers,
   updateMotorTransferStatus,
   getPendingTransfersItemsMap,
@@ -37,6 +39,7 @@ import { calculateBudgetOverview, invalidateBudgetCache } from './services/budge
 import { listOlFabricantes, saveOlFabricante, analyzeOlOpportunity, getOlDashboardOverview } from './services/olService.mjs';
 import { buildExecutiveBi } from './services/biAnalyticsService.mjs';
 import { generateQuotationWorkbook, buildTransferPickListExcel } from './services/excelExportService.mjs';
+import { getOpenTransitsAndOrdersAudit, clearTransitAuditCache } from './services/transferAuditService.mjs';
 import { testBigConnection, lookupBigSupplier, createWriteConnection } from '../db/client.mjs';
 import { generateCotefacilTxt, generateBigNativeImportXlsx, generateOlOrderExcel, sanitizeCnpj } from './services/exportFormatsService.mjs';
 import { insertBigPedidos } from './services/bigOrderWriter.mjs';
@@ -1473,6 +1476,7 @@ const server = http.createServer(async (req, res) => {
       const destinoParam = urlObj.searchParams.get('destino');
       const tipoParam = urlObj.searchParams.get('tipo') || 'ALL';
       const curvaParam = urlObj.searchParams.get('curva') || 'ALL';
+      const laboraParam = (urlObj.searchParams.get('laboratorio') || '').trim();
       const minValParam = Number(urlObj.searchParams.get('min_valor') || 0);
       const searchParam = (urlObj.searchParams.get('search') || '').trim();
 
@@ -1492,7 +1496,15 @@ const server = http.createServer(async (req, res) => {
         params.push(Number(filialId), Number(filialId));
       }
       if (tipoParam && tipoParam !== 'ALL') {
-        if (tipoParam === 'CURADORIA_IA') {
+        if (tipoParam === 'RUPTURA_DESTINO') {
+          conditions.push('(esr_dest.estoque_atual IS NULL OR esr_dest.estoque_atual <= 0)');
+        } else if (tipoParam === 'PARADO') {
+          conditions.push("(r.tipo = 'PARADO' OR r.motivo LIKE '%Parado%' OR r.motivo LIKE '%Sem venda%')");
+        } else if (tipoParam === 'EXCESSO') {
+          conditions.push("(r.tipo = 'EXCESSO' OR esr_orig.estoque_atual > esr_orig.estoque_max)");
+        } else if (tipoParam === 'FEFO_VALIDADE') {
+          conditions.push("(r.tipo = 'FEFO_VALIDADE' OR r.validade_prioritaria IS NOT NULL)");
+        } else if (tipoParam === 'CURADORIA_IA') {
           conditions.push("(r.tipo = 'CURADORIA_IA' OR r.motivo LIKE '%Curadoria%' OR esr_orig.justificativa_ia LIKE '%Remanejamento%')");
         } else {
           conditions.push('r.tipo = ?');
@@ -1500,17 +1512,22 @@ const server = http.createServer(async (req, res) => {
         }
       }
       if (curvaParam && curvaParam !== 'ALL') {
-        conditions.push('esr_orig.abc_class = ?');
-        params.push(curvaParam);
+        conditions.push('(COALESCE(esr_dest.abc_class, esr_orig.abc_class) = ? OR esr_orig.abc_class = ?)');
+        params.push(curvaParam, curvaParam);
+      }
+      if (laboraParam && laboraParam !== 'ALL') {
+        conditions.push('(esr_orig.labora LIKE ? OR esr_dest.labora LIKE ?)');
+        const lb = `%${laboraParam}%`;
+        params.push(lb, lb);
       }
       if (minValParam > 0) {
         conditions.push('r.valor_total >= ?');
         params.push(minValParam);
       }
       if (searchParam) {
-        conditions.push('(r.descricao LIKE ? OR esr_orig.barras LIKE ? OR esr_orig.labora LIKE ? OR CAST(r.produto_id AS TEXT) LIKE ?)');
+        conditions.push('(r.descricao LIKE ? OR esr_orig.barras LIKE ? OR esr_dest.barras LIKE ? OR esr_orig.labora LIKE ? OR esr_dest.labora LIKE ? OR CAST(r.produto_id AS TEXT) LIKE ?)');
         const s = `%${searchParam}%`;
-        params.push(s, s, s, s);
+        params.push(s, s, s, s, s, s);
       }
 
       const remanSql = `
@@ -1518,10 +1535,21 @@ const server = http.createServer(async (req, res) => {
                r.tipo, r.qtd_sugerida, r.custo_unit, r.valor_total, r.validade_prioritaria, r.motivo,
                esr_orig.filial_nome AS filial_origem_nome, esr_orig.filial_reduz AS filial_origem_reduz,
                esr_dest.filial_nome AS filial_destino_nome, esr_dest.filial_reduz AS filial_destino_reduz,
-               esr_orig.barras, esr_orig.labora, esr_orig.abc_class, esr_orig.justificativa_ia, esr_orig.molecule_key,
-               esr_orig.estoque_atual AS estoque_origem,
-               esr_dest.estoque_atual AS estoque_destino,
-               esr_dest.sugestao_compra_un AS falta_destino
+               COALESCE(esr_dest.barras, esr_orig.barras) AS barras,
+               COALESCE(esr_dest.labora, esr_orig.labora) AS labora,
+               esr_orig.abc_class AS abc_origem,
+               esr_dest.abc_class AS abc_destino,
+               COALESCE(esr_dest.abc_class, esr_orig.abc_class, 'C') AS abc_class,
+               esr_orig.justificativa_ia, esr_orig.molecule_key,
+               COALESCE(esr_orig.estoque_atual, 0) AS estoque_origem,
+               COALESCE(esr_orig.estoque_min, 0) AS estoque_min_origem,
+               COALESCE(esr_orig.estoque_max, 0) AS estoque_max_origem,
+               COALESCE(esr_dest.estoque_atual, 0) AS estoque_destino,
+               COALESCE(esr_dest.estoque_min, 0) AS estoque_min_destino,
+               COALESCE(esr_dest.estoque_max, 0) AS estoque_max_destino,
+               COALESCE(esr_dest.sugestao_compra_un, 0) AS falta_destino,
+               COALESCE(esr_dest.transito_real, 0) AS transito_real_destino,
+               COALESCE(esr_dest.transito_remanejamento, 0) AS transito_reman_destino
         FROM engine_remanejamento r
         LEFT JOIN engine_sku_results esr_orig ON esr_orig.run_id = r.run_id AND esr_orig.filial_id = r.filial_origem AND esr_orig.produto_id = r.produto_id
         LEFT JOIN engine_sku_results esr_dest ON esr_dest.run_id = r.run_id AND esr_dest.filial_id = r.filial_destino AND esr_dest.produto_id = r.produto_id
@@ -1531,12 +1559,27 @@ const server = http.createServer(async (req, res) => {
 
       const remanRows = db.prepare(remanSql).all(...params);
 
+      // Auditoria ao vivo de pedidos em aberto e NFe de distribuidora pendentes de entrada
+      const transitAudit = await getOpenTransitsAndOrdersAudit(clientCode);
+
+      // Obter lista única de laboratórios mapeados na execução para o dropdown do comprador
+      const labRows = db.prepare(`
+        SELECT DISTINCT COALESCE(esr_dest.labora, esr_orig.labora) as labora
+        FROM engine_remanejamento r
+        LEFT JOIN engine_sku_results esr_orig ON esr_orig.run_id = r.run_id AND esr_orig.filial_id = r.filial_origem AND esr_orig.produto_id = r.produto_id
+        LEFT JOIN engine_sku_results esr_dest ON esr_dest.run_id = r.run_id AND esr_dest.filial_id = r.filial_destino AND esr_dest.produto_id = r.produto_id
+        WHERE r.run_id = ? AND COALESCE(esr_dest.labora, esr_orig.labora) IS NOT NULL AND TRIM(COALESCE(esr_dest.labora, esr_orig.labora)) != ''
+        ORDER BY labora ASC
+      `).all(latestRun.id);
+      const laboratorios = labRows.map((l) => l.labora).filter(Boolean);
+
       // Agrupamento por Rota
       const routesMap = new Map();
       let fefoCount = 0, fefoVal = 0;
       let excessoCount = 0, excessoVal = 0;
       let paradoCount = 0, paradoVal = 0;
       let curadoriaCount = 0, curadoriaVal = 0;
+      let rupturaCount = 0, rupturaVal = 0;
 
       for (const row of remanRows) {
         const routeKey = `${row.filial_origem}->${row.filial_destino}`;
@@ -1556,6 +1599,7 @@ const server = http.createServer(async (req, res) => {
             countExcesso: 0,
             countParado: 0,
             countCuradoria: 0,
+            countRuptura: 0,
             items: [],
           });
         }
@@ -1568,6 +1612,12 @@ const server = http.createServer(async (req, res) => {
         rObj.valorTotalRs = Math.round((rObj.valorTotalRs + val) * 100) / 100;
 
         const isCuradoria = row.tipo === 'CURADORIA_IA' || (row.motivo && row.motivo.includes('Curadoria')) || (row.justificativa_ia && row.justificativa_ia.includes('Remanejamento'));
+        if (Number(row.estoque_destino || 0) <= 0) {
+          rObj.countRuptura += 1;
+          rupturaCount += 1;
+          rupturaVal += val;
+        }
+
         if (isCuradoria) {
           rObj.countCuradoria += 1;
           curadoriaCount += 1;
@@ -1586,14 +1636,29 @@ const server = http.createServer(async (req, res) => {
           paradoVal += val;
         }
 
+        const auditInfo = transitAudit.getAudit(
+          Number(row.filial_origem),
+          Number(row.filial_destino),
+          Number(row.produto_id),
+          Number(row.falta_destino || 0)
+        );
+
         rObj.items.push({
           ...row,
           barras: row.barras || '',
           labora: row.labora || '',
-          estoqueOrigem: row.estoque_origem ?? 0,
-          estoqueDestino: row.estoque_destino ?? 0,
-          faltaDestino: row.falta_destino ?? 0,
+          abc_class: row.abc_class || 'C',
+          abc_origem: row.abc_origem || 'D',
+          abc_destino: row.abc_destino || row.abc_class || 'C',
+          estoqueOrigem: Number(row.estoque_origem ?? 0),
+          estoqueMinOrigem: Number(row.estoque_min_origem ?? 0),
+          estoqueMaxOrigem: Number(row.estoque_max_origem ?? 0),
+          estoqueDestino: Number(row.estoque_destino ?? 0),
+          estoqueMinDestino: Number(row.estoque_min_destino ?? 0),
+          estoqueMaxDestino: Number(row.estoque_max_destino ?? 0),
+          faltaDestino: Number(row.falta_destino ?? 0),
           isCuradoria,
+          transitoInfo: auditInfo,
         });
       }
 
@@ -1619,8 +1684,10 @@ const server = http.createServer(async (req, res) => {
           excessoCount, excessoVal: Math.round(excessoVal * 100) / 100,
           paradoCount, paradoVal: Math.round(paradoVal * 100) / 100,
           curadoriaCount, curadoriaVal: Math.round(curadoriaVal * 100) / 100,
+          rupturaCount, rupturaVal: Math.round(rupturaVal * 100) / 100,
         },
         filiais,
+        laboratorios,
         transfers: activeTransfers,
       });
     }
@@ -1657,14 +1724,65 @@ const server = http.createServer(async (req, res) => {
         SET remanejamento_saida = remanejamento_saida + ?
         WHERE run_id = ? AND filial_id = ? AND produto_id = ?
       `);
+      const selRem = db.prepare(`
+        SELECT qtd_sugerida, custo_unit FROM engine_remanejamento
+        WHERE run_id = ? AND filial_origem = ? AND filial_destino = ? AND produto_id = ?
+      `);
+      const delRem = db.prepare(`
+        DELETE FROM engine_remanejamento
+        WHERE run_id = ? AND filial_origem = ? AND filial_destino = ? AND produto_id = ?
+      `);
+      const updRem = db.prepare(`
+        UPDATE engine_remanejamento
+        SET qtd_sugerida = ?, valor_total = ?
+        WHERE run_id = ? AND filial_origem = ? AND filial_destino = ? AND produto_id = ?
+      `);
+
       for (const it of items) {
         const q = Number(it.qtd_solicitada || it.qtdSugerida || it.qtd_sugerida || it.qtd || 0);
         const pId = Number(it.produto_id || it.produtoId);
+        if (!pId || q <= 0) continue;
         updDest.run(q, q, q, q, latestRun.id, Number(filialDestino), pId);
         updOrig.run(q, latestRun.id, Number(filialOrigem), pId);
+
+        // Deduz ou remove de engine_remanejamento para não duplicar na tela
+        const remRow = selRem.get(latestRun.id, Number(filialOrigem), Number(filialDestino), pId);
+        if (remRow) {
+          if (remRow.qtd_sugerida <= q) {
+            delRem.run(latestRun.id, Number(filialOrigem), Number(filialDestino), pId);
+          } else {
+            const newQtd = remRow.qtd_sugerida - q;
+            const newTot = Number((newQtd * remRow.custo_unit).toFixed(2));
+            updRem.run(newQtd, newTot, latestRun.id, Number(filialOrigem), Number(filialDestino), pId);
+          }
+        }
       }
 
+      clearTransitAuditCache(clientCode);
       return sendJson(res, 200, { ok: true, ...resTransf });
+    }
+
+    // REV-029: Consolidar guias abertas de mesma rota em um único romaneio
+    if ((pathname === '/api/remanejamento/consolidate' || pathname === '/api/remanejamento/consolidate-routes') && req.method === 'POST') {
+      const resConsol = consolidateOpenTransfers(clientCode);
+      clearTransitAuditCache(clientCode);
+      return sendJson(res, 200, {
+        ok: true,
+        ...resConsol,
+        message: resConsol.consolidatedCount > 0
+          ? `${resConsol.consolidatedCount} guias fragmentadas foram consolidadas com sucesso em romaneios únicos por rota!`
+          : 'Nenhuma guia duplicada pendente de consolidação.'
+      });
+    }
+
+    // REV-029: Cancelar guia de transferência e reverter estoques/trânsito no motor
+    if (pathname === '/api/remanejamento/cancel' && req.method === 'POST') {
+      const body = await readBody(req);
+      const tId = Number(body.id || body.transferId);
+      if (!tId) return sendJson(res, 400, { error: 'id da transferência obrigatório.' });
+      const resCancel = cancelMotorTransfer(clientCode, tId);
+      clearTransitAuditCache(clientCode);
+      return sendJson(res, 200, { ok: true, ...resCancel, message: `Guia ${tId} cancelada com sucesso. Estoques e trânsitos restaurados.` });
     }
 
     if (pathname === '/api/remanejamento/transfers' && req.method === 'GET') {
@@ -1679,6 +1797,11 @@ const server = http.createServer(async (req, res) => {
       const status = body.status;
       if (!tId || !status) {
         return sendJson(res, 400, { error: 'transferId e status obrigatorios.' });
+      }
+      clearTransitAuditCache(clientCode);
+      if (status === 'CANCELADA') {
+        const resCancel = cancelMotorTransfer(clientCode, tId);
+        return sendJson(res, 200, { ok: true, transferId: tId, status: 'CANCELADA', ...resCancel });
       }
       updateMotorTransferStatus(clientCode, tId, status);
       return sendJson(res, 200, { ok: true, transferId: tId, status });
@@ -1730,10 +1853,11 @@ const server = http.createServer(async (req, res) => {
               observacao: `🧬 Curadoria IA • Guia Consolidada da Rota (${route.filialOrigemNome} ➔ ${route.filialDestinoNome} • ${route.totalItens} produtos)`
             });
 
-            // Abater compra externa na loja destino
+            // Abater compra externa na loja destino e desocupar oportunidade de remanejamento
             for (const it of route.items) {
               const q = Number(it.qtd_sugerida || 1);
               updDest.run(q, q, q, q, latestRun.id, Number(route.filialDestino), Number(it.produto_id));
+              db.prepare('DELETE FROM engine_remanejamento WHERE run_id = ? AND filial_origem = ? AND filial_destino = ? AND produto_id = ?').run(latestRun.id, Number(route.filialOrigem), Number(route.filialDestino), Number(it.produto_id));
             }
 
             count++;
@@ -1779,10 +1903,11 @@ const server = http.createServer(async (req, res) => {
           observacao: `🧬 Curadoria IA • Guia Consolidada da Rota (${targetRoute.filialOrigemNome} ➔ ${targetRoute.filialDestinoNome} • ${targetRoute.totalItens} produtos)`
         });
 
-        // Abater compra externa na loja destino
+        // Abater compra externa na loja destino e desocupar oportunidade de remanejamento
         for (const it of targetRoute.items) {
           const q = Number(it.qtd_sugerida || 1);
           updDest.run(q, q, q, q, latestRun.id, Number(targetRoute.filialDestino), Number(it.produto_id));
+          db.prepare('DELETE FROM engine_remanejamento WHERE run_id = ? AND filial_origem = ? AND filial_destino = ? AND produto_id = ?').run(latestRun.id, Number(targetRoute.filialOrigem), Number(targetRoute.filialDestino), Number(it.produto_id));
         }
 
         return sendJson(res, 200, {
@@ -1824,6 +1949,7 @@ const server = http.createServer(async (req, res) => {
       });
 
       updDest.run(qty, qty, qty, qty, latestRun.id, Number(dest.filial_id), Number(targetDec.produto_id));
+      db.prepare('DELETE FROM engine_remanejamento WHERE run_id = ? AND filial_origem = ? AND filial_destino = ? AND produto_id = ?').run(latestRun.id, Number(donor.filial_id), Number(dest.filial_id), Number(targetDec.produto_id));
 
       return sendJson(res, 200, { ok: true, codigoTransferencia: resTrf.codigoTransferencia, message: `Guia ${resTrf.codigoTransferencia} emitida com sucesso!` });
     }
@@ -1892,13 +2018,24 @@ const server = http.createServer(async (req, res) => {
       const transferId = Number(urlObj.searchParams.get('transferId'));
       const origem = Number(urlObj.searchParams.get('origem'));
       const destino = Number(urlObj.searchParams.get('destino'));
+      const transitAudit = await getOpenTransitsAndOrdersAudit(clientCode);
 
       if (transferId) {
         const transfers = getMotorTransfers(clientCode);
         const transfer = transfers.find((t) => t.id === transferId);
         if (!transfer) return sendJson(res, 404, { error: 'Transferencia nao encontrada.' });
 
-        const buffer = await buildTransferPickListExcel({ transfer, items: transfer.itens || [] });
+        const enrichedItems = (transfer.itens || []).map((it) => ({
+          ...it,
+          transitoInfo: transitAudit.getAudit(
+            Number(transfer.filial_origem),
+            Number(transfer.filial_destino),
+            Number(it.produto_id),
+            0
+          ),
+        }));
+
+        const buffer = await buildTransferPickListExcel({ transfer, items: enrichedItems });
         res.writeHead(200, {
           'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
           'Content-Disposition': `attachment; filename="Guia_Separacao_${transfer.codigo_transferencia}.xlsx"`,
@@ -1914,17 +2051,32 @@ const server = http.createServer(async (req, res) => {
         const origemNome = polMap.get(origem)?.nome_reduz || `Filial ${origem}`;
         const destinoNome = polMap.get(destino)?.nome_reduz || `Filial ${destino}`;
 
-        const items = db.prepare(`
-          SELECT r.*, s.barras, s.labora
+        const rawItems = db.prepare(`
+          SELECT r.*,
+                 COALESCE(s_dest.barras, s_orig.barras) AS barras,
+                 COALESCE(s_dest.labora, s_orig.labora) AS labora,
+                 COALESCE(s_orig.estoque_atual, 0) AS estoque_origem,
+                 COALESCE(s_orig.estoque_min, 0) AS estoque_min_origem,
+                 COALESCE(s_orig.estoque_max, 0) AS estoque_max_origem,
+                 COALESCE(s_dest.estoque_atual, 0) AS estoque_destino,
+                 COALESCE(s_dest.estoque_min, 0) AS estoque_min_destino,
+                 COALESCE(s_dest.estoque_max, 0) AS estoque_max_destino,
+                 COALESCE(s_dest.sugestao_compra_un, 0) AS falta_destino
           FROM engine_remanejamento r
-          LEFT JOIN engine_sku_results s ON s.run_id = r.run_id AND s.produto_id = r.produto_id AND s.filial_id = r.filial_destino
+          LEFT JOIN engine_sku_results s_orig ON s_orig.run_id = r.run_id AND s_orig.produto_id = r.produto_id AND s_orig.filial_id = r.filial_origem
+          LEFT JOIN engine_sku_results s_dest ON s_dest.run_id = r.run_id AND s_dest.produto_id = r.produto_id AND s_dest.filial_id = r.filial_destino
           WHERE r.run_id = ? AND r.filial_origem = ? AND r.filial_destino = ?
           ORDER BY r.tipo ASC, r.valor_total DESC
         `).all(latestRun.id, origem, destino);
 
-        if (!items || items.length === 0) {
+        if (!rawItems || rawItems.length === 0) {
           return sendJson(res, 404, { error: 'Nenhum item encontrado nesta rota.' });
         }
+
+        const items = rawItems.map((it) => ({
+          ...it,
+          transitoInfo: transitAudit.getAudit(origem, destino, it.produto_id, it.falta_destino),
+        }));
 
         const draftTransfer = {
           codigo_transferencia: `PREVIA-F${origem}-F${destino}`,

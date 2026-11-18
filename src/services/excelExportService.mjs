@@ -288,6 +288,7 @@ export async function buildTransferPickListExcel({ transfer, items = [] }) {
   });
 
   const primaryFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F766E' } };
+  const alertFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } };
   const headerFont = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
   const borderThin = {
     top: { style: 'thin', color: { argb: 'FFCBD5E1' } },
@@ -296,34 +297,35 @@ export async function buildTransferPickListExcel({ transfer, items = [] }) {
     right: { style: 'thin', color: { argb: 'FFCBD5E1' } },
   };
 
-  ws.mergeCells('A1:J1');
+  ws.mergeCells('A1:O1');
   const titleCell = ws.getCell('A1');
   titleCell.value = 'GUIA OPERACIONAL DE SEPARAÇÃO E TRANSFERÊNCIA ENTRE LOJAS (LINX BIG)';
   titleCell.font = { name: 'Segoe UI', size: 13, bold: true, color: { argb: 'FF0F766E' } };
   titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
   ws.getRow(1).height = 26;
 
-  ws.mergeCells('A2:E2');
+  ws.mergeCells('A2:G2');
   ws.getCell('A2').value = `Código: ${transfer.codigo_transferencia || `TRF-${transfer.id}`} | Emissão: ${transfer.data_emissao || new Date().toLocaleString('pt-BR')} | Status: ${transfer.status || 'PENDENTE_SEPARACAO'}`;
   ws.getCell('A2').font = { name: 'Segoe UI', size: 9.5, bold: true };
 
-  ws.mergeCells('F2:J2');
-  ws.getCell('F2').value = `Origem: ${transfer.filial_origem_nome || `Filial ${transfer.filial_origem}`} ➔ Destino: ${transfer.filial_destino_nome || `Filial ${transfer.filial_destino}`}`;
-  ws.getCell('F2').font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: 'FFB45309' } };
-  ws.getCell('F2').alignment = { horizontal: 'right' };
+  ws.mergeCells('H2:O2');
+  ws.getCell('H2').value = `Origem: ${transfer.filial_origem_nome || `Filial ${transfer.filial_origem}`} ➔ Destino: ${transfer.filial_destino_nome || `Filial ${transfer.filial_destino}`}`;
+  ws.getCell('H2').font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: 'FFB45309' } };
+  ws.getCell('H2').alignment = { horizontal: 'right' };
   ws.getRow(2).height = 20;
 
   const headers = [
     'Item #', 'Cód BIG', 'Código de Barras (EAN)', 'Descrição do Produto', 'Laboratório / Marca',
-    'Qtd a Separar (un)', 'Qtd Conferida [ ___ ]', 'Custo Unit (R$)', 'Total (R$)', 'Motivo do Remanejamento'
+    'Est. Origem', 'Est. Destino', 'Mín / Máx Dest.', 'Qtd a Transferir (un)', 'Restam Origem',
+    'Qtd Conferida [ ___ ]', 'Custo Unit (R$)', 'Total (R$)', 'Alertas de Trânsito / NFe', 'Motivo do Remanejamento'
   ];
   ws.getRow(4).values = headers;
-  ws.getRow(4).height = 22;
+  ws.getRow(4).height = 24;
   for (let c = 1; c <= headers.length; c++) {
     const cell = ws.getRow(4).getCell(c);
     cell.fill = primaryFill;
     cell.font = headerFont;
-    cell.alignment = { vertical: 'middle', horizontal: c === 4 || c === 5 || c === 10 ? 'left' : 'center' };
+    cell.alignment = { vertical: 'middle', horizontal: c === 4 || c === 5 || c === 14 || c === 15 ? 'left' : 'center' };
   }
 
   let rowIdx = 5;
@@ -337,35 +339,68 @@ export async function buildTransferPickListExcel({ transfer, items = [] }) {
     totalUnits += qtd;
     totalRs += subtotal;
 
+    const estOrig = Number(it.estoqueOrigem ?? it.estoque_origem ?? 0);
+    const estDest = Number(it.estoqueDestino ?? it.estoque_destino ?? 0);
+    const minDest = Number(it.estoqueMinDestino ?? it.estoque_min_destino ?? 0);
+    const maxDest = Number(it.estoqueMaxDestino ?? it.estoque_max_destino ?? 0);
+    const minMaxDestStr = (minDest || maxDest) ? `${minDest} / ${maxDest}` : '-';
+    const restamOrig = Math.max(0, estOrig - qtd);
+
+    let alertaStr = '';
+    const transitoInfo = it.transitoInfo;
+    if (transitoInfo?.alertMsgs?.length) {
+      alertaStr = transitoInfo.alertMsgs.join(' | ');
+    } else if (it.alerta_transito) {
+      alertaStr = it.alerta_transito;
+    } else {
+      alertaStr = 'OK • Sem NFe pendente';
+    }
+
     row.values = [
       idx + 1,
       it.produto_id || it.produtoId,
       it.barras || '',
       it.descricao || '',
       it.labora || '',
+      estOrig,
+      estDest,
+      minMaxDestStr,
       qtd,
+      restamOrig,
       '',
       custo,
       subtotal,
+      alertaStr,
       it.motivo || it.motivo_decisao || 'Excesso resgatado para atender demanda'
     ];
 
     row.height = 20;
-    for (let c = 1; c <= 10; c++) {
+    for (let c = 1; c <= 15; c++) {
       const cell = row.getCell(c);
       cell.border = borderThin;
       cell.font = { name: 'Segoe UI', size: 9 };
-      if (c === 6) {
+      if (c === 9) {
         cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FF0F766E' } };
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
-      } else if (c === 7) {
+      } else if (c === 10) {
+        cell.font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: restamOrig <= 0 ? 'FFDC2626' : 'FF047857' } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      } else if (c === 11) {
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
-      } else if (c === 8 || c === 9) {
+      } else if (c === 12 || c === 13) {
         cell.numFmt = CURRENCY_FMT;
         cell.alignment = { horizontal: 'right', vertical: 'middle' };
-      } else if (c === 1 || c === 2 || c === 3) {
+      } else if (c === 1 || c === 2 || c === 3 || c === 6 || c === 7 || c === 8) {
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      } else if (c === 14) {
+        cell.alignment = { horizontal: 'left', vertical: 'middle' };
+        if (transitoInfo?.temPendencias || (alertaStr && !alertaStr.startsWith('OK'))) {
+          cell.font = { name: 'Segoe UI', size: 8.5, bold: true, color: { argb: 'FF92400E' } };
+          cell.fill = alertFill;
+        } else {
+          cell.font = { name: 'Segoe UI', size: 8.5, color: { argb: 'FF047857' } };
+        }
       } else {
         cell.alignment = { horizontal: 'left', vertical: 'middle' };
       }
@@ -378,41 +413,46 @@ export async function buildTransferPickListExcel({ transfer, items = [] }) {
   totalRow.getCell(4).font = { name: 'Segoe UI', size: 10, bold: true };
   totalRow.getCell(4).alignment = { horizontal: 'right' };
 
-  totalRow.getCell(6).value = totalUnits;
-  totalRow.getCell(6).font = { name: 'Segoe UI', size: 11, bold: true, color: { argb: 'FF0F766E' } };
-  totalRow.getCell(6).alignment = { horizontal: 'center' };
+  totalRow.getCell(9).value = totalUnits;
+  totalRow.getCell(9).font = { name: 'Segoe UI', size: 11, bold: true, color: { argb: 'FF0F766E' } };
+  totalRow.getCell(9).alignment = { horizontal: 'center' };
 
-  totalRow.getCell(9).value = totalRs;
-  totalRow.getCell(9).font = { name: 'Segoe UI', size: 11, bold: true, color: { argb: 'FF047857' } };
-  totalRow.getCell(9).numFmt = CURRENCY_FMT;
-  totalRow.getCell(9).alignment = { horizontal: 'right' };
+  totalRow.getCell(13).value = totalRs;
+  totalRow.getCell(13).font = { name: 'Segoe UI', size: 11, bold: true, color: { argb: 'FF047857' } };
+  totalRow.getCell(13).numFmt = CURRENCY_FMT;
+  totalRow.getCell(13).alignment = { horizontal: 'right' };
   totalRow.height = 24;
 
-  for (let c = 1; c <= 10; c++) {
+  for (let c = 1; c <= 15; c++) {
     totalRow.getCell(c).border = { top: { style: 'medium' }, bottom: { style: 'medium' } };
   }
 
   rowIdx += 3;
-  ws.getRow(rowIdx).values = ['_____________________________', '', '_____________________________', '', '', '_____________________________', '', '', '_____________________________'];
+  ws.getRow(rowIdx).values = ['_____________________________', '', '', '_____________________________', '', '', '', '_____________________________', '', '', '', '_____________________________'];
   rowIdx++;
-  ws.getRow(rowIdx).values = ['Separação / Estoquista (Origem)', '', 'Conferência / Expedição', '', '', 'Motorista / Transporte', '', '', 'Recebimento / Conferência (Destino)'];
-  for (let c = 1; c <= 10; c++) {
+  ws.getRow(rowIdx).values = ['Separação / Estoquista (Origem)', '', '', 'Conferência / Expedição', '', '', '', 'Motorista / Transporte', '', '', '', 'Recebimento / Conferência (Destino)'];
+  for (let c = 1; c <= 15; c++) {
     ws.getRow(rowIdx - 1).getCell(c).alignment = { horizontal: 'center' };
     ws.getRow(rowIdx).getCell(c).alignment = { horizontal: 'center' };
     ws.getRow(rowIdx).getCell(c).font = { name: 'Segoe UI', size: 8, bold: true, color: { argb: 'FF64748B' } };
   }
 
   ws.columns = [
-    { width: 7 },
-    { width: 10 },
-    { width: 16 },
-    { width: 38 },
-    { width: 20 },
-    { width: 14 },
-    { width: 16 },
-    { width: 13 },
-    { width: 14 },
-    { width: 32 },
+    { width: 7 },   // Item #
+    { width: 10 },  // Cód BIG
+    { width: 16 },  // EAN
+    { width: 36 },  // Descrição
+    { width: 20 },  // Laboratório
+    { width: 11 },  // Est Orig
+    { width: 11 },  // Est Dest
+    { width: 14 },  // Mín/Máx Dest
+    { width: 15 },  // Qtd Transferir
+    { width: 14 },  // Restam Origem
+    { width: 16 },  // Conferido
+    { width: 13 },  // Custo Unit
+    { width: 14 },  // Total
+    { width: 34 },  // Alertas Trânsito / NFe
+    { width: 34 },  // Motivo
   ];
 
   return wb.xlsx.writeBuffer();
