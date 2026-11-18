@@ -36,33 +36,51 @@ function getGitHubToken() {
 }
 
 // 2. Upload de arquivo binário para a Release
-async function uploadAsset(uploadUrlRaw, filePath, fileName, mimeType, token) {
-  const uploadUrl = uploadUrlRaw.replace(/\{(\?name,label|\?name)\}/, `?name=${encodeURIComponent(fileName)}`);
-  const fileStats = fs.statSync(filePath);
-  const fileBytes = fs.readFileSync(filePath);
-  const sizeMb = (fileStats.size / 1024 / 1024).toFixed(2);
+function uploadAsset(uploadUrlRaw, filePath, fileName, mimeType, token) {
+  return new Promise((resolve, reject) => {
+    const uploadUrl = uploadUrlRaw.replace(/\{(\?name,label|\?name)\}/, `?name=${encodeURIComponent(fileName)}`);
+    const fileStats = fs.statSync(filePath);
+    const sizeMb = (fileStats.size / 1024 / 1024).toFixed(2);
 
-  console.log(`[*] Enviando ${fileName} (${sizeMb} MB) para a Release...`);
+    console.log(`[*] Enviando ${fileName} (${sizeMb} MB) para a Release via curl...`);
 
-  const res = await fetch(uploadUrl, {
-    method: 'POST',
-    headers: {
-      'Authorization': `token ${token}`,
-      'Content-Type': mimeType,
-      'Content-Length': String(fileStats.size),
-      'User-Agent': 'MesaComprasIA-Uploader',
-    },
-    body: fileBytes,
+    const curl = spawn('curl.exe', [
+      '-s',
+      '-w', '\n%{http_code}',
+      '-X', 'POST',
+      '-H', `Authorization: token ${token}`,
+      '-H', `Content-Type: ${mimeType}`,
+      '--data-binary', `@${filePath}`,
+      uploadUrl,
+    ]);
+
+    let stdout = '';
+    let stderr = '';
+    curl.stdout.on('data', d => stdout += d);
+    curl.stderr.on('data', d => stderr += d);
+
+    curl.on('close', (code) => {
+      if (code !== 0) {
+        return reject(new Error(`curl falhou com código ${code}: ${stderr}`));
+      }
+      const lines = stdout.trim().split('\n');
+      const httpCode = lines[lines.length - 1].trim();
+      const responseBody = lines.slice(0, lines.length - 1).join('\n');
+
+      if (httpCode.startsWith('2')) {
+        try {
+          const asset = JSON.parse(responseBody);
+          console.log(`  ✓ ${fileName} enviado com sucesso! URL: ${asset.browser_download_url}`);
+          resolve(asset);
+        } catch {
+          console.log(`  ✓ ${fileName} enviado com sucesso!`);
+          resolve({ ok: true });
+        }
+      } else {
+        reject(new Error(`Erro ao enviar ${fileName} (HTTP ${httpCode}): ${responseBody}`));
+      }
+    });
   });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Erro ao enviar ${fileName} (HTTP ${res.status}): ${errText}`);
-  }
-
-  const asset = await res.json();
-  console.log(`  ✓ ${fileName} enviado com sucesso! URL: ${asset.browser_download_url}`);
-  return asset;
 }
 
 async function main() {
