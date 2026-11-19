@@ -2,8 +2,10 @@ import { getAnalyticsDb, getGroupCoverageConfigs, saveGroupCoverageConfigs, getA
 import { getCachedCmedMaps, lookupCmedCascade } from '../services/cmedService.mjs';
 import { buildPresentationSignature } from '../../lib/moleculeNormalizer.mjs';
 
-const NON_BUYABLE_PATTERNS = /\b(TAXA\s+DE\s+ENTREGA|TAXA\s+ENT|FRETE|PROVADOR|AMOSTRA\s+GRATIS|SACOLA\s+PLAST|SACOLA|EMBALAGEM\s+PRESENTE|SERVICO|UNIFORME|BOBINA|CAIXA\s+PAPELAO)\b/i;
+const NON_BUYABLE_PATTERNS = /\b(TAXA\s+DE\s+ENTREGA|TAXA\s+ENT|FRETE|PROVADOR|AMOSTRA\s+GRATIS|SACOLA\s+PLAST|SACOLA|EMBALAGEM\s+PRESENTE|SERVICO|UNIFORME\s+(?:FUNC|LOJA|COLAB)|CAMISA\s+UNIFORME|BOBINA|CAIXA\s+PAPELAO)\b/i;
 const MED_GROUP_PATTERNS = /\b(ETICO|ÉTICO|GENERICO|GENÉRICO|SIMILAR|PSICO|ANTIMICROB|ANTICONCEPCIONAL|HORMON|TERMO)\b/i;
+
+export const NUTRICAO_INFANTIL_ALIMENTAR_PATTERNS = /\b(LEITE\b|LEITES\b|FORMULA\s+INFANTIL|INFANTIL\s+FORMULA|APTAMIL|NESTOGENO|NAN\s+(?:COMFOR|SUPREMA|SOJA|SL|PRO|OPTIPRO|CARE)|ENFAMIL|MUCILON|MILNUTRI|SUSTAGEN|NUTRINHO|COMPOSTO\s+LACTEO|FARINHA\s+LACTEA|CREMOGEMA|ALIMENTO\s+INFANTIL|SUPLEMENTO\s+ALIMENTAR|NUTREN)\b/i;
 
 export const PERFUMARIA_HPC_PATTERNS = /\b(SHAMPOO|SHAMP|CONDICIONADOR|CONDIC|SABONETE|SABON|SAB|DESODORANTE|DESOD|ANTITRANSPIRANTE|FRALDA|FRALDAS|ABSORVENTE|ABSORV|ESCOVA|ESCOVAS|FIO\s*DENTAL|CREME\s*DENTAL|PASTA\s*DENTE|ENXAGUANTE|ENXAGUATORIO|TINTURA|COLORACAO|ESMALTE|ACETONA|ALGODAO|COTONETE|HASTE\s*FLEXIVEL|PERFUME|COLONIA|DEO\s*COLONIA|BODY\s*SPLASH|HIDRATANTE|LOCAO|PROTETOR\s*SOLAR|BLOQUEADOR|BRONZEADOR|REPELENTE|LENCO\s*UMEDECIDO|CHUPETA|MAMADEIRA|MORDEDOR|PRESERVATIVO|CAMISINHA|LUBRIFICANTE|APARELHO\s*BARBEAR|LAMINA|CARGA\s*BARBEAR|ESPUMA\s*BARBEAR|GEL\s*CABELO|POMADA\s*CABELO|CERA\s*DEPILATORIA|FOLHA\s*DEPILATORIA|LIXA|CORTADOR\s*UNHA|PINCA|TOALHA|CURATIVO|BAND-AID|BAND\s*AID|GAZE|ESPARADRAPO|SORO\s*FISIOLOGICO|AGUA\s*OXIGENADA|ALCOOL\s*70|ALCOOL\s*ETILICO|BELEZA|COSMETICO|MAKE\s*UP|MAQUIAGEM)\b/i;
 
@@ -244,8 +246,9 @@ export function runPurchasingEngine(profile, rawData, { weeksWindow = profile.de
     const extraUnit = p.extra_barras_unit ? p.extra_barras_unit.split(',') : [];
     const extraMaster = p.extra_barras_master ? p.extra_barras_master.split(',') : [];
 
-    // Protecao estrita contra perfumaria/higiene/correlatos serem confundidos com medicamentos
-    const isPerfumariaOrNonMed = PERFUMARIA_HPC_PATTERNS.test(p.descricao) || PERFUMARIA_HPC_PATTERNS.test(p.grupo_nome);
+    // Protecao estrita contra perfumaria/higiene/nutricao infantil serem confundidos com medicamentos ou herdarem moleculas clonadas no ERP BIG
+    const isFoodOrNutrition = NUTRICAO_INFANTIL_ALIMENTAR_PATTERNS.test(p.descricao) || NUTRICAO_INFANTIL_ALIMENTAR_PATTERNS.test(p.grupo_nome);
+    const isPerfumariaOrNonMed = isFoodOrNutrition || PERFUMARIA_HPC_PATTERNS.test(p.descricao) || PERFUMARIA_HPC_PATTERNS.test(p.grupo_nome);
     const looksLikeMedGroup = !isPerfumariaOrNonMed && MED_GROUP_PATTERNS.test(p.grupo_nome);
 
     const cmedLookup = isPerfumariaOrNonMed
@@ -383,45 +386,10 @@ export function runPurchasingEngine(profile, rawData, { weeksWindow = profile.de
     obj.saleDays13 += Number(w.sale_days || 0);
   }
 
-  // Validação inteligente de reativação de suspensões de desova (REV-021 corrigido)
-  // Utiliza prodMap com moleculeKey resolvida, stockMap real da filial e vendas do salesMap
-  for (const ms of motorSuspensions) {
-    if (ms.origem === 'CURADORIA_DESOVA' || (ms.motivo && ms.motivo.toLowerCase().includes('desova'))) {
-      const molKey = ms.molecule_key;
-      if (molKey) {
-        const competitors = Array.from(prodMap.values()).filter((p) => p.moleculeKey === molKey && p.produto_id !== ms.produto_id);
-        if (competitors.length > 0) {
-          let compStockTotal = 0;
-          let compSales13Total = 0;
-          for (const comp of competitors) {
-            const skKey = `${ms.filial_id}|${comp.produto_id}`;
-            const st = stockMap.get(skKey);
-            const sl = salesMap.get(skKey);
-            compStockTotal += Number(st?.estoque || 0);
-            if (sl) compSales13Total += sl.weeks.reduce((a, b) => a + b, 0);
-          }
-          const compDdvTotal = compSales13Total / (13 * 7);
-          const compCoverage = compDdvTotal > 0 ? (compStockTotal / compDdvTotal) : (compStockTotal > 0 ? 999 : 0);
-          const threshold = Number(ms.gatilho_cobertura_limite || 7.0);
-
-          // Só reativa se o concorrente zerou o estoque físico OU a cobertura caiu para <= limite seguro (ex: 7d)
-          if (compStockTotal === 0 || (compDdvTotal > 0 && compCoverage <= threshold)) {
-            removeSkuSuspension(clientCode, ms.filial_id, ms.produto_id);
-            suspendedSet.delete(`${ms.filial_id}|${ms.produto_id}`);
-            recordBuyerLearning(clientCode, {
-              filial_id: ms.filial_id,
-              produto_id: ms.produto_id,
-              molecule_key: ms.molecule_key,
-              descricao: ms.descricao,
-              tipo_evento: 'REATIVACAO_AUTOMATICA_DESOVA',
-              motivo: `Estoque de marcas concorrentes atingiu ${compCoverage.toFixed(1)}d (limite seguro <= ${threshold}d). Compra reativada automaticamente sem ruptura!`,
-              acao_futura: 'LIBERAR_COMPRA',
-            });
-          }
-        }
-      }
-    }
-  }
+  // Regra Estrita do Comprador: Uma vez em suspensão, o item permanece suspenso
+  // até que o comprador retire manualmente no Motor ou no BIG ("Até o comprador tirar").
+  // O motor NÃO desativa suspensões automaticamente; em vez disso, alertará o comprador
+  // na tela com o selo "🚨 SUSPENSO COM DEMANDA ATIVA" quando houver necessidade de reposição.
 
   const yoyMap = new Map(rawData.yoySales.map((r) => [`${r.filial_id}|${r.produto_id}`, r]));
   const epMap = new Map();
@@ -730,6 +698,34 @@ export function runPurchasingEngine(profile, rawData, { weeksWindow = profile.de
         item.r.isTrafficBuilder = true;
       }
 
+      // NOVO: FREIO DE GIRO / VELOCITY GATE PARA CURVA A & B (Proteção de Capital em Itens de Alto Ticket com Venda Esporádica)
+      // Produtos de alto valor monetário (ex: Venvanse, Concerta, Ozempic, Seizla) com baixíssima frequência não podem ser Curva A.
+      // Curva A exige faturamento no Pareto E frequência/velocidade real de vendas (mínimo 4 saídas no trimestre ou DDV >= 0.08 un/dia).
+      const isHighTicket = (Number(item.r.precoVenda || 0) >= 100 || Number(item.r.custoUnit || 0) >= 70);
+      const isLowVelocity = (item.r.vendas13s < 4 || item.r.ddvProjetada < 0.08);
+      const erpClasse = String(item.r.curvaErpClasse || '').toUpperCase().trim();
+      const isErpCurvaC = erpClasse === 'C' || (item.r.curvaErpRanking && String(item.r.curvaErpRanking).trim().startsWith('C'));
+
+      if (abc === 'A') {
+        if (isLowVelocity || isErpCurvaC) {
+          item.r.isHighTicketLowVelocity = true;
+          // Se vendeu apenas 1 ou 2 caixas no trimestre (ou é C no ERP), rebaixa para Curva C real
+          if (item.r.vendas13s <= 2 || isErpCurvaC) {
+            abc = 'C';
+          } else {
+            // Se vendeu 3 caixas e ERP é B, alinha para Curva B
+            abc = 'B';
+          }
+        }
+      } else if (abc === 'B') {
+        if (item.r.vendas13s <= 1 && isErpCurvaC) {
+          item.r.isHighTicketLowVelocity = true;
+          abc = 'C';
+        } else if (isHighTicket && item.r.vendas13s <= 2) {
+          item.r.isHighTicketLowVelocity = true;
+        }
+      }
+
       // Curva primária calculada pela inteligência do Motor
       item.r.abcClass = abc;
     }
@@ -780,7 +776,7 @@ export function runPurchasingEngine(profile, rawData, { weeksWindow = profile.de
     r.diasEstoqueMin = diasMin;
     r.diasEstoqueMax = diasMax;
 
-    if (!r.isSalesFilial || !r.p.isBuyable || r.abcClass === 'D' || r.ddvProjetada <= 0 || r.suspended) {
+    if (!r.isSalesFilial || !r.p.isBuyable || r.abcClass === 'D' || r.ddvProjetada <= 0) {
       r.estoqueSeg = 0;
       r.estoqueMin = 0;
       r.estoqueMax = 0;
@@ -789,9 +785,19 @@ export function runPurchasingEngine(profile, rawData, { weeksWindow = profile.de
       continue;
     }
 
-    // Calculo calibrado de Ponto de Pedido (estoqueMin) e Teto (estoqueMax) baseado nos dias do grupo
-    r.estoqueMin = Math.max(1, Math.ceil(r.ddvProjetada * diasMin));
-    let estMax = Math.max(r.estoqueMin, Math.ceil(r.ddvProjetada * diasMax));
+    // 1. Demanda durante o Lead Time médio do fornecedor (tempo de estrada)
+    const demandaLt = Math.ceil(r.ddvProjetada * Math.max(1, ltStat.mean));
+
+    // 2. Buffer de Estoque de Segurança calibrado por Curva ABC e dias do grupo (nunca zera)
+    const diasSegCalc = Math.max(1, diasMin > ltStat.mean ? (diasMin - ltStat.mean) : (r.abcClass === 'A' ? 2 : r.abcClass === 'B' ? 3 : 5));
+    r.estoqueSeg = Math.max(1, Math.ceil(r.ddvProjetada * diasSegCalc));
+
+    // 3. Ponto de Pedido (estoqueMin): Demanda no Lead Time + Estoque de Segurança (respeita piso de diasMin do grupo)
+    const minConfigurado = Math.ceil(r.ddvProjetada * diasMin);
+    r.estoqueMin = Math.max(1, minConfigurado, demandaLt + r.estoqueSeg);
+
+    // 4. Teto Máximo Alvo (estoqueMax)
+    let estMax = Math.max(r.estoqueMin + 1, Math.ceil(r.ddvProjetada * diasMax));
 
     // Faceamento minimo de gondola em Perfumaria/Dermo/Suplemento
     const isNonMedLongCycle = ['PERFUMARIA_HPC', 'DERMOCOSMETICO', 'SUPLEMENTO_VITAMINA'].includes(r.p.macroCategoria);
@@ -803,12 +809,40 @@ export function runPurchasingEngine(profile, rawData, { weeksWindow = profile.de
       estMax = Math.min(estMax, Math.max(faceFloor, Math.ceil(r.ddvProjetada * 15)));
     }
 
-    r.estoqueMax = Math.max(r.estoqueMin, estMax);
-    r.estoqueSeg = Math.max(0, r.estoqueMin - Math.ceil(r.ddvProjetada * ltStat.mean));
+    // NOVO: Calibração estrita para itens High-Ticket Low-Velocity (ex: Venvanse, Concerta, Seizla)
+    if (r.isHighTicketLowVelocity || (r.vendas13s <= 2 && (r.precoVenda >= 100 || r.custoUnit >= 70))) {
+      r.isHighTicketLowVelocity = true;
+      r.estoqueSeg = 1;
+      r.estoqueMin = 1;
+      r.estoqueMax = 1; // Teto estrito de 1 unidade para compras sob demanda de balcão!
+      r.diasEstoqueMin = Math.min(r.diasEstoqueMin || 7, 7);
+      r.diasEstoqueMax = Math.min(r.diasEstoqueMax || 15, 15);
+    } else {
+      r.estoqueMax = Math.max(r.estoqueMin, estMax);
+    }
+
     r.coberturaDias = round2(r.estoqueAtual / r.ddvProjetada);
 
     const disponivel = r.estoqueAtual - r.estoqueReserva + r.transitoReal;
     let nec = 0;
+
+    // Se o item estiver em suspensão de compras (bloqueado pelo comprador no Motor ou no BIG)
+    if (r.suspended) {
+      if (disponivel <= r.estoqueMin && r.ddvProjetada > 0) {
+        r.suspensaoDemandaAtiva = true;
+        const necPotencial = Math.max(1, r.estoqueMax - disponivel);
+        r.necessidadeBloqueadaUn = necPotencial;
+        r.necessidadeBloqueadaRs = round2(necPotencial * r.custoUnit);
+      } else {
+        r.suspensaoDemandaAtiva = false;
+        r.necessidadeBloqueadaUn = 0;
+        r.necessidadeBloqueadaRs = 0;
+      }
+      r.necessidadeBruta = 0;
+      r.sugestaoCompraUn = 0;
+      r.sugestaoCompraRs = 0;
+      continue;
+    }
 
     if (r.emCarencia && r.tipoReposicao === 'sellout_1to1') {
       // LOJA RECÉM-INAUGURADA EM CARÊNCIA (Sell-Out 1:1 Validado com a Rede Madura)
@@ -832,7 +866,7 @@ export function runPurchasingEngine(profile, rawData, { weeksWindow = profile.de
       if (disponivel <= r.estoqueMin && r.ddvProjetada > 0 && r.abcClass !== 'D' && !r.suspended) {
         nec = Math.max(0, r.estoqueMax - disponivel);
       }
-      const isCurvaA = r.abcClass === 'A' || /A/i.test(r.curvaErpClasse || '');
+      const isCurvaA = (r.abcClass === 'A' || /A/i.test(r.curvaErpClasse || '')) && !r.isHighTicketLowVelocity;
       if (isCurvaA && disponivel <= 0 && nec === 0 && r.ddvProjetada > 0 && !r.suspended) {
         nec = Math.max(1, r.estoqueMin || 1);
       }
@@ -1031,7 +1065,7 @@ export function runPurchasingEngine(profile, rawData, { weeksWindow = profile.de
     const reasons = [];
     const skKey = `${r.filialId}|${r.produtoId}`;
 
-    if (r.estoqueAtual <= 0 && r.ddvProjetada > 0 && (r.abcClass === 'A' || r.abcClass === 'B')) {
+    if (r.estoqueAtual <= 0 && r.ddvProjetada > 0 && (r.abcClass === 'A' || r.abcClass === 'B') && !r.isHighTicketLowVelocity && !r.suspended) {
       ex.push(`RUPTURA_${r.abcClass}`);
       reasons.push(`Saldo ${r.estoqueAtual} com giro de ${round2(r.ddvProjetada)}/dia`);
     }
@@ -1085,9 +1119,25 @@ export function runPurchasingEngine(profile, rawData, { weeksWindow = profile.de
 
     r.excecoes = ex;
     const disponivel = r.estoqueAtual - r.estoqueReserva + r.transitoReal;
-    const isCurvaA = r.abcClass === 'A' || /A/i.test(r.curvaErpClasse || '');
-    if (r.sugestaoCompraUn > 0) {
-      if (isCurvaA && disponivel <= 0) {
+    const isCurvaA = (r.abcClass === 'A' || /A/i.test(r.curvaErpClasse || '')) && !r.isHighTicketLowVelocity;
+
+    if (r.suspended) {
+      if (r.suspensaoDemandaAtiva) {
+        ex.push('SUSPENSO_COM_DEMANDA');
+        reasons.unshift(
+          `🚨 SUSPENSO COM DEMANDA ATIVA: Estoque zerado/crítico (${r.estoqueAtual} un <= mín ${r.estoqueMin} un) com giro (${round2(r.ddvProjetada)} un/dia). Desbloqueie a compra para abastecer!`
+        );
+      } else {
+        reasons.unshift(
+          `🔒 Compra suspensa com estoque seguro (${r.estoqueAtual} un | cob. ${r.coberturaDias}d cobrindo mín ${r.estoqueMin} un).`
+        );
+      }
+    } else if (r.sugestaoCompraUn > 0) {
+      if (r.isHighTicketLowVelocity) {
+        reasons.unshift(
+          `🎯 Compra Cautelosa (Item de Alto Valor | Curva ${r.abcClass}): Venda esporádica (${r.vendas13s} un em 13 sem) -> repor estritamente ${r.sugestaoCompraUn} un sob demanda para evitar capital imobilizado`
+        );
+      } else if (isCurvaA && disponivel <= 0) {
         reasons.unshift(
           `🚨 Ruptura Crítica Curva A: Estoque zerado em produto de alto giro -> repor ${r.sugestaoCompraUn} un imediatamente para evitar perda de clientes`
         );
@@ -1097,7 +1147,9 @@ export function runPurchasingEngine(profile, rawData, { weeksWindow = profile.de
         );
       }
     } else if (r.ddvProjetada > 0) {
-      if ((r.abcClass === 'D' || r.abcClass === 'C') && disponivel <= 0) {
+      if (r.isHighTicketLowVelocity && disponivel <= 0) {
+        reasons.unshift(`Item Alto Ticket Curva ${r.abcClass} sem estoque: Venda esporádica (${r.vendas13s} un em 13 sem)`);
+      } else if ((r.abcClass === 'D' || r.abcClass === 'C') && disponivel <= 0) {
         reasons.unshift(`Item Curva ${r.abcClass} sem estoque: Sugerida compra sob demanda de balcão`);
       } else if (disponivel > r.estoqueMin && disponivel <= r.estoqueMax) {
         reasons.unshift(
@@ -1161,9 +1213,10 @@ export function runPurchasingEngine(profile, rawData, { weeksWindow = profile.de
         perda_2026_un, perda_2026_rs, remanejamento_entrada, remanejamento_saida, sugestao_compra_un, sugestao_compra_rs,
         roi_marginal, custo_variacao_pct, excecoes_json, justificativa_ia, ultimas_entradas_json,
         curva_erp_ranking, curva_erp_classe, dias_estoque_min, dias_estoque_max, pareto_pct,
-        filial_nome, filial_reduz, transito_remanejamento
+        filial_nome, filial_reduz, transito_remanejamento, necessidade_bruta,
+        dismissed, is_high_ticket_low_velocity, suspensao_demanda_ativa, necessidade_bloqueada_un, necessidade_bloqueada_rs
       ) VALUES (
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       )
     `);
 
@@ -1238,7 +1291,13 @@ export function runPurchasingEngine(profile, rawData, { weeksWindow = profile.de
         r.paretoPct || 0,
         r.filialNome || '',
         r.filialReduz || '',
-        r.transitoRemanejamento || 0
+        r.transitoRemanejamento || 0,
+        r.necessidadeBruta || 0,
+        r.suspended ? 1 : 0,
+        r.isHighTicketLowVelocity ? 1 : 0,
+        r.suspensaoDemandaAtiva ? 1 : 0,
+        r.necessidadeBloqueadaUn || 0,
+        r.necessidadeBloqueadaRs || 0
       );
     }
 

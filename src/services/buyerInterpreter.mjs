@@ -56,9 +56,15 @@ export function buildBuyerDecisionAnalysis(row) {
   const excecoes = Array.isArray(row.excecoes)
     ? row.excecoes
     : JSON.parse(row.excecoes_json || '[]');
-  const entries = Array.isArray(row.ultimas_entradas)
-    ? row.ultimas_entradas
-    : JSON.parse(row.ultimas_entradas_json || '[]');
+  let entries = [];
+  if (Array.isArray(row.ultimas_entradas)) {
+    entries = row.ultimas_entradas;
+  } else {
+    try {
+      const parsed = JSON.parse(row.ultimas_entradas_json || '[]');
+      entries = Array.isArray(parsed) ? parsed : (parsed?.list || []);
+    } catch {}
+  }
 
   const buyQty = row.budget_qtd !== undefined ? Number(row.budget_qtd) : Number(row.sugestao_compra_un || 0);
   const buyRs = row.budget_rs !== undefined ? Number(row.budget_rs) : Number(row.sugestao_compra_rs || 0);
@@ -118,7 +124,15 @@ export function buildBuyerDecisionAnalysis(row) {
       acaoCodigo = 'COMPRAR_REPOR';
       acaoLabel = 'INCLUIR NA COTAÇÃO';
       acaoTom = 'success';
-      parecerCurto = `Abaixo do minimo (${estoque + transito} vs ${minEst} un): repor ${buyQty} un para cobrir ${fmtNum(lt, 0)}d de entrega + ciclo ate ${maxEst} un.`;
+      const resVal = Number(row.estoque_reserva || 0);
+      const dispEfetivo = estoque - resVal + transito;
+      const resDesc = resVal > 0 ? ` [${estoque} est - ${resVal} res]` : '';
+      if (row.is_custom_horizon) {
+        const hDias = row.horizon_dias || 7;
+        parecerCurto = `Horizonte ${hDias}d (${dispEfetivo} disp.${resDesc} vs ${minEst} mín): repor ${buyQty} un para cobrir ciclo até ${maxEst} un.`;
+      } else {
+        parecerCurto = `Padrão BIG (${dispEfetivo} disp.${resDesc} vs ${minEst} mín): repor ${buyQty} un para cobrir ${fmtNum(lt, 0)}d de entrega + ciclo até ${maxEst} un.`;
+      }
     }
   } else if (ddvPbm > 0 && ddvProj === 0) {
     acaoCodigo = 'BLOQUEADO_PBM';
@@ -196,12 +210,15 @@ export function buildBuyerDecisionAnalysis(row) {
     passoDemanda.push(`Sazonalidade neutra (1,00x) -> DDV Projetada final de ${fmtNum(ddvProj, 2)}/dia.`);
   }
 
+  const ritmoReal6s = vendas6s > 0 ? (vendas6s / 42) : 0;
+  const projFutura6s = Math.round(ddvProj * 42);
+
   const linhasDemanda = [
     {
       icone: '📈',
-      rotulo: 'Vendas Brutas (Histórico)',
+      rotulo: 'Histórico de Saídas (PDV)',
       valor: `${Math.round(vendas13s)} un (13 sem)`,
-      sub: `${Math.round(vendas6s)} un nas últimas 6 sem • Ritmo: ${fmtNum(ddvBruta, 2)}/dia`,
+      sub: `${Math.round(vendas6s)} un nas últimas 6 sem (${fmtNum(ritmoReal6s, 2)}/dia) • Ponderado: ${fmtNum(ddvBruta, 2)}/dia`,
       tom: 'neutral'
     }
   ];
@@ -240,7 +257,7 @@ export function buildBuyerDecisionAnalysis(row) {
     icone: '🎯',
     rotulo: 'DDV Projetada Final',
     valor: `${fmtNum(ddvProj, 2)} un/dia`,
-    sub: `Base final para dimensionamento do pedido`,
+    sub: `Projeção próx. 6 sem: ${projFutura6s} un (${saz !== 1 ? `c/ sazonalidade ${fmtNum(saz, 2)}x` : 'sazonalidade neutra'})`,
     destaque: true,
     tom: 'accent'
   });
@@ -338,9 +355,19 @@ export function buildBuyerDecisionAnalysis(row) {
     });
   }
 
-  const diasCobAlvo = row.dias_estoque_max || (row.abc_class === 'A' ? 12 : row.abc_class === 'B' ? 15 : 20);
+  const isHorizon = Boolean(row.is_custom_horizon);
+  const diasCobAlvo = isHorizon ? Number(row.horizon_dias || 7) : (row.dias_estoque_max || (row.abc_class === 'A' ? 12 : row.abc_class === 'B' ? 15 : 20));
   const consumoAlvo = round2(ddvProj * diasCobAlvo);
-  const dispTotal = estoque + transito - Number(row.estoque_reserva || 0);
+  const reservaEst = Number(row.estoque_reserva || 0);
+  const dispTotal = estoque + transito - reservaEst;
+  const resFmt = reservaEst > 0 ? ` - ${reservaEst} res` : '';
+
+  let formulaTexto = '';
+  if (isHorizon) {
+    formulaTexto = `Horizonte ${diasCobAlvo}d: (${fmtNum(ddvProj, 2)} un/dia × ${diasCobAlvo}d = ${fmtNum(consumoAlvo, 1)} un) + Seg ${segEst} un = Alvo ${maxEst} un | Menos Disp ${dispTotal} un (${estoque} est${resFmt} + ${transito} tr) = ${buyQty} un a comprar (${fmtBrl(buyRs)})`;
+  } else {
+    formulaTexto = `Padrão BIG: Disp ${dispTotal} un (${estoque} est${resFmt} + ${transito} tr) <= Mín ${minEst} un -> Repor ${buyQty} un até o Máximo de ${maxEst} un (${fmtBrl(buyRs)}) | Cobertura Alvo: ${diasCobAlvo}d`;
+  }
 
   const memoriaCalculo = {
     ddvDiaria: round2(ddvProj),
@@ -349,12 +376,15 @@ export function buildBuyerDecisionAnalysis(row) {
     estoqueSeguranca: segEst,
     estoqueMaximoAlvo: maxEst,
     estoqueFisico: estoque,
+    estoqueReserva: reservaEst,
     pedidosTransito: transito,
     disponivelTotal: dispTotal,
     sugestaoLiquida: buyQty,
     custoUnit: Number(row.custo_unit || 0),
     valorTotalRs: buyRs,
-    formulaTexto: `(${fmtNum(ddvProj, 2)} un/dia × ${diasCobAlvo}d) + Seg ${segEst} un = Alvo ${maxEst} un | Menos Disp ${dispTotal} un (${estoque} est + ${transito} tr) = ${buyQty} un a comprar (${fmtBrl(buyRs)})`
+    isCustomHorizon: isHorizon,
+    estoqueMin: minEst,
+    formulaTexto
   };
 
   return {

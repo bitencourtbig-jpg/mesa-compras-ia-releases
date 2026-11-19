@@ -113,6 +113,8 @@ function initSchema(db) {
   safeAddColumn(db, 'engine_sku_results', 'curva_erp_classe', 'TEXT');
   safeAddColumn(db, 'engine_sku_results', 'dias_estoque_min', 'INTEGER DEFAULT 0');
   safeAddColumn(db, 'engine_sku_results', 'dias_estoque_max', 'INTEGER DEFAULT 0');
+  safeAddColumn(db, 'engine_sku_results', 'necessidade_bruta', 'REAL DEFAULT 0');
+  safeAddColumn(db, 'engine_sku_results', 'reman_aprovado', 'INTEGER DEFAULT 0');
   safeAddColumn(db, 'engine_sku_results', 'grupo_pai_nome', 'TEXT');
   safeAddColumn(db, 'engine_sku_results', 'grupo_filho_nome', 'TEXT');
   safeAddColumn(db, 'engine_sku_results', 'dismissed', 'INTEGER NOT NULL DEFAULT 0');
@@ -120,6 +122,10 @@ function initSchema(db) {
   safeAddColumn(db, 'engine_sku_results', 'filial_nome', 'TEXT');
   safeAddColumn(db, 'engine_sku_results', 'filial_reduz', 'TEXT');
   safeAddColumn(db, 'engine_sku_results', 'transito_remanejamento', 'REAL DEFAULT 0');
+  safeAddColumn(db, 'engine_sku_results', 'is_high_ticket_low_velocity', 'INTEGER DEFAULT 0');
+  safeAddColumn(db, 'engine_sku_results', 'suspensao_demanda_ativa', 'INTEGER DEFAULT 0');
+  safeAddColumn(db, 'engine_sku_results', 'necessidade_bloqueada_un', 'REAL DEFAULT 0');
+  safeAddColumn(db, 'engine_sku_results', 'necessidade_bloqueada_rs', 'REAL DEFAULT 0');
 
   // cmed_catalog
   safeAddColumn(db, 'cmed_catalog', 'sig_key', 'TEXT');
@@ -413,7 +419,13 @@ function initSchema(db) {
       curva_erp_classe TEXT,
       dias_estoque_min INTEGER DEFAULT 0,
       dias_estoque_max INTEGER DEFAULT 0,
+      necessidade_bruta REAL NOT NULL DEFAULT 0,
+      reman_aprovado INTEGER NOT NULL DEFAULT 0,
       dismissed INTEGER NOT NULL DEFAULT 0,
+      is_high_ticket_low_velocity INTEGER NOT NULL DEFAULT 0,
+      suspensao_demanda_ativa INTEGER NOT NULL DEFAULT 0,
+      necessidade_bloqueada_un REAL NOT NULL DEFAULT 0,
+      necessidade_bloqueada_rs REAL NOT NULL DEFAULT 0,
       PRIMARY KEY (run_id, filial_id, produto_id)
     );
 
@@ -666,7 +678,10 @@ function initSchema(db) {
     'CREATE INDEX IF NOT EXISTS idx_reman_run_tipo ON engine_remanejamento(run_id, tipo);',
     'CREATE INDEX IF NOT EXISTS idx_reman_run_prod ON engine_remanejamento(run_id, produto_id);',
     'CREATE INDEX IF NOT EXISTS idx_buyer_learning_prod ON buyer_learning_log(client_code, filial_id, produto_id);',
-    'CREATE INDEX IF NOT EXISTS idx_buyer_learning_mol ON buyer_learning_log(client_code, filial_id, molecule_key);'
+    'CREATE INDEX IF NOT EXISTS idx_buyer_learning_mol ON buyer_learning_log(client_code, filial_id, molecule_key);',
+    'CREATE INDEX IF NOT EXISTS idx_esr_order_first ON engine_sku_results(run_id, dismissed, sugestao_compra_rs DESC, sugestao_compra_un);',
+    'CREATE INDEX IF NOT EXISTS idx_esr_filial_order_first ON engine_sku_results(run_id, filial_id, dismissed, sugestao_compra_rs DESC, sugestao_compra_un);',
+    'CREATE INDEX IF NOT EXISTS idx_esr_barras ON engine_sku_results(barras);'
   ];
 
   for (const idxSql of safeIndexes) {
@@ -1018,10 +1033,12 @@ export function getGroupsTree(runId, filialId = null) {
 /**
  * Registra suspensão de compras exclusiva no Motor Inteligente (REV-011)
  * ou sincronizada com Linx BIG.
+ * Regra Comprador: Padrão indeterminado (2099-12-31) até que o comprador retire manualmente.
  */
-export function recordSkuSuspension(clientCode, filialId, produtoId, { descricao = '', motivo = '', days = 30, origem = 'MOTOR_ONLY', moleculeKey = null, gatilhoCobertura = 7.0 } = {}) {
+export function recordSkuSuspension(clientCode, filialId, produtoId, { descricao = '', motivo = '', days = 99999, origem = 'MOTOR_ONLY', moleculeKey = null, gatilhoCobertura = 7.0 } = {}) {
   const db = getAnalyticsDb();
-  const endDate = new Date(Date.now() + Number(days) * 86400000).toISOString().split('T')[0];
+  const numDays = Number(days) || 99999;
+  const endDate = numDays >= 9999 ? '2099-12-31' : new Date(Date.now() + numDays * 86400000).toISOString().split('T')[0];
   db.prepare(`
     INSERT INTO client_sku_suspensions (client_code, filial_id, produto_id, descricao, motivo, dias_bloqueio, data_fim_bloqueio, origem, molecule_key, gatilho_cobertura_limite, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
@@ -1034,7 +1051,7 @@ export function recordSkuSuspension(clientCode, filialId, produtoId, { descricao
       molecule_key = COALESCE(excluded.molecule_key, client_sku_suspensions.molecule_key),
       gatilho_cobertura_limite = excluded.gatilho_cobertura_limite,
       created_at = datetime('now', 'localtime')
-  `).run(clientCode, filialId, produtoId, descricao, motivo, days, endDate, origem, moleculeKey, gatilhoCobertura);
+  `).run(clientCode, filialId, produtoId, descricao, motivo, numDays, endDate, origem, moleculeKey, gatilhoCobertura);
 
   dismissSku(clientCode, filialId, produtoId, 1);
   return { ok: true, endDate };
@@ -1045,7 +1062,7 @@ export function recordSkuSuspension(clientCode, filialId, produtoId, { descricao
  */
 export function removeSkuSuspension(clientCode, filialId, produtoId) {
   const db = getAnalyticsDb();
-  db.prepare('DELETE FROM client_sku_suspensions WHERE client_code = ? AND filial_id = ? AND produto_id = ?')
+  db.prepare('DELETE FROM client_sku_suspensions WHERE client_code = ? AND (filial_id = ? OR filial_id = 0) AND produto_id = ?')
     .run(clientCode, filialId, produtoId);
   dismissSku(clientCode, filialId, produtoId, 0);
   return { ok: true };
@@ -1058,7 +1075,7 @@ export function getActiveSkuSuspensions(clientCode, filialId = null) {
   const db = getAnalyticsDb();
   const today = new Date().toISOString().split('T')[0];
   if (filialId) {
-    return db.prepare('SELECT * FROM client_sku_suspensions WHERE client_code = ? AND filial_id = ? AND data_fim_bloqueio >= ? ORDER BY created_at DESC')
+    return db.prepare('SELECT * FROM client_sku_suspensions WHERE client_code = ? AND (filial_id = ? OR filial_id = 0) AND data_fim_bloqueio >= ? ORDER BY created_at DESC')
       .all(clientCode, filialId, today);
   }
   return db.prepare('SELECT * FROM client_sku_suspensions WHERE client_code = ? AND data_fim_bloqueio >= ? ORDER BY created_at DESC')

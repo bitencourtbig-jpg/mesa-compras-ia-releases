@@ -75,6 +75,7 @@ if (fs.existsSync(path.join(ROOT, 'data', 'analytics.db'))) {
     DELETE FROM big_orders_log;
     DELETE FROM big_backups;
     DELETE FROM client_group_coverage_config;
+    DELETE FROM system_licenses;
     DELETE FROM client_profiles;
     INSERT INTO client_profiles (
       code, name, db_host, db_port, db_user, db_password, db_name,

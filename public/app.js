@@ -780,17 +780,15 @@ async function runPurchasingEngine() {
 
 async function triggerTopBarParamChange() {
   const weeks = Number(document.getElementById('ctrl-weeks')?.value || 13);
-  const profile = document.getElementById('ctrl-profile')?.value || 'equilibrado';
-  const profileLabels = { enxuto: 'Enxuto', equilibrado: 'Equilibrado', alta: 'Alta Disponibilidade' };
-  showBanner(`Aplicando Perfil "${profileLabels[profile] || profile}" (${weeks} sem) e recalculando compras...`, false);
+  showBanner(`Recalculando compras para janela de ${weeks} semanas...`, false);
   try {
     const res = await apiPost('/api/engine/run', {
       weeksWindow: weeks,
-      serviceProfile: profile,
+      serviceProfile: 'equilibrado',
       fastRecalc: true,
       forceSync: false,
     });
-    showBanner(`✓ Perfil "${profileLabels[profile] || profile}" aplicado! Sugestão recalculada (Run #${res.runId} em ${(res.summary.elapsedMs / 1000).toFixed(2)}s).`, false);
+    showBanner(`✓ Janela de ${weeks} semanas aplicada! Sugestão recalculada (Run #${res.runId} em ${(res.summary.elapsedMs / 1000).toFixed(2)}s).`, false);
     await loadOverview();
     await refreshActiveView();
   } catch (err) {
@@ -798,7 +796,7 @@ async function triggerTopBarParamChange() {
     if (isConnErr) {
       showBanner(`Aviso: Conexão com o banco do Linx BIG demorou a responder (${err.message}). Clique em "Sincronizar & Calcular" para reconectar.`, true);
     } else {
-      showBanner(`Falha ao recalcular perfil: ${err.message}`, true);
+      showBanner(`Falha ao recalcular janela: ${err.message}`, true);
     }
   }
 }
@@ -1013,7 +1011,9 @@ async function loadOverview() {
   if (profile) {
     document.getElementById('client-badge').textContent = `${profile.name} (Filial Compra: ${profile.buyer_filial_id})`;
     document.getElementById('ctrl-weeks').value = String(profile.default_weeks || 13);
-    document.getElementById('ctrl-profile').value = profile.service_profile || 'equilibrado';
+    if (document.getElementById('ctrl-profile')) {
+      document.getElementById('ctrl-profile').value = profile.service_profile || 'equilibrado';
+    }
     document.getElementById('ctrl-entries').value = String(profile.recent_entries_limit || 5);
 
     // REV-008: Tela de remanejamento só visível se houver mais de 1 loja no modo central
@@ -1049,10 +1049,57 @@ async function loadOverview() {
     }
   }
 
+  const totalDismissed = data.filtersMeta?.dismissedCount || data.dismissedCount || 0;
+  const dismissedWithDemandCount = data.filtersMeta?.dismissedWithDemandCount || 0;
+
   const dismissedTabCount = document.getElementById('dismissed-tab-count');
   if (dismissedTabCount) {
-    dismissedTabCount.textContent = String(data.dismissedCount || 0);
+    dismissedTabCount.textContent = String(totalDismissed);
   }
+
+  // Atualiza banner de alerta de itens suspensos com demanda ativa
+  const bannerSusp = document.getElementById('banner-suspended-demand');
+  if (bannerSusp) {
+    if (dismissedWithDemandCount > 0) {
+      bannerSusp.className = 'alert-box alert-warning-critical';
+      bannerSusp.classList.remove('hidden');
+      bannerSusp.style.display = 'flex';
+      bannerSusp.style.alignItems = 'center';
+      bannerSusp.style.justifyContent = 'space-between';
+      bannerSusp.style.padding = '10px 14px';
+      bannerSusp.style.background = '#fffbeb';
+      bannerSusp.style.border = '1px solid #f59e0b';
+      bannerSusp.style.borderLeft = '5px solid #d97706';
+      bannerSusp.style.borderRadius = '6px';
+      bannerSusp.innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:22px;">🚨</span>
+          <div>
+            <strong style="color:#92400e;font-size:13.5px;">Atenção: ${dismissedWithDemandCount} produto(s) em suspensão de compras estão em ponto de pedido / ruptura com demanda ativa!</strong>
+            <div style="color:#b45309;font-size:12px;margin-top:2px;">Estoque zerado ou abaixo do mínimo com giro diário ativo. A compra não foi sugerida porque está bloqueada pelo comprador.</div>
+          </div>
+        </div>
+        <button id="btn-view-suspended-demand" class="btn btn-sm btn-primary" style="background:#d97706;border-color:#b45309;font-weight:700;white-space:nowrap;padding:6px 14px;cursor:pointer;" type="button">
+          Visualizar Itens Bloqueados ➔
+        </button>
+      `;
+      document.getElementById('btn-view-suspended-demand')?.addEventListener('click', () => {
+        openSuspendedWithDemandTab();
+      });
+    } else {
+      bannerSusp.classList.add('hidden');
+      bannerSusp.style.display = 'none';
+      bannerSusp.innerHTML = '';
+    }
+  }
+
+  // Atualiza contadores dos subfiltros de suspensões
+  const cntSubAll = document.getElementById('cnt-sub-all');
+  if (cntSubAll) cntSubAll.textContent = String(totalDismissed);
+  const cntSubDemand = document.getElementById('cnt-sub-demand');
+  if (cntSubDemand) cntSubDemand.textContent = String(dismissedWithDemandCount);
+  const cntSubSafe = document.getElementById('cnt-sub-safe');
+  if (cntSubSafe) cntSubSafe.textContent = String(Math.max(0, totalDismissed - dismissedWithDemandCount));
 
   const pbmTabCount = document.getElementById('pbm-tab-count');
   if (pbmTabCount) {
@@ -1541,6 +1588,17 @@ async function loadSkus() {
   }
   if (state.tab === 'dismissed') {
     params.set('dismissed', 'true');
+    if (state.dismissedSubFilter) {
+      params.set('sub_filter', state.dismissedSubFilter);
+    }
+    document.getElementById('dismissed-subfilters')?.classList.remove('hidden');
+    document.querySelectorAll('#dismissed-subfilters .btn-subfilter').forEach(btn => {
+      const match = (btn.dataset.subfilter || '') === (state.dismissedSubFilter || '');
+      btn.style.boxShadow = match ? '0 0 0 2px #0f766e' : 'none';
+      btn.style.opacity = match ? '1' : '0.85';
+    });
+  } else {
+    document.getElementById('dismissed-subfilters')?.classList.add('hidden');
   }
   if (state.tab === 'selected') {
     if (state.selectedSkus.size === 0) {
@@ -1679,7 +1737,9 @@ async function loadSkus() {
               ${friendly.medType ? `<span class="tag-med-type">${esc(friendly.medType)}</span>` : ''}
               ${friendly.moleculeBadge ? `<span class="tag-molecule" style="background:#e0f2fe;color:#0369a1;padding:1px 6px;border-radius:4px;font-size:11px;font-weight:500;">${esc(friendly.moleculeBadge)}</span>` : ''}
               ${friendly.auditAnomaly ? `<span class="tag-anomaly" style="background:#fef3c7;color:#b45309;padding:1px 6px;border-radius:4px;font-size:10.5px;cursor:help;" title="${esc(friendly.auditAnomalyTooltip)}">${esc(friendly.auditAnomaly)}</span>` : ''}
-              ${r.suspensao_info ? `<span class="badge ${r.suspensao_info.origem === 'BIG_SYNCED' ? 'badge-danger' : 'badge-warning'}" style="font-size:10.5px;padding:1px 6px;border-radius:4px;" title="Motivo: ${esc(r.suspensao_info.motivo)}">${r.suspensao_info.origem === 'BIG_SYNCED' ? '🏛️ Suspenso no BIG &amp; Motor' : '🔒 Suspenso no Motor'} até ${r.suspensao_info.data_fim_bloqueio}</span>` : ''}
+              ${r.suspensao_info ? `<span class="badge ${r.suspensao_info.origem === 'BIG_SYNCED' ? 'badge-danger' : 'badge-warning'}" style="font-size:10.5px;padding:1px 6px;border-radius:4px;" title="Motivo: ${esc(r.suspensao_info.motivo)}">${r.suspensao_info.origem === 'BIG_SYNCED' ? '🏛️ Suspenso no BIG &amp; Motor' : '🔒 Suspenso no Motor'}${r.suspensao_info.data_fim_bloqueio >= '2099-01-01' ? ' (Indeterminado)' : ` até ${r.suspensao_info.data_fim_bloqueio}`}</span>` : ''}
+              ${r.suspensao_demanda_ativa ? `<span class="badge" style="background:#fee2e2;color:#991b1b;border:1px solid #f87171;font-size:10.5px;padding:2px 7px;border-radius:4px;font-weight:700;" title="Estoque atual (${r.estoque_atual} un) está abaixo do ponto de pedido (${r.estoque_min} un) com giro de ${r.ddv_projetada} un/dia. Se não liberar a compra, o item entrará em ruptura!">🚨 SUSPENSO COM DEMANDA ATIVA (${r.necessidade_bloqueada_un || 1} un bloqueadas)</span>` : ''}
+              ${r.is_high_ticket_low_velocity ? `<span class="badge" style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d;font-size:10px;padding:1px 6px;border-radius:4px;font-weight:600;" title="Produto de alto valor unitário com saídas esporádicas. Curva calibrada e compra limitada a 1 un sob demanda para evitar capital imobilizado!">💎 Alto Ticket / Giro Lento</span>` : ''}
               <span class="muted" style="font-size:11px;">(Cód: ${r.produto_id} | EAN: ${esc(r.barras || '—')})</span>
             </div>
             ${molSweepPill}
@@ -1692,9 +1752,13 @@ async function loadSkus() {
             <button type="button" class="btn-curve-info" data-motor-curva="${r.abc_class}" data-motor-pareto="${r.pareto_pct || 0}" data-erp-ranking="${esc(r.curva_erp_ranking || 'Sem ranking no BIG')}" data-sku-name="${esc(friendly.title)}" title="Auditar Curva ABC (Motor vs Linx BIG)">ⓘ</button>
             ${r.is_traffic_builder ? '<span class="badge badge-neutral">Chamariz</span>' : ''}
           </div>
-          ${r.dias_estoque_min ? `<div class="sku-sub muted" style="font-size:10.5px;">Cobertura: ${r.dias_estoque_min}d a ${r.dias_estoque_max}d</div>` : ''}
+          ${r.dias_estoque_min ? `<div class="sku-sub muted" style="font-size:10.5px;">${r.is_custom_horizon ? `Cad. BIG: ${r.dias_estoque_min}d a ${r.dias_estoque_max}d <span class="badge" style="font-size:9.5px;background:#e0f2fe;color:#0369a1;padding:0 4px;">Horiz: ${r.horizon_dias}d</span>` : `Cobertura BIG: ${r.dias_estoque_min}d a ${r.dias_estoque_max}d`}</div>` : ''}
         </td>
-        <td class="num">${num(r.estoque_atual)}${r.transito_real > 0 ? `<div class="sku-sub">+${num(r.transito_real)} tr.</div>` : ''}</td>
+        <td class="num">
+          ${num(r.estoque_atual)}
+          ${Number(r.estoque_reserva || 0) > 0 ? `<div class="sku-sub" style="color:#b45309;font-weight:600;font-size:10px;" title="Reserva Linx BIG: ${num(r.estoque_reserva)} un">${num(Number(r.estoque_atual) - Number(r.estoque_reserva))} disp / ${num(r.estoque_reserva)} res</div>` : ''}
+          ${r.transito_real > 0 ? `<div class="sku-sub">+${num(r.transito_real)} tr.</div>` : ''}
+        </td>
         <td class="num">${num(r.ddv_projetada, 2)}<div class="sku-sub">Saz ${num(r.indice_sazonalidade, 2)}x</div></td>
         <td class="num">${num(r.lead_time_dias, 1)}d</td>
         <td class="num">${num(r.estoque_min)} / ${num(r.estoque_max)}<div class="sku-sub">Seg: ${num(r.estoque_seg)}</div></td>
@@ -1715,14 +1779,14 @@ async function loadSkus() {
         <td style="text-align:center;">
           <div class="row-actions-micro">
             ${r.dismissed ? `
-              <button class="btn btn-secondary btn-sm btn-action-sku btn-undo-dismiss" data-filial="${r.filial_id}" data-pid="${r.produto_id}" title="Reativar e incluir na compra" type="button" style="font-size:11px;padding:3px 6px;">
-                ↩️
+              <button class="btn btn-secondary btn-sm btn-action-sku btn-undo-dismiss" data-filial="${r.filial_id}" data-pid="${r.produto_id}" title="Reativar e liberar compra deste produto" type="button" style="font-size:11px;padding:4px 8px;font-weight:700;background:#ecfdf5;border:1px solid #10b981;color:#047857;white-space:nowrap;display:inline-flex;align-items:center;gap:4px;">
+                🔓 Liberar Compra
               </button>
             ` : `
               <button class="btn-micro-action btn-action-sku btn-dismiss-sku" data-filial="${r.filial_id}" data-pid="${r.produto_id}" title="Não comprar agora (ignorar SKU)" type="button">
                 🚫
               </button>
-              <button class="btn-micro-action btn-action-sku btn-suspend-sku" data-pid="${r.produto_id}" data-desc="${esc(r.descricao)}" title="Suspender compra no Linx BIG (ERP)" type="button">
+              <button class="btn-micro-action btn-action-sku btn-suspend-sku" data-pid="${r.produto_id}" data-desc="${esc(r.descricao)}" title="Suspender compra do produto" type="button">
                 🛑
               </button>
             `}
@@ -1765,7 +1829,10 @@ async function loadSkus() {
               <td style="font-size:11px;">
                 ${isLojaCarencia ? '<span class="badge badge-warn" style="font-size:10px;">🐣 Carência</span>' : '<span class="badge badge-neutral" style="font-size:10px;">Ativa (Madura)</span>'}
               </td>
-              <td class="num" style="font-weight:${Number(n.estoque_atual) <= 0 ? '700;color:#dc2626;' : '600;'}">${num(n.estoque_atual)} un</td>
+              <td class="num" style="font-weight:${Number(n.estoque_atual) <= 0 ? '700;color:#dc2626;' : '600;'}">
+                ${num(n.estoque_atual)} un
+                ${Number(n.estoque_reserva || 0) > 0 ? `<div style="font-size:9.5px;color:#b45309;font-weight:600;" title="Reserva Linx BIG: ${num(n.estoque_reserva)} un">${num(Number(n.estoque_atual) - Number(n.estoque_reserva))} disp / ${num(n.estoque_reserva)} res</div>` : ''}
+              </td>
               <td class="num">${num(n.transito_real)} un</td>
               <td class="num">${num(n.vendas_13s)} un</td>
               <td class="num">${num(n.ddv_projetada, 2)}/d</td>
@@ -1950,26 +2017,51 @@ async function loadSkus() {
               <div class="audit-math-formula">${esc(mc.formulaTexto || '')}</div>
             </div>
             <div class="audit-math-grid">
+              ${mc.isCustomHorizon ? `
+                <div class="audit-math-item">
+                  <span class="audit-math-label">DDV Projetada</span>
+                  <span class="audit-math-val">${num(mc.ddvDiaria, 2)} un/dia</span>
+                </div>
+                <div class="audit-math-item">
+                  <span class="audit-math-label">Horizonte Cobertura</span>
+                  <span class="audit-math-val">${num(mc.diasAlvo)} dias</span>
+                </div>
+                <div class="audit-math-item">
+                  <span class="audit-math-label">Demanda no Período</span>
+                  <span class="audit-math-val highlight">${num(mc.consumoAlvoPeriodo, 1)} un</span>
+                </div>
+                <div class="audit-math-item">
+                  <span class="audit-math-label">+ Estoque Segurança</span>
+                  <span class="audit-math-val">${num(mc.estoqueSeguranca, 1)} un</span>
+                </div>
+                <div class="audit-math-item">
+                  <span class="audit-math-label">- Estoque Físico</span>
+                  <span class="audit-math-val">${num(mc.estoqueFisico)} un</span>
+                </div>
+              ` : `
+                <div class="audit-math-item">
+                  <span class="audit-math-label">Modo Operacional</span>
+                  <span class="audit-math-val highlight" style="color:#0284c7;">🏛️ Padrão Linx BIG</span>
+                </div>
+                <div class="audit-math-item">
+                  <span class="audit-math-label">Ponto Pedido (Mínimo)</span>
+                  <span class="audit-math-val">${num(mc.estoqueMin || r.estoque_min)} un</span>
+                </div>
+                <div class="audit-math-item">
+                  <span class="audit-math-label">Teto Alvo (Máximo)</span>
+                  <span class="audit-math-val highlight">${num(mc.estoqueMaximoAlvo || r.estoque_max)} un</span>
+                </div>
+                <div class="audit-math-item">
+                  <span class="audit-math-label">Saldo Físico em Loja</span>
+                  <span class="audit-math-val">${num(mc.estoqueFisico)} un</span>
+                </div>
+              `}
+              ${Number(mc.estoqueReserva || 0) > 0 ? `
               <div class="audit-math-item">
-                <span class="audit-math-label">DDV Projetada</span>
-                <span class="audit-math-val">${num(mc.ddvDiaria, 2)} un/dia</span>
+                <span class="audit-math-label">+ Reserva BIG</span>
+                <span class="audit-math-val" style="color:#b45309;font-weight:600;">+${num(mc.estoqueReserva)} un</span>
               </div>
-              <div class="audit-math-item">
-                <span class="audit-math-label">Horizonte Cobertura</span>
-                <span class="audit-math-val">${num(mc.diasAlvo)} dias</span>
-              </div>
-              <div class="audit-math-item">
-                <span class="audit-math-label">Demanda no Período</span>
-                <span class="audit-math-val highlight">${num(mc.consumoAlvoPeriodo, 1)} un</span>
-              </div>
-              <div class="audit-math-item">
-                <span class="audit-math-label">+ Estoque Segurança</span>
-                <span class="audit-math-val">${num(mc.estoqueSeguranca, 1)} un</span>
-              </div>
-              <div class="audit-math-item">
-                <span class="audit-math-label">- Estoque Físico</span>
-                <span class="audit-math-val">${num(mc.estoqueFisico)} un</span>
-              </div>
+              ` : ''}
               <div class="audit-math-item">
                 <span class="audit-math-label">- Pedido em Trânsito</span>
                 <span class="audit-math-val">${num(mc.pedidosTransito)} un</span>
@@ -2020,7 +2112,8 @@ async function loadSkus() {
                 <div class="detail-box">
                   <h4>Memória de Cálculo &amp; Indicadores do SKU</h4>
                   <table class="mini-table">
-                    <tr><td>Vendas 6 sem / 9 sem / 13 sem</td><td class="num">${num(r.vendas_6s)} / ${num(r.vendas_9s)} / ${num(r.vendas_13s)} un</td></tr>
+                    <tr><td>Histórico Saídas PDV (6 / 9 / 13 sem)</td><td class="num"><strong>${num(r.vendas_6s)}</strong> / ${num(r.vendas_9s)} / ${num(r.vendas_13s)} un <span class="muted" style="font-size:10.5px;">(Últimas 6 sem: ${(Number(r.vendas_6s || 0)/42).toFixed(2)} un/dia - Fato Fiscal)</span></td></tr>
+                    <tr><td>Previsão Futura (próx. 6 sem / 42d)</td><td class="num"><strong style="color:var(--accent);">${Math.round(Number(r.ddv_projetada || 0) * 42)} un</strong> <span class="muted" style="font-size:10.5px;">(DDV ${num(r.ddv_projetada, 2)}/d × 42d c/ Saz ${num(r.indice_sazonalidade, 2)}x)</span></td></tr>
                     <tr><td>Vendas PBM confirmadas (13 sem)</td><td class="num">${num(r.vendas_pbm_13s)} un (DDV PBM ${num(r.ddv_pbm_auto, 2)}/d)</td></tr>
                     <tr><td>Ruptura silenciosa estimada (13 sem)</td><td class="num">${num(r.dias_sem_estoque_13s)}d | ${num(r.venda_perdida_est_un, 1)} un (${brl(r.venda_perdida_est_rs)})</td></tr>
                     <tr><td>Preço médio praticado / Alvo Cotação</td><td class="num">${brl(r.preco_venda)} / <strong>${brl(ia.precoAlvoCotacao || r.custo_unit)}</strong></td></tr>
@@ -2028,7 +2121,7 @@ async function loadSkus() {
                     <tr><td>Lotes lote_novo (&le;90d / Vencidos)</td><td class="num">${num(r.lote_vencendo_90d_qtd)} un / ${num(r.lote_vencido_qtd)} un (Menor: ${esc(r.lote_menor_validade || '—')})</td></tr>
                     <tr><td>Perdas registradas (365d)</td><td class="num">${num(r.perda_2026_un)} un (${brl(r.perda_2026_rs)})</td></tr>
                     <tr><td>Descrição Bruta no ERP BIG</td><td class="num"><code>${esc(r.descricao)}</code></td></tr>
-                    <tr><td>Curva &amp; Ranking Linx BIG</td><td class="num"><strong style="color:#7c3aed;">${esc(r.curva_erp_ranking || r.abc_class)}</strong>${r.dias_estoque_min ? ` (${r.dias_estoque_min}d mín / ${r.dias_estoque_max}d máx)` : ''}</td></tr>
+                    <tr><td>Curva &amp; Ranking Linx BIG</td><td class="num"><strong style="color:#7c3aed;">${esc(r.curva_erp_ranking || r.abc_class)}</strong>${r.dias_estoque_min ? ` (${r.dias_estoque_min}d mín / ${r.dias_estoque_max}d máx cad.)` : ''}</td></tr>
                     <tr><td>Previsibilidade da Demanda (XYZ)</td><td class="num">Classe ${esc(r.xyz_class)} (${r.xyz_class === 'X' ? 'Demanda constante e previsível' : r.xyz_class === 'Y' ? 'Demanda moderada' : 'Demanda sazonal / oscilante'})</td></tr>
                   </table>
                 </div>
@@ -2116,11 +2209,13 @@ async function openMoleculeSweep(molKey, skuId, filialId = null) {
     const targetSugUn = Number(targetSku?.total_sugestao_un || targetSku?.sugestao_compra_un || 0);
     const targetSugRs = Number(targetSku?.total_sugestao_rs || targetSku?.sugestao_compra_rs || 0);
     const hasReman = remanejamento_sinergia && remanejamento_sinergia.hasOpportunities;
-    const isDeadStock = ia_advice?.type === 'DEAD_STOCK_WARNING';
+    const isOverstockBlock = ia_advice?.type === 'OVERSTOCK_BLOCK';
     const isEnoughStock = ia_advice?.type === 'ENOUGH_STOCK_WARNING';
+    const isDeadStock = ia_advice?.type === 'DEAD_STOCK_WARNING';
     const isMargin = ia_advice?.type === 'MARGIN_OPPORTUNITY';
+    const cheapestOption = ia_advice?.cheapestOption || null;
 
-    // 2. Banner Executivo com Ação de 1 Clique (REV-024)
+    // 2. Banner Executivo com Ação de 1 Clique
     let masterActionTitle = '';
     let masterActionBtnText = '';
     let masterActionType = '';
@@ -2131,21 +2226,26 @@ async function openMoleculeSweep(molKey, skuId, filialId = null) {
       masterActionTitle = '🔄 A IA recomenda REMANEJAR INTERNAMENTE (Transfer-First)';
       masterActionBtnText = `⚡ 1-Clique: Aplicar Remanejamento & Bloquear Compras (${brl(ecoHighlight)})`;
       masterActionType = 'REMAN';
+    } else if (isOverstockBlock) {
+      ecoHighlight = ia_advice.ecoSaving || targetSugRs;
+      masterActionTitle = '🛑 DECISÃO PRINCIPAL DA IA: SOBRE-ESTOQUE DETECTADO NA MOLÉCULA';
+      masterActionBtnText = `🚫 1-Clique: Cancelar Compra do ERP (Salvar ${brl(ecoHighlight)})`;
+      masterActionType = 'BLOCK_ALL';
+    } else if (isEnoughStock) {
+      ecoHighlight = ia_advice.ecoSaving || targetSugRs;
+      masterActionTitle = '📉 DECISÃO PRINCIPAL DA IA: ABATER ESTOQUE CONCORRENTE';
+      masterActionBtnText = `⚡ 1-Clique: Abater Estoque Existente (-${ia_advice.dedQty} un • Salvar ${brl(ecoHighlight)})`;
+      masterActionType = 'DEDUCT';
     } else if (isDeadStock) {
       ecoHighlight = targetSugRs > 0 ? targetSugRs : (ia_advice.ecoDead || 0);
-      masterActionTitle = '🛑 A IA recomenda NÃO COMPRAR na distribuidora agora';
-      masterActionBtnText = `⚡ 1-Clique: Bloquear Compras & Desovar Balcão (${brl(ecoHighlight)})`;
+      masterActionTitle = '⚠️ DECISÃO PRINCIPAL DA IA: PRIORIZAR DESOVA DE ESTOQUE PARADO';
+      masterActionBtnText = `⚡ 1-Clique: Bloquear Compra & Desovar Balcão (${brl(ecoHighlight)})`;
       masterActionType = 'BLOCK_ALL';
     } else if (isMargin && cheapestSku) {
-      ecoHighlight = ia_advice.economiaTotal || 0;
-      masterActionTitle = `🟢 A IA recomenda TROCAR para ${esc(cheapestSku.labora)} (Menor Custo)`;
+      ecoHighlight = ia_advice.ecoSaving || ia_advice.economiaTotal || 0;
+      masterActionTitle = `🟢 DECISÃO PRINCIPAL DA IA: TROCAR PARA ${esc(cheapestSku.labora)} (Menor Custo)`;
       masterActionBtnText = `⚡ 1-Clique: Trocar Fabricante (Economizar ${brl(ecoHighlight)})`;
       masterActionType = 'SWITCH';
-    } else if (isEnoughStock) {
-      ecoHighlight = ia_advice.ecoDeducao || targetSugRs;
-      masterActionTitle = '📉 A IA recomenda DESCONTAR ESTOQUE ALTERNATIVO do pedido';
-      masterActionBtnText = `⚡ 1-Clique: Abater Estoque Existente (${brl(ecoHighlight)})`;
-      masterActionType = 'DEDUCT';
     } else {
       masterActionTitle = '✓ Molécula Equilibrada na Rede';
       masterActionBtnText = '✓ Liberar Compra Homologada';
@@ -2153,33 +2253,63 @@ async function openMoleculeSweep(molKey, skuId, filialId = null) {
     }
 
     banner.className = 'sweep-banner';
-    banner.style = 'background:linear-gradient(135deg, #fff5f5 0%, #fef2f2 100%); border:1.5px solid #f87171; border-radius:12px; padding:14px 18px; box-shadow:0 2px 6px rgba(0,0,0,0.03);';
-    if (!isDeadStock && !hasReman && isMargin) {
-      banner.style = 'background:linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border:1.5px solid #60a5fa; border-radius:12px; padding:14px 18px;';
-    } else if (!isDeadStock && !hasReman && !isMargin) {
-      banner.style = 'background:linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border:1.5px solid #86efac; border-radius:12px; padding:14px 18px;';
-    }
+    const isDangerBg = isOverstockBlock || isDeadStock;
+    const isWarnBg = isEnoughStock;
+
+    banner.style = isDangerBg
+      ? 'background:linear-gradient(135deg, #fff5f5 0%, #fef2f2 100%); border:1.5px solid #f87171; border-radius:12px; padding:16px 18px; box-shadow:0 2px 6px rgba(0,0,0,0.03);'
+      : isWarnBg
+      ? 'background:linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%); border:1.5px solid #fcd34d; border-radius:12px; padding:16px 18px;'
+      : isMargin
+      ? 'background:linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border:1.5px solid #60a5fa; border-radius:12px; padding:16px 18px;'
+      : 'background:linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border:1.5px solid #86efac; border-radius:12px; padding:16px 18px;';
 
     banner.innerHTML = `
-      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; width:100%;">
-        <div style="flex:1; min-width:300px;">
-          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-            <span style="font-size:14.5px; font-weight:800; color:#0f172a;">${masterActionTitle}</span>
-            ${ecoHighlight > 0 ? `<span style="background:#15803d; color:#ffffff; font-size:11px; font-weight:800; padding:3px 9px; border-radius:999px;">Economia: ${brl(ecoHighlight)}</span>` : ''}
-            ${targetSugUn > 0 ? `<span style="background:#f1f5f9; color:#334155; font-size:11px; font-weight:700; padding:3px 9px; border-radius:999px;">Pedido: ${targetSugUn} un (${brl(targetSugRs)})</span>` : ''}
+      <div style="display:flex; flex-direction:column; gap:12px; width:100%;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
+          <div style="flex:1; min-width:320px;">
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+              <span style="font-size:15px; font-weight:800; color:#0f172a; letter-spacing:-0.2px;">${masterActionTitle}</span>
+            </div>
+            <div style="font-size:12.5px; color:#334155; margin-top:4px; line-height:1.45;">
+              ${esc(ia_advice?.headline || '')}
+            </div>
           </div>
-          <div style="font-size:12px; color:#334155; margin-top:5px; line-height:1.45;">
-            ${isDeadStock ? `Existem <strong>${ia_advice.deadTotalQty} un de Curva D (${esc(ia_advice.deadLabsList)})</strong> paradas na rede e lojas com marcas concorrentes. A prioridade da IA é desovar no balcão e proteger o capital de giro!`
-              : hasReman ? `O motor localizou estoques excedentes e lotes com validade próxima em lojas doadoras que cobrem a demanda das filiais sem comprar de distribuidoras!`
-              : isMargin ? `Existe opção idêntica de menor custo homologada (${esc(cheapestSku.labora)}) gerando economia imediata no pedido.`
-              : 'Estoque distribuído em conformidade com as políticas da rede.'}
+
+          ${targetSugUn > 0 ? `
+            <div style="display:flex; align-items:center; gap:8px;">
+              <button id="btn-master-ia-1click" class="btn btn-primary" type="button" style="font-weight:800; font-size:13px; padding:10px 20px; border-radius:8px; border:none; box-shadow:0 2px 8px rgba(0,0,0,0.12); display:inline-flex; align-items:center; gap:6px; cursor:pointer;" title="Executa a decisão recomendada da IA em 1 clique">
+                <span>${masterActionBtnText}</span>
+              </button>
+            </div>
+          ` : ''}
+        </div>
+
+        <!-- Cards de Indicadores Executivos em Grid de 3 Colunas -->
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:10px; margin-top:2px;">
+          <div style="background:rgba(255,255,255,0.88); border:1px solid rgba(0,0,0,0.08); border-radius:8px; padding:8px 12px;">
+            <div style="font-size:11px; font-weight:700; color:#64748b; text-transform:uppercase; letter-spacing:0.3px;">🛒 Sugestão ERP (${esc(targetSku?.labora || 'ERP')})</div>
+            <div style="font-size:14px; font-weight:800; color:#0f172a; margin-top:2px;">${targetSugUn} un <span style="font-size:12px; font-weight:600; color:#64748b;">(${brl(targetSugRs)})</span></div>
+          </div>
+          <div style="background:rgba(255,255,255,0.88); border:1px solid rgba(0,0,0,0.08); border-radius:8px; padding:8px 12px;">
+            <div style="font-size:11px; font-weight:700; color:#64748b; text-transform:uppercase; letter-spacing:0.3px;">📦 Estoque da Molécula em Loja</div>
+            <div style="font-size:14px; font-weight:800; color:#0f172a; margin-top:2px;">${ia_advice?.otherStockTotal !== undefined ? ia_advice.otherStockTotal : otherStockTotal} un <span style="font-size:12px; font-weight:600; color:#15803d;">(${ia_advice?.otherCoverageDays || otherCoverageDays}d de giro)</span></div>
+          </div>
+          <div style="background:rgba(255,255,255,0.88); border:1px solid rgba(0,0,0,0.08); border-radius:8px; padding:8px 12px;">
+            <div style="font-size:11px; font-weight:700; color:#15803d; text-transform:uppercase; letter-spacing:0.3px;">💰 Economia Imediata no Caixa</div>
+            <div style="font-size:14px; font-weight:800; color:#15803d; margin-top:2px;">${brl(ecoHighlight)} <span style="font-size:11px; font-weight:600; color:#64748b;">(${isOverstockBlock ? '100% da compra cancelada' : 'abatimento de excesso'})</span></div>
           </div>
         </div>
 
-        ${targetSugUn > 0 ? `
-          <div style="display:flex; align-items:center; gap:8px;">
-            <button id="btn-master-ia-1click" class="btn btn-primary" type="button" style="font-weight:800; font-size:13px; padding:10px 20px; border-radius:8px; border:none; box-shadow:0 2px 6px rgba(0,0,0,0.15); display:inline-flex; align-items:center; gap:6px; cursor:pointer;" title="Executa a decisão recomendada da IA para toda a rede em 1 clique">
-              <span>${masterActionBtnText}</span>
+        <!-- Chamada Secundária Harmônica: Cotação Inteligente se for Comprar -->
+        ${(cheapestOption && (isOverstockBlock || isEnoughStock || isDeadStock)) ? `
+          <div style="margin-top:2px; padding:9px 14px; background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+            <div style="font-size:11.5px; color:#1e40af; line-height:1.4;">
+              <strong>💡 COTAÇÃO INTELIGENTE DE LABORATÓRIO (Se você decidir comprar mesmo assim):</strong>
+              <div>O laboratório <strong>${esc(cheapestOption.labora)}</strong> possui menor custo homologado (<strong>${brl(cheapestOption.custo_unit)}</strong> vs ${brl(cheapestOption.target_custo_unit)} da marca demandada &bull; <strong>${cheapestOption.pctEconomia}% mais econômico</strong>).</div>
+            </div>
+            <button class="btn btn-sm btn-action-switch" data-source-id="${targetSku.produto_id}" data-target-id="${cheapestOption.produto_id}" data-qty="${targetSugUn}" data-target-name="${esc(cheapestOption.descricao)}" type="button" style="background:#2563eb; color:#fff; border:none; padding:6px 12px; font-weight:700; font-size:11px; border-radius:6px; cursor:pointer;" title="Troca o pedido para o laboratório mais barato">
+              ⚡ Trocar p/ ${esc(cheapestOption.labora)} (Salvar ${brl(cheapestOption.economiaTotal)})
             </button>
           </div>
         ` : ''}
@@ -2366,9 +2496,14 @@ async function openMoleculeSweep(molKey, skuId, filialId = null) {
       const isCurvaB = s.abc_class === 'B' || /B/i.test(s.curva_erp_classe || '');
       const badgeStyle = isCurvaA ? 'background:#dcfce7;color:#15803d;' : isCurvaB ? 'background:#e0f2fe;color:#0369a1;' : isCurvaD ? 'background:#fee2e2;color:#b91c1c;' : 'background:#fef3c7;color:#92400e;';
       const badgeLabel = `Curva ${s.abc_class || 'D'}`;
-      const giroLabel = Number(s.total_ddv) > 0 ? `${num(s.total_ddv, 2)}/d` : 'Sem Giro';
       const isDead = isCurvaD && Number(s.total_estoque) > 0;
       const cobStr = (d) => (Number(d) >= 999 ? '999+d' : `${num(d, 1)}d`);
+
+      const targetCost = Number(targetSku?.custo_unit || 0);
+      const skuCost = Number(s.custo_unit || 0);
+      const diffCost = skuCost - targetCost;
+      const isCheaper = targetCost > 0 && skuCost < targetCost;
+      const isMuchMoreExpensive = targetCost > 0 && skuCost > (targetCost * 1.35);
 
       const storeCellsHtml = activeFiliaisList.map((f, i) => {
         const l = (s.lojas && s.lojas[f.filial_id]) || { estoque_atual: 0, cobertura_dias: 0, sugestao_compra_un: 0 };
@@ -2391,13 +2526,51 @@ async function openMoleculeSweep(molKey, skuId, filialId = null) {
         `
         : '';
 
+      let actionCellHtml = '—';
+      if (isTarget) {
+        if (targetSugUn > 0) {
+          actionCellHtml = `
+            <button class="btn btn-sm btn-cancel-card-purchase" data-filial-id="${targetSku.filial_id || fId || 0}" data-pid="${targetSku.produto_id}" data-un="${targetSugUn}" data-rs="${targetSugRs}" style="padding:4px 8px;font-size:10.5px;font-weight:700;background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;border-radius:6px;cursor:pointer;" type="button" title="Cancelar compra sugerida pelo ERP">
+              🚫 Cancelar (${targetSugUn} un)
+            </button>
+          `;
+        } else {
+          actionCellHtml = `<span class="badge badge-accent" style="font-size:9px;padding:2px 6px;">Item Demandado</span>`;
+        }
+      } else if (isCheaper && targetSugUn > 0 && skuCost > 0) {
+        const savingUnit = targetCost - skuCost;
+        const totalSaving = Math.round(savingUnit * targetSugUn * 100) / 100;
+        actionCellHtml = `
+          <button class="btn btn-sm btn-action-switch" data-source-id="${targetSku.produto_id}" data-target-id="${s.produto_id}" data-qty="${targetSugUn}" data-target-name="${esc(s.descricao)}" type="button" style="padding:4px 8px;font-size:10.5px;font-weight:700;background:#16a34a;color:#ffffff;border:none;border-radius:6px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,0.12);" title="Trocar pedido para esta marca mais econômica">
+            ⚡ Trocar (Salvar ${brl(totalSaving)})
+          </button>
+        `;
+      } else if (isMuchMoreExpensive) {
+        if (s.total_estoque > 0) {
+          actionCellHtml = `<span class="badge" style="background:#eff6ff;color:#1e40af;font-size:10px;padding:3px 6px;font-weight:600;">📦 Usar Estoque (${num(s.total_estoque)} un)</span>`;
+        } else {
+          actionCellHtml = `<span class="muted" style="font-size:10px;" title="Custo significativamente maior (+${brl(diffCost)}/un)">+${brl(diffCost)}/un (Mais Caro)</span>`;
+        }
+      } else if (targetSugUn > 0 && skuCost > 0) {
+        actionCellHtml = `
+          <button class="btn btn-ghost btn-sm btn-action-switch" data-source-id="${targetSku.produto_id}" data-target-id="${s.produto_id}" data-qty="${targetSugUn}" data-target-name="${esc(s.descricao)}" type="button" style="padding:3px 7px;font-size:10px;color:#475569;border:1px solid #cbd5e1;border-radius:4px;" title="Substituição manual">
+            Trocar (${diffCost > 0 ? `+${brl(diffCost)}` : 'Mesmo Custo'})
+          </button>
+        `;
+      } else if (isDead) {
+        actionCellHtml = `<span class="badge" style="background:#fee2e2;color:#991b1b;font-size:9.5px;padding:2px 6px;font-weight:600;">💤 Desovar Balcão</span>`;
+      } else if (s.total_estoque > 0) {
+        actionCellHtml = `<span class="badge" style="background:#f1f5f9;color:#334155;font-size:10px;padding:2px 6px;">${num(s.total_estoque)} un em estoque</span>`;
+      }
+
       return `
         <tr class="sweep-sku-row ${isTarget ? 'is-target' : ''} ${isCheapest ? 'is-cheapest' : ''} ${isDead ? 'is-dead' : ''}">
           <td>
             <div style="font-weight:700; color:#0f172a;">${esc(s.labora || 'Outro')}</div>
-            <div style="margin-top:1px;">
-              ${isTarget ? ' <span class="badge badge-accent" style="font-size:9px;padding:1px 4px;">Item Alvo</span>' : ''}
-              ${isCheapest ? ' <span class="badge badge-success" style="font-size:9px;padding:1px 4px;">Menor Custo</span>' : ''}
+            <div style="margin-top:2px; display:flex; gap:4px; flex-wrap:wrap;">
+              ${isTarget ? '<span class="badge badge-accent" style="font-size:9px;padding:1px 5px;font-weight:700;">🚨 Demandado ERP</span>' : ''}
+              ${isCheapest ? '<span class="badge badge-success" style="font-size:9px;padding:1px 5px;font-weight:700;">⭐ Menor Custo</span>' : ''}
+              ${isMuchMoreExpensive ? '<span class="badge" style="font-size:9px;padding:1px 4px;background:#f8fafc;color:#64748b;border:1px solid #e2e8f0;">🏛️ Grife/Ref</span>' : ''}
             </div>
           </td>
           <td>
@@ -2414,17 +2587,14 @@ async function openMoleculeSweep(molKey, skuId, filialId = null) {
           ${totalRedeCell}
           <td class="num">
             <div style="font-weight:700; font-size:11.5px;">${brl(s.custo_unit)}</div>
+            ${diffCost !== 0 && targetCost > 0 ? `
+              <div style="font-size:9.5px; font-weight:600; color:${diffCost > 0 ? '#b91c1c' : '#15803d'};">
+                ${diffCost > 0 ? `+${brl(diffCost)}` : brl(diffCost)}
+              </div>
+            ` : ''}
           </td>
           <td style="text-align:center;">
-            ${!isTarget && s.custo_unit > 0 && targetSku && targetSugUn > 0 ? `
-              <button class="btn btn-secondary btn-sm btn-action-switch" data-source-id="${targetSku.produto_id}" data-target-id="${s.produto_id}" data-qty="${targetSugUn}" data-target-name="${esc(s.descricao)}" type="button" style="padding:3px 7px;font-size:10.5px;font-weight:600;">
-                Trocar p/ Este
-              </button>
-            ` : isDead ? `
-              <span class="badge" style="background:#fee2e2;color:#991b1b;font-size:9px;">Desovar Balcão</span>
-            ` : isTarget ? `
-              <span class="badge badge-accent" style="font-size:9px;">Item Demandado</span>
-            ` : '—'}
+            ${actionCellHtml}
           </td>
         </tr>
       `;
@@ -2446,7 +2616,10 @@ async function openMoleculeSweep(molKey, skuId, filialId = null) {
             ⚪ Manter Compra Original
           </button>
           <button id="btn-sweep-teach-ia" class="btn btn-secondary btn-sm" type="button" style="padding:6px 10px; font-size:11px;" title="Corrigir apresentação farmacológica ou princípio ativo desta molécula">
-            🧠 Ensinar IA
+            🎓 Ensinar Equivalência / Corrigir Molécula
+          </button>
+          <button id="btn-sweep-goto-molecules" class="btn btn-ghost btn-sm" type="button" style="padding:6px 10px; font-size:11px; border:1px solid #cbd5e1; border-radius:6px; color:#4338ca;" title="Abrir esta molécula na tela completa de Moléculas &amp; CMED">
+            🧪 Abrir em Moléculas &amp; CMED
           </button>
         </div>
       </div>
@@ -2592,6 +2765,19 @@ async function openMoleculeSweep(molKey, skuId, filialId = null) {
           forma: forma || 'CPR',
           pack_bucket: packBucket || '30UN',
         });
+      };
+    }
+
+    const btnGotoMol = document.getElementById('btn-sweep-goto-molecules');
+    if (btnGotoMol) {
+      btnGotoMol.onclick = () => {
+        closeMoleculeSweep();
+        switchView('molecules');
+        const qInput = document.getElementById('mol-q');
+        if (qInput) {
+          qInput.value = (substancia || molKey.split('|')[0] || '').trim();
+          loadMolecules();
+        }
       };
     }
 
@@ -2884,14 +3070,20 @@ async function loadMolecules() {
   });
   const data = await apiGet(`/api/molecules?${params.toString()}`);
 
-  const bCount = data.backups?.length || 0;
-  const lastBkp = data.backups?.[0];
-  document.getElementById('mol-backups-bar').textContent =
-    `De→Para salvos localmente: ${data.approvedDePara?.length || 0} vínculos | Backups automáticos registrados: ${bCount}${lastBkp ? ` (último: ${lastBkp.created_at})` : ''}`;
+  // Atualizar os 4 cards de KPI executivos no topo da tela
+  const kpiTotal = document.getElementById('mol-kpi-total');
+  const kpiMulti = document.getElementById('mol-kpi-multilab');
+  const kpiSavings = document.getElementById('mol-kpi-savings');
+  const kpiStock = document.getElementById('mol-kpi-stock');
+
+  if (kpiTotal) kpiTotal.textContent = `${data.stats?.total_moleculas || (data.rows ? data.rows.length : 0)} mols`;
+  if (kpiMulti) kpiMulti.textContent = `${data.stats?.multi_labs_count || 0} apresentações`;
+  if (kpiSavings) kpiSavings.textContent = brl(data.stats?.total_economia_evitada_rs || 0);
+  if (kpiStock) kpiStock.textContent = `${num(data.stats?.total_estoque_rede || 0)} un`;
 
   const tbody = document.getElementById('mol-tbody');
   if (!data.rows || data.rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;padding:24px;">Nenhuma molécula encontrada com esse filtro.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;padding:28px;">Nenhuma molécula encontrada com esse filtro.</td></tr>';
     return;
   }
 
@@ -2902,46 +3094,95 @@ async function loadMolecules() {
     const skuIds = (m.detalhe_skus || []).map((s) => s.produto_id);
 
     html.push(`
-      <tr class="row-main" data-mol-key="${esc(k)}">
+      <tr class="row-main" data-mol-key="${esc(k)}" style="cursor:pointer;">
         <td>
-          <div class="sku-title">${esc(m.molecule_key)}</div>
-          <div class="sku-sub">${m.eh_referencia ? '<span class="badge badge-warn">Referência / Ético</span>' : '<span class="badge badge-info">Intercambiável (Gen/Sim)</span>'}</div>
+          <div style="font-weight:700; color:#0f172a; font-size:12.5px;">${esc(m.molecule_key)}</div>
+          <div style="margin-top:3px; display:flex; gap:6px; align-items:center;">
+            ${m.eh_referencia ? '<span class="badge badge-warn" style="font-size:9.5px;">Referência / Ético</span>' : '<span class="badge badge-info" style="font-size:9.5px; background:#eff6ff; color:#1e40af; border:1px solid #bfdbfe;">Intercambiável (Gen/Sim)</span>'}
+            <span class="muted" style="font-size:10px; font-weight:600;">${isOpen ? '▲ Ocultar SKUs' : '▼ Ver SKUs'}</span>
+          </div>
         </td>
-        <td class="num">${m.skus_count} SKUs / ${m.labs_count} labs</td>
-        <td class="num">${num(m.estoque_total)}</td>
-        <td class="num">${num(m.ddv_proj_total, 2)}</td>
-        <td class="num">${m.cobertura_molecula_dias >= 999 ? '999+' : `${num(m.cobertura_molecula_dias, 1)}d`}</td>
-        <td class="num">${num(m.sugestao_sku_soma)}</td>
-        <td class="num"><strong>${num(m.necessidade_liquida_molecula)}</strong></td>
-        <td class="num"><strong class="kpi-accent">${brl(m.economia_rs_evitada)}</strong><div class="sku-sub">${num(m.economia_un_evitada)} un</div></td>
-        <td>
-          <div class="sku-sub">Melhor: <strong>${esc(m.melhor_sku_desc)}</strong> (${brl(m.melhor_custo_unit)})</div>
-          <button class="btn btn-secondary btn-sm btn-approve-mol" data-mol-id="${esc(m.molecule_key)}" data-skus="${skuIds.join(',')}">Aprovar De→Para</button>
+        <td class="num" style="font-weight:600;">${m.skus_count} SKUs<br><span class="muted" style="font-size:10px; font-weight:normal;">${m.labs_count} labs</span></td>
+        <td class="num"><strong>${num(m.estoque_total)} un</strong></td>
+        <td class="num">${num(m.ddv_proj_total, 2)}/d</td>
+        <td class="num">${m.cobertura_molecula_dias >= 999 ? '999+d' : `${num(m.cobertura_molecula_dias, 1)}d`}</td>
+        <td class="num" style="color:#64748b;">${num(m.sugestao_sku_soma)} un</td>
+        <td class="num"><strong style="color:${m.necessidade_liquida_molecula > 0 ? 'var(--accent)' : '#15803d'}; font-size:12.5px;">${num(m.necessidade_liquida_molecula)} un</strong></td>
+        <td class="num">
+          <strong class="kpi-accent" style="font-size:13px; color:#15803d;">${brl(m.economia_rs_evitada)}</strong>
+          ${m.economia_un_evitada > 0 ? `<div class="sku-sub" style="color:#166534; font-size:10px; font-weight:700;">-${num(m.economia_un_evitada)} un evitadas</div>` : ''}
+        </td>
+        <td style="padding:10px 12px;" class="td-actions">
+          <div style="display:flex; flex-direction:column; gap:6px;">
+            <div style="font-size:11px; color:#334155; line-height:1.3;">
+              <span style="color:#15803d; font-weight:700;">⭐ Menor:</span> <strong>${esc(m.melhor_sku_desc || '—')}</strong>
+              <span style="color:#0f172a; font-weight:700;">(${brl(m.melhor_custo_unit)})</span>
+            </div>
+            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+              <button class="btn btn-primary btn-sm btn-sweep-mol" data-mol-key="${esc(m.molecule_key)}" data-sku-id="${m.melhor_sku_id || (skuIds[0] || 0)}" type="button" style="padding:4px 9px; font-size:11px; font-weight:700; border-radius:6px; display:inline-flex; align-items:center; gap:4px; box-shadow:0 1px 3px rgba(0,0,0,0.1);" title="Abrir Varredura Inteligente da Molécula (auditoria loja a loja, proteção de sobre-estoque e menor custo)">
+                🔍 Varredura da Molécula
+              </button>
+              <button class="btn btn-ghost btn-sm btn-teach-mol" data-mol-key="${esc(m.molecule_key)}" data-sku-id="${m.melhor_sku_id || (skuIds[0] || 0)}" data-subst="${esc(m.substancia || '')}" data-conc="${esc(m.concentracao || '')}" data-forma="${esc(m.forma || 'CPR')}" data-pack="${esc(m.pack_bucket || '30UN')}" type="button" style="padding:4px 8px; font-size:10.5px; border:1px solid #cbd5e1; border-radius:6px; color:#475569;" title="Corrigir apresentação farmacológica desta molécula">
+                ✏️ Ensinar IA
+              </button>
+            </div>
+          </div>
         </td>
       </tr>
     `);
 
     if (isOpen) {
       const sub = (m.detalhe_skus || [])
-        .map(
-          (s) => `
-          <tr>
-            <td>${s.produto_id}</td>
-            <td>${esc(s.descricao)}</td>
-            <td>${esc(s.labora || '—')}</td>
-            <td class="num">${num(s.estoque)}</td>
-            <td class="num">${num(s.ddv, 2)}</td>
-            <td class="num">${brl(s.custo_unit)}</td>
-            <td class="num">${num(s.sug_individual)}</td>
-          </tr>
-        `
-        )
+        .map((s) => {
+          const isBest = m.melhor_sku_id && s.produto_id === m.melhor_sku_id;
+          const hasStock = Number(s.estoque || 0) > 0;
+          const isSug = Number(s.sug_individual || 0) > 0;
+          return `
+            <tr style="${isBest ? 'background:#f0fdf4;' : ''}">
+              <td style="font-weight:600; color:#475569;">${s.produto_id}</td>
+              <td>
+                <div style="font-weight:600; color:#0f172a; font-size:11.5px;">${esc(s.descricao)}</div>
+                <div style="display:flex; gap:6px; margin-top:2px; align-items:center;">
+                  ${isBest ? '<span class="badge badge-success" style="font-size:9px; padding:1px 5px; font-weight:700;">⭐ Menor Custo Homologado</span>' : ''}
+                  ${hasStock ? `<span class="badge" style="background:#eff6ff; color:#1e40af; font-size:9px; padding:1px 5px;">📦 ${num(s.estoque)} un em loja</span>` : ''}
+                </div>
+              </td>
+              <td><strong>${esc(s.labora || '—')}</strong></td>
+              <td class="num">${num(s.estoque)} un</td>
+              <td class="num">${num(s.ddv, 2)}/d</td>
+              <td class="num" style="font-weight:700;">${brl(s.custo_unit)}</td>
+              <td class="num" style="color:${isSug ? 'var(--accent)' : '#64748b'}; font-weight:${isSug ? '700' : 'normal'};">
+                ${isSug ? `🛒 ${num(s.sug_individual)} un` : '0 un'}
+              </td>
+              <td style="text-align:center;">
+                <button class="btn btn-ghost btn-sm btn-teach-sku" data-sku-id="${s.produto_id}" data-desc="${esc(s.descricao)}" data-subst="${esc(m.substancia || '')}" data-conc="${esc(m.concentracao || '')}" data-forma="${esc(m.forma || 'CPR')}" data-pack="${esc(m.pack_bucket || '30UN')}" type="button" style="padding:2px 7px; font-size:10px; border:1px solid #cbd5e1; border-radius:4px; color:#475569;" title="Ajustar ou desvincular apresentação deste produto">
+                  ✏️ Ajustar
+                </button>
+              </td>
+            </tr>
+          `;
+        })
         .join('');
       html.push(`
         <tr class="detail-row">
-          <td colspan="9">
-            <table class="mini-table">
-              <thead><tr><th>SKU</th><th>Descrição</th><th>Laboratório</th><th class="num">Estoque</th><th class="num">DDV Proj.</th><th class="num">Custo Un.</th><th class="num">Sug. Isolada</th></tr></thead>
+          <td colspan="9" style="background:#f8fafc; padding:12px 16px;">
+            <div style="font-size:11.5px; font-weight:700; color:#334155; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;">
+              <span>📋 SKUs Vinculados a esta Apresentação na Base (${(m.detalhe_skus || []).length} produtos):</span>
+              <span class="muted" style="font-size:10.5px; font-weight:normal;">Clique no botão "Varredura" para ver estoque loja a loja e cancelar sugestões sobrepostas</span>
+            </div>
+            <table class="mini-table" style="background:#ffffff; border:1px solid #e2e8f0; border-radius:6px;">
+              <thead>
+                <tr style="background:#f1f5f9; color:#475569;">
+                  <th style="width:75px;">Cód BIG</th>
+                  <th>Descrição do Produto</th>
+                  <th>Laboratório</th>
+                  <th class="num">Estoque</th>
+                  <th class="num">DDV Proj.</th>
+                  <th class="num">Custo Un.</th>
+                  <th class="num">Sug. ERP</th>
+                  <th style="text-align:center; width:80px;">Ação</th>
+                </tr>
+              </thead>
               <tbody>${sub}</tbody>
             </table>
           </td>
@@ -4656,7 +4897,7 @@ function showCurveInfoModal(skuName, motorCurva, motorPareto, erpRanking) {
     </div>
     ${isDivergent ? `
       <div style="background:var(--warning-soft);border:1px solid rgba(180,83,9,0.25);border-radius:6px;padding:10px;font-size:12px;color:var(--warning);">
-        ⚠️ <strong>Divergência Detectada:</strong> O ERP ainda registra este item em outra curva (possivelmente devido a períodos desatualizados de cálculo no BIG). O motor utiliza as vendas reais ativas recentes para proteger o seu capital de giro.
+        ℹ️ <strong>Calibração Inteligente:</strong> O motor aplica o <strong>Freio de Giro &amp; Velocidade</strong> para evitar que itens de alto valor monetário com saídas raras/esporádicas inflem a Curva A e imobilizem capital desnecessário.
       </div>
     ` : `
       <div style="background:var(--success-soft);border:1px solid rgba(21,128,61,0.25);border-radius:6px;padding:10px;font-size:12px;color:var(--success);">
@@ -7790,11 +8031,33 @@ function bindEvents() {
     btn.addEventListener('click', () => switchView(btn.dataset.view));
   });
 
+function openSuspendedWithDemandTab() {
+  document.querySelectorAll('#sku-tabs .tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === 'dismissed'));
+  state.tab = 'dismissed';
+  state.dismissedSubFilter = 'with_demand';
+  state.offset = 0;
+  switchView('cockpit');
+  loadSkus();
+}
+
   document.querySelectorAll('#sku-tabs .tab').forEach((tab) => {
     tab.addEventListener('click', () => {
       document.querySelectorAll('#sku-tabs .tab').forEach((t) => t.classList.remove('active'));
       tab.classList.add('active');
       state.tab = tab.dataset.tab;
+      if (state.tab === 'dismissed') {
+        state.dismissedSubFilter = '';
+      }
+      loadSkus();
+    });
+  });
+
+  document.querySelectorAll('#dismissed-subfilters .btn-subfilter').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#dismissed-subfilters .btn-subfilter').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.dismissedSubFilter = btn.dataset.subfilter || '';
+      state.offset = 0;
       loadSkus();
     });
   });
@@ -8256,23 +8519,51 @@ function bindEvents() {
   });
 
   document.getElementById('mol-tbody').addEventListener('click', async (e) => {
-    const btn = e.target.closest('.btn-approve-mol');
-    if (btn) {
+    // 1. Botão Varredura da Molécula
+    const btnSweep = e.target.closest('.btn-sweep-mol');
+    if (btnSweep) {
       e.stopPropagation();
-      const moleculeKey = btn.dataset.molId;
-      const skus = btn.dataset.skus.split(',').map(Number).filter(Boolean);
-      btn.disabled = true;
-      try {
-        await apiPost('/api/molecules/approve', { moleculeKey, skus });
-        showBanner(`De→Para aprovado para ${skus.length} SKUs em "${moleculeKey}" (backup gerado).`);
-        loadMolecules();
-      } catch (err) {
-        showBanner(`Erro ao aprovar: ${err.message}`, true);
-      } finally {
-        btn.disabled = false;
-      }
+      const molKey = btnSweep.dataset.molKey;
+      const skuId = Number(btnSweep.dataset.skuId || 0);
+      const filialId = (state.selectedFilial && state.selectedFilial !== 'all') ? Number(state.selectedFilial) : 2;
+      openMoleculeSweep(molKey, skuId, filialId);
       return;
     }
+
+    // 2. Botão Ensinar / Corrigir IA na Molécula
+    const btnTeachMol = e.target.closest('.btn-teach-mol');
+    if (btnTeachMol) {
+      e.stopPropagation();
+      openTeachMoleculeModal({
+        produto_id: Number(btnTeachMol.dataset.skuId || 0),
+        descricao: btnTeachMol.dataset.molKey || '',
+        substancia: btnTeachMol.dataset.subst || '',
+        concentracao: btnTeachMol.dataset.conc || '',
+        forma: btnTeachMol.dataset.forma || 'CPR',
+        pack_bucket: btnTeachMol.dataset.pack || '30UN',
+      });
+      return;
+    }
+
+    // 3. Botão Ajustar SKU específico na mini-tabela
+    const btnTeachSku = e.target.closest('.btn-teach-sku');
+    if (btnTeachSku) {
+      e.stopPropagation();
+      openTeachMoleculeModal({
+        produto_id: Number(btnTeachSku.dataset.skuId || 0),
+        descricao: btnTeachSku.dataset.desc || '',
+        substancia: btnTeachSku.dataset.subst || '',
+        concentracao: btnTeachSku.dataset.conc || '',
+        forma: btnTeachSku.dataset.forma || 'CPR',
+        pack_bucket: btnTeachSku.dataset.pack || '30UN',
+      });
+      return;
+    }
+
+    // Se clicou na coluna de ações (mas fora dos botões), não expande/recolhe
+    if (e.target.closest('.td-actions')) return;
+
+    // 4. Expandir / Recolher Linha
     const row = e.target.closest('tr[data-mol-key]');
     if (!row) return;
     const key = row.dataset.molKey;
@@ -8879,7 +9170,6 @@ function bindEvents() {
 
   document.getElementById('btn-recalc').addEventListener('click', runPurchasingEngine);
   document.getElementById('ctrl-weeks')?.addEventListener('change', triggerTopBarParamChange);
-  document.getElementById('ctrl-profile')?.addEventListener('change', triggerTopBarParamChange);
 }
 
 (async function init() {

@@ -89,14 +89,6 @@
             </select>
           </label>
           <label class="control-group">
-            <span>Perfil</span>
-            <select id="ctrl-profile">
-              <option value="enxuto">Enxuto</option>
-              <option value="equilibrado" selected>Equilibrado</option>
-              <option value="alta">Alta Disponibilidade</option>
-            </select>
-          </label>
-          <label class="control-group">
             <span>Entradas</span>
             <select id="ctrl-entries">
               <option value="3">3 últimas</option>
@@ -605,6 +597,7 @@
       </section>
 
       <section id="view-cockpit" class="view-section hidden">
+        <div id="banner-suspended-demand" class="hidden" style="margin-bottom:12px;"></div>
         <div class="toolbar">
           <div class="tabs" id="sku-tabs">
             <button class="tab" data-tab="curadoria" style="border-left: 3px solid #10b981; font-weight:700;">🧬 Curadoria IA • Troca de Moléculas (<span id="curadoria-tab-count">0</span>)</button>
@@ -618,6 +611,25 @@
             <button class="tab" data-tab="expiring">Validade Curta / Vencidos</button>
             <button class="tab" data-tab="negative">Saldo Negativo</button>
             <button class="tab" data-tab="all">Todos</button>
+          </div>
+
+          <!-- SUB-FILTROS DEDICADOS DA ABA NÃO COMPRAR AGORA / SUSPENSOS -->
+          <div id="dismissed-subfilters" class="hidden" style="margin: 8px 0 10px 0; padding: 8px 12px; background: #fff5f5; border: 1px solid #fecaca; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+              <span style="font-size: 12px; font-weight: 700; color: #991b1b;">Filtro de Suspensões:</span>
+              <button id="btn-subfilter-all" class="btn btn-sm btn-subfilter" data-subfilter="" style="font-size: 11.5px; padding: 3px 10px; border-radius: 4px; background:#fff; border:1px solid #cbd5e1; font-weight:600;" type="button">
+                Todos (<span id="cnt-sub-all">0</span>)
+              </button>
+              <button id="btn-subfilter-demand" class="btn btn-sm btn-subfilter" data-subfilter="with_demand" style="font-size: 11.5px; padding: 3px 10px; border-radius: 4px; background: #fee2e2; color: #991b1b; border: 1px solid #f87171; font-weight: 700;" type="button">
+                🚨 Precisam de Compra (<span id="cnt-sub-demand">0</span>)
+              </button>
+              <button id="btn-subfilter-safe" class="btn btn-sm btn-subfilter" data-subfilter="safe_stock" style="font-size: 11.5px; padding: 3px 10px; border-radius: 4px; background: #f0fdf4; color: #166534; border: 1px solid #86efac; font-weight: 600;" type="button">
+                📦 Estoque Seguro (<span id="cnt-sub-safe">0</span>)
+              </button>
+            </div>
+            <div class="muted" style="font-size: 11.5px;">
+              Itens suspensos ficam bloqueados indefinidamente até que você clique em <strong>🔓 Liberar Compra</strong>.
+            </div>
           </div>
 
           <div class="filters-row">
@@ -665,7 +677,7 @@
               <button type="button" class="btn-horizon" data-days="7">7d</button>
               <button type="button" class="btn-horizon" data-days="15">15d</button>
               <button type="button" class="btn-horizon" data-days="21" title="Horizonte de 21 dias específico para Operações Logísticas (OL) / Fabricante">21d (OL)</button>
-              <button type="button" class="btn-horizon active" data-days="padrao">Padrão Sugerido (30d)</button>
+              <button type="button" class="btn-horizon active" data-days="padrao" title="Modelo tradicional Linx BIG: compra a diferença do estoque disponível até o teto máximo cadastrado">🏛️ Padrão BIG (Mín/Máx)</button>
               <div style="display:inline-flex;align-items:center;gap:3px;margin-left:4px;">
                 <input id="input-custom-horizon" type="number" min="1" max="90" placeholder="dias" style="width:50px;height:24px;font-size:11px;padding:1px 4px;border:1px solid #cbd5e1;border-radius:4px;text-align:center;" title="Digite quantos dias de horizonte desejar (ex: 10, 21, 45)" />
                 <button id="btn-apply-custom-horizon" class="btn btn-secondary btn-sm" type="button" style="padding:1px 6px;font-size:10.5px;height:24px;" title="Aplicar horizonte livre">OK</button>
@@ -784,35 +796,71 @@
 
       <!-- VIEW 2: MOLECULAS & CMED -->
       <section id="view-molecules" class="view-section hidden">
-        <div class="toolbar">
-          <div class="filters-row">
-            <input id="mol-q" type="search" placeholder="Filtrar princípio ativo ou dosagem (ex: LOSARTANA, 50MG)..." />
-            <label class="checkbox-inline">
+        <!-- CABEÇALHO EXECUTIVO E STRIP DE INTELIGÊNCIA -->
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:16px; margin-bottom:14px;">
+          <div>
+            <h2 style="font-size:18px; font-weight:800; display:flex; align-items:center; gap:8px; margin:0 0 4px 0; color:#0f172a;">
+              <span>🧪 Central de Moléculas &amp; Inteligência CMED</span>
+              <span class="badge" style="background:#0284c7; color:#fff; font-size:10px;">Base 100% Autônoma</span>
+            </h2>
+            <div class="muted" style="font-size:12.5px; line-height:1.4;">
+              Consolidação farmacológica por Substância, Dosagem, Forma e Embalagem (CMED/Anvisa). O motor compara custos entre fabricantes e protege o caixa eliminando compras sobrepostas na rede.
+            </div>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-size:11.5px; font-weight:700; color:#15803d; background:#f0fdf4; border:1px solid #86efac; padding:6px 12px; border-radius:8px; display:inline-flex; align-items:center; gap:6px;">
+              <span>🛡️</span> Zero Alteração no ERP (Leitura Segura)
+            </span>
+          </div>
+        </div>
+
+        <!-- 4 CARDS DE INDICADORES EXECUTIVOS -->
+        <div id="mol-kpi-grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:10px; margin-bottom:14px;">
+          <div class="kpi-cell" style="padding:10px 14px; background:#ffffff; border:1px solid #e2e8f0; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.02);">
+            <div class="kpi-label" style="font-size:11px; font-weight:700; color:#64748b; text-transform:uppercase;">Moléculas Mapeadas</div>
+            <div id="mol-kpi-total" class="kpi-val" style="font-size:20px; font-weight:800; color:#0f172a; margin-top:2px;">—</div>
+            <div class="kpi-sub" style="font-size:11px; color:#64748b;">Apresentações catalogadas</div>
+          </div>
+          <div class="kpi-cell" style="padding:10px 14px; background:#ffffff; border:1px solid #e2e8f0; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.02);">
+            <div class="kpi-label" style="font-size:11px; font-weight:700; color:#64748b; text-transform:uppercase;">Com Concorrência de Labs</div>
+            <div id="mol-kpi-multilab" class="kpi-val" style="font-size:20px; font-weight:800; color:#2563eb; margin-top:2px;">—</div>
+            <div class="kpi-sub" style="font-size:11px; color:#64748b;">Disputa ativa de menor custo</div>
+          </div>
+          <div class="kpi-cell" style="padding:10px 14px; background:#f0fdf4; border:1px solid #86efac; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.02);">
+            <div class="kpi-label" style="font-size:11px; font-weight:700; color:#15803d; text-transform:uppercase;">Economia Evitada no Pedido</div>
+            <div id="mol-kpi-savings" class="kpi-val" style="font-size:20px; font-weight:800; color:#15803d; margin-top:2px;">—</div>
+            <div class="kpi-sub" style="font-size:11px; color:#166534;">Proteção contra sobre-estoque</div>
+          </div>
+          <div class="kpi-cell" style="padding:10px 14px; background:#ffffff; border:1px solid #e2e8f0; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.02);">
+            <div class="kpi-label" style="font-size:11px; font-weight:700; color:#64748b; text-transform:uppercase;">Estoque Consolidado na Rede</div>
+            <div id="mol-kpi-stock" class="kpi-val" style="font-size:20px; font-weight:800; color:#0f172a; margin-top:2px;">—</div>
+            <div class="kpi-sub" style="font-size:11px; color:#64748b;">Unidades físicas somadas</div>
+          </div>
+        </div>
+
+        <div class="toolbar" style="margin-bottom:12px;">
+          <div class="filters-row" style="flex:1;">
+            <input id="mol-q" type="search" placeholder="Filtrar por princípio ativo, dosagem ou nome da molécula (ex: LOSARTANA, 50MG)..." style="max-width:480px;" />
+            <label class="checkbox-inline" style="font-weight:600; font-size:12.5px;">
               <input id="mol-only-savings" type="checkbox" checked />
               <span>Apenas grupos com economia evitável</span>
             </label>
           </div>
-          <div class="actions-row">
-            <button id="btn-open-sync-big-apres" class="btn btn-primary" type="button" style="background:#0284c7;border-color:#0369a1;font-weight:600;display:inline-flex;align-items:center;gap:6px;" title="Cria e vincula as apresentações normalizadas pela IA no cadastro do ERP com autorização em lote">
-              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-              <span>Sincronizar De &rarr; Para com o ERP (produto_apresentacao)</span>
-            </button>
-          </div>
         </div>
-        <div id="mol-backups-bar" class="info-strip"></div>
+
         <div class="table-wrap">
           <table class="data-table">
             <thead>
-              <tr>
-                <th>Chave Canônica (Molécula)</th>
-                <th class="num">SKUs / Labs</th>
-                <th class="num">Estoque Rede</th>
-                <th class="num">Giro/Dia</th>
-                <th class="num">Cob. Mol.</th>
-                <th class="num">Soma SKUs</th>
-                <th class="num">Nec. Líquida</th>
-                <th class="num">Economia (R$)</th>
-                <th>Melhor Custo Atual &amp; Ação</th>
+              <tr style="background:var(--bg-subtle);">
+                <th style="min-width:240px;">Chave Canônica (Molécula)</th>
+                <th class="num" style="min-width:90px;">SKUs / Labs</th>
+                <th class="num" style="min-width:90px;">Estoque Rede</th>
+                <th class="num" style="min-width:75px;">Giro/Dia</th>
+                <th class="num" style="min-width:75px;">Cob. Mol.</th>
+                <th class="num" style="min-width:85px;">Demanda ERP</th>
+                <th class="num" style="min-width:85px;">Nec. Líquida</th>
+                <th class="num" style="min-width:110px;">Economia (R$)</th>
+                <th style="min-width:220px;">Melhor Custo &amp; Ações da IA</th>
               </tr>
             </thead>
             <tbody id="mol-tbody"></tbody>
@@ -1380,139 +1428,7 @@
     </div>
   </div>
 
-  <!-- MODAL: SINCRONIZAR APRESENTAÇÕES COM CADASTRO DO ERP (DE -> PARA EM MASSA) -->
-  <div id="sync-big-apres-modal" class="modal-backdrop hidden" style="z-index: 10000;" role="dialog" aria-modal="true">
-    <div class="modal-card" style="max-width: 1240px; max-height: 92vh; display: flex; flex-direction: column;">
-      <div class="modal-header">
-        <div>
-          <h3>📥 Sincronização De &rarr; Para com o Cadastro do ERP</h3>
-          <p class="muted" style="margin-top: 2px;">
-            Gravação em massa das moléculas identificadas pela IA na tabela nativa <code>produto_apresentacao</code> e vínculo nos produtos do ERP.
-          </p>
-        </div>
-        <button id="btn-close-sync-big-apres" class="btn btn-ghost" type="button">Fechar (Esc)</button>
-      </div>
 
-      <div class="modal-body" style="overflow-y: auto; flex: 1; padding: 18px 24px; display: flex; flex-direction: column; gap: 14px;">
-        <!-- KPI STRIP DE SINCRONIZAÇÃO -->
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;">
-          <div class="kpi-cell" style="padding: 12px 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);">
-            <div class="kpi-label">Candidatos Identificados (IA)</div>
-            <div id="sync-kpi-total" class="kpi-val" style="font-size: 20px;">0</div>
-            <div class="kpi-sub">Medicamentos com apresentação válida</div>
-          </div>
-          <div class="kpi-cell" style="padding: 12px 16px; border: 1px solid var(--border); border-radius: var(--radius); background: #f0fdf4; border-color: #86efac;">
-            <div class="kpi-label">Prontos para Vincular no BIG</div>
-            <div id="sync-kpi-pending" class="kpi-val" style="font-size: 20px; color: #16a34a;">0</div>
-            <div class="kpi-sub">Sem apresentação ativa no ERP</div>
-          </div>
-          <div class="kpi-cell" style="padding: 12px 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);">
-            <div class="kpi-label">Apresentações Únicas</div>
-            <div id="sync-kpi-unique" class="kpi-val" style="font-size: 20px;">0</div>
-            <div class="kpi-sub">Moléculas agrupadas</div>
-          </div>
-          <div class="kpi-cell" style="padding: 12px 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);">
-            <div class="kpi-label">Já Vinculados no BIG</div>
-            <div id="sync-kpi-linked" class="kpi-val" style="font-size: 20px; color: #64748b;">0</div>
-            <div class="kpi-sub">Preservados por segurança</div>
-          </div>
-        </div>
-
-        <!-- BANNER DE REGRAS E DIRETRIZES -->
-        <div style="padding: 12px 16px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: var(--radius); font-size: 12px; color: #1e40af; display: flex; align-items: flex-start; gap: 10px;">
-          <svg class="icon" style="flex-shrink: 0; margin-top: 2px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-          <div>
-            <strong>Como o Linx BIG processa esta sincronização:</strong>
-            O motor busca ou cadastra a apresentação em <code>produto_apresentacao</code> (com substância, concentração e forma) e atualiza cada produto selecionado com <code>produto_apresentacao_id</code>, <code>considera_prod_apresentacao = 'S'</code> e <code>qtde_apres</code>. A gravação é 100% transacional ACID (rollback automático em caso de qualquer inconsistência).
-          </div>
-        </div>
-
-        <!-- OPÇÕES DE SEGURANÇA E FILTROS -->
-        <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 14px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: var(--radius);">
-          <div style="display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px;">
-            <label class="checkbox-inline" style="font-weight: 600;">
-              <input id="sync-opt-only-unlinked" type="checkbox" checked />
-              <span>Não sobrescrever vínculos manuais existentes no BIG</span>
-            </label>
-            <label class="checkbox-inline">
-              <input id="sync-opt-activate-considera" type="checkbox" checked />
-              <span>Ativar <code>considera_prod_apresentacao = 'S'</code></span>
-            </label>
-            <label class="checkbox-inline">
-              <input id="sync-opt-update-qtde" type="checkbox" checked />
-              <span>Gravar tamanho da embalagem em <code>qtde_apres</code></span>
-            </label>
-          </div>
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <input id="sync-search-input" type="search" placeholder="Filtrar por nome, laboratório ou substância..." style="padding: 6px 10px; font-size: 12px; width: 280px;" />
-            <select id="sync-filter-status" style="padding: 6px 10px; font-size: 12px;">
-              <option value="ALL">Exibir Todos</option>
-              <option value="PENDING" selected>Apenas Não Vinculados no BIG</option>
-              <option value="LINKED">Apenas Já Vinculados</option>
-            </select>
-          </div>
-        </div>
-
-        <!-- TOOLBAR DE VISUALIZAÇÃO E LIMPEZA -->
-        <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 2px;">
-          <div style="display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface);">
-            <button id="btn-sync-view-clusters" class="btn btn-sm active" type="button" style="border-radius: 0; padding: 6px 14px; font-weight: 600;">
-              📦 Apresentações Canônicas (Agrupadas por IA)
-            </button>
-            <button id="btn-sync-view-skus" class="btn btn-sm" type="button" style="border-radius: 0; padding: 6px 14px; font-weight: 600; border-left: 1px solid var(--border);">
-              📋 Produtos / SKUs Individuais
-            </button>
-          </div>
-          <button id="btn-cleanup-sync-big-apres" class="btn btn-secondary btn-sm" type="button" style="color: #b91c1c; border-color: #fca5a5; background: #fef2f2; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;" title="Desvincula produtos e remove registros criados em testes anteriores (ID >= 1019)">
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-            <span>Limpar Cadastros Anteriores (IDs &ge; 1019)</span>
-          </button>
-        </div>
-
-        <!-- PROGRESS & FEEDBACK ALERT -->
-        <div id="sync-big-alert" class="order-batch-alert hidden"></div>
-
-        <!-- CONTAINER: VISÃO AGRUPADA POR APRESENTAÇÃO CANÔNICA -->
-        <div id="sync-clusters-container" style="max-height: 44vh; overflow-y: auto; display: flex; flex-direction: column; gap: 10px;">
-          <div style="text-align: center; padding: 24px;" class="muted">Carregando grupos de apresentações...</div>
-        </div>
-
-        <!-- CONTAINER: TABELA DE CANDIDATOS INDIVIDUAIS -->
-        <div id="sync-skus-container" class="table-wrap hidden" style="max-height: 44vh; overflow-y: auto;">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th style="width: 34px; text-align: center;"><input id="sync-chk-all" type="checkbox" checked title="Marcar/Desmarcar todos" /></th>
-                <th>Cód BIG</th>
-                <th>Descrição do Produto no BIG</th>
-                <th>Laboratório</th>
-                <th>Molécula / Substância (CMED &bull; IA)</th>
-                <th>Concentração</th>
-                <th>Apresentação / Embalagem</th>
-                <th>Status no BIG</th>
-              </tr>
-            </thead>
-            <tbody id="sync-tbody">
-              <tr><td colspan="8" style="text-align: center; padding: 24px;" class="muted">Carregando candidatos de De &rarr; Para do Linx BIG...</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div class="modal-footer">
-        <div id="sync-selection-count" class="muted" style="font-size: 12px; font-weight: 600;">
-          0 itens selecionados para gravação
-        </div>
-        <div class="modal-footer-actions">
-          <button id="btn-cancel-sync-big-apres" class="btn btn-secondary" type="button">Cancelar</button>
-          <button id="btn-execute-sync-big-apres" class="btn btn-primary" type="button" style="background:#0284c7;border-color:#0369a1;font-weight:600;display:inline-flex;align-items:center;gap:8px;">
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-            <span id="btn-execute-sync-label">Autorizar e Gravar no Linx BIG</span>
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
 
   <!-- MODAL: PARÂMETROS DE GRUPOS & CURVAS ABC (DIAS DE ESTOQUE) -->
   <div id="group-config-modal" class="modal-backdrop hidden" style="z-index: 10000;" role="dialog" aria-modal="true">
@@ -1651,13 +1567,15 @@
         <div class="form-group">
           <label for="suspend-days">Período de Bloqueio:</label>
           <select id="suspend-days" style="padding:8px 10px; font-size:13px; border:1px solid var(--border); border-radius:var(--radius); width:100%;">
+            <option value="99999" selected>♾️ Indeterminado (Até o comprador retirar manualmente)</option>
             <option value="15">15 dias</option>
-            <option value="30" selected>30 dias (1 mês)</option>
+            <option value="30">30 dias (1 mês)</option>
             <option value="60">60 dias (2 meses)</option>
             <option value="90">90 dias (3 meses)</option>
             <option value="180">180 dias (6 meses)</option>
             <option value="365">1 ano (Bloqueio Longo)</option>
           </select>
+          <div class="muted" style="font-size:11px; margin-top:4px;">Bloqueio permanece ativo continuamente até que o comprador clique em reativar compra.</div>
         </div>
         <div class="form-group">
           <label for="suspend-motivo">Justificativa / Motivo:</label>
@@ -2109,7 +2027,7 @@
     </div>
   </div>
 
-  <script src="/app.js?v=1.2.3"></script>
+  <script src="/app.js?v=1.3.0"></script>
 </body>
 </html>
 

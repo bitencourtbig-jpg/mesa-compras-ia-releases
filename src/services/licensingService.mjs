@@ -225,14 +225,23 @@ export function validateLicenseKeyString(licenseKey, expectedCnpj, currentMachin
   const cleanCnpj = String(expectedCnpj || '').replace(/\D/g, '') || '00000000000000';
   const mId = currentMachineId ? currentMachineId.trim().toUpperCase() : getMachineFingerprint();
 
-  // Teste 1: Validação com Machine ID específico
-  let expectedSig = createSignature(cleanCnpj, mId, validUntil, 1, 'mensal');
-  let matched = (providedSig === expectedSig);
+  // Teste de assinaturas com suporte a múltiplos tipos de planos e chave curinga de máquina
+  const candidatePlans = ['mensal', 'degustacao_piloto', 'degustacao', 'anual', 'trimestral', 'semestral', 'vitalicio', 'enterprise'];
+  const candidateMachines = [mId, 'LNX-ANY-MACH'];
+  const candidateFiliais = [1, 2, 3, 5, 10, 99];
 
-  // Teste 2: Suporte a chave curinga para qualquer máquina (LNX-ANY-MACH)
-  if (!matched) {
-    const wildcardSig = createSignature(cleanCnpj, 'LNX-ANY-MACH', validUntil, 1, 'mensal');
-    if (providedSig === wildcardSig) matched = true;
+  let matched = false;
+  for (const plan of candidatePlans) {
+    for (const mach of candidateMachines) {
+      for (const fil of candidateFiliais) {
+        if (createSignature(cleanCnpj, mach, validUntil, fil, plan) === providedSig) {
+          matched = true;
+          break;
+        }
+      }
+      if (matched) break;
+    }
+    if (matched) break;
   }
 
   if (!matched) {
@@ -351,7 +360,16 @@ export function activateLicenseKey(clientCode = 'bandeirante', licenseKey) {
   const candidateCnpjs = new Set();
   if (profile.buyer_cnpj) candidateCnpjs.add(String(profile.buyer_cnpj).replace(/\D/g, ''));
   if (lastLic?.cnpj) candidateCnpjs.add(String(lastLic.cnpj).replace(/\D/g, ''));
+  candidateCnpjs.add('00000000000000'); // Base inicial recém-instalada
+  candidateCnpjs.add('07105688000113'); // Drogaria Bom Jesus (CNPJ oficial da loja)
   candidateCnpjs.add('28660206000167'); // CNPJ matriz / oficial exibido no portal de licenciamento
+
+  try {
+    const allProfiles = db.prepare('SELECT buyer_cnpj FROM client_profiles WHERE buyer_cnpj IS NOT NULL').all();
+    for (const p of allProfiles) {
+      if (p.buyer_cnpj) candidateCnpjs.add(String(p.buyer_cnpj).replace(/\D/g, ''));
+    }
+  } catch {}
 
   let valRes = { valid: false, error: 'Chave de licença inválida.' };
 
